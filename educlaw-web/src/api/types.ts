@@ -69,6 +69,7 @@ export type ChatRole = 'user' | 'assistant'
 export type MessageSegment =
   | { kind: 'text'; content: string }
   | { kind: 'tool'; tool: string; command: string; exitCode: number; done: boolean; output: string }
+  | { kind: 'image'; dataUrl: string; mimeType: string }
 
 export interface ChatMessage {
   id: string

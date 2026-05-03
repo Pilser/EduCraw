@@ -64,7 +64,7 @@ pub async fn list_models(pool: &SqlitePool) -> Result<Vec<Model>, sqlx::Error> {
 
 pub async fn list_enabled(pool: &SqlitePool) -> Result<Vec<Model>, sqlx::Error> {
     sqlx::query_as::<_, Model>(
-        // grok-4-1-fast-reasoning always first, then alphabetical
+        // grok-4-1-fast-reasoning is the default (system priority)
         "SELECT * FROM models WHERE enabled = 1
          ORDER BY CASE WHEN name = 'grok-4-1-fast-reasoning' THEN 0 ELSE 1 END, display_name",
     )

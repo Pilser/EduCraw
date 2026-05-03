@@ -70,19 +70,16 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [aiTyping, setAiTyping]   = useState(false)
   const pendingMsgIdRef = useRef<string | null>(null)
 
-  // Model + token state
+  // Model + token state (models come from backend via WebSocket)
   const [availableModels, setAvailableModels] = useState<string[]>([])
-  // Use grok-3-fast (valid xAI model; grok-4-1-fast-reasoning doesn't exist)
-  const [activeModel, setActiveModel]         = useState<string>('grok-3-fast')
+  const [activeModel, setActiveModel]         = useState<string | undefined>(undefined)
   const [tokenUsage, setTokenUsage]           = useState<TokenUsage | null>(null)
   const [tokenBlocked, setTokenBlocked]       = useState(false)
   const [tokenBannerText, setTokenBannerText] = useState('')
 
-  // Load allowed models + current token usage from server on mount
+  // Load current token usage from server on mount
+  // Models are now requested via WebSocket when session connects
   useEffect(() => {
-    api.getSessionModels(session.session_id, session.token)
-      .then(r => { setAvailableModels(r.models); setActiveModel(r.active) })
-      .catch(() => {})
     api.getSessionTokenUsage(session.session_id, session.token)
       .then(r => setTokenUsage(r))
       .catch(() => {})
@@ -201,7 +198,13 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setActiveModel(model)
   }, [])
 
-  const { status, sendInput, sendResize, sendCancel } = useWebSocket({
+  const handleModelsReceived = useCallback((models: string[], active: string) => {
+    setAvailableModels(models)
+    // Use backend's active model if provided; otherwise first available (or undefined if empty)
+    setActiveModel(active || models[0] || undefined)
+  }, [])
+
+  const { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels } = useWebSocket({
     sessionId:            session.session_id,
     token:                session.token,
     onPtyData:            handlePtyData,
@@ -214,7 +217,15 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     onTokenUsage:         handleTokenUsage,
     onTokenLimitReached:  handleTokenLimitReached,
     onModelChanged:       handleModelChanged,
+    onModelsReceived:     handleModelsReceived,
   })
+
+  // Request available models from goose once connected
+  useEffect(() => {
+    if (status === 'connected') {
+      sendGetModels()
+    }
+  }, [status, sendGetModels])
 
   // Patch handleSend to use the real sendInput (avoid closure ordering issue)
   const handleSendWithWs = useCallback((text: string) => {
@@ -226,6 +237,52 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     }])
     sendInput(text + '\n')
   }, [sendInput])
+
+  // Handle sending with image attachment
+  const handleSendWithImage = useCallback((text: string, imageDataUrl?: string, mimeType?: string) => {
+    const segments: any[] = []
+    if (text) {
+      segments.push({ kind: 'text' as const, content: text })
+    }
+    if (imageDataUrl) {
+      segments.push({ kind: 'image' as const, dataUrl: imageDataUrl, mimeType: mimeType || 'image/png' })
+    }
+    setMessages(prev => [...prev, {
+      id: nextId(),
+      role: 'user',
+      segments: segments.length > 0 ? segments : [{ kind: 'text' as const, content: text }],
+      pending: false,
+    }])
+    if (imageDataUrl) {
+      sendInputWithImage(text + '\n', imageDataUrl, mimeType)
+    } else {
+      sendInput(text + '\n')
+    }
+  }, [sendInput, sendInputWithImage])
+
+  // Handle file uploads to student workspace
+  const handleFilesForUpload = useCallback(async (files: any[]) => {
+    for (const file of files) {
+      if (file.fileType !== 'other') continue
+      
+      try {
+        // Read file as text - backend will handle both text and binary content
+        const fileContent = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsText(file.file, 'latin1')
+        })
+
+        // Upload to workspace under /uploads directory
+        const relativePath = `uploads/${file.file.name}`
+        await api.uploadStudentFile(session.session_id, relativePath, fileContent, session.token)
+        console.log(`✓ File uploaded: ${file.file.name}`)
+      } catch (err) {
+        console.error(`Failed to upload ${file.file.name}:`, err)
+      }
+    }
+  }, [session.session_id, session.token])
 
   // Switch model: call API (writes pending_model.txt) + update local UI immediately
   const handleModelChange = useCallback(async (model: string) => {
@@ -351,6 +408,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
               inputValue={chatInput}
               onInputChange={setChatInput}
               onSend={handleSendWithWs}
+              onSendWithImage={handleSendWithImage}
+              onFilesForUpload={handleFilesForUpload}
               onCancel={sendCancel}
               disabled={status !== 'connected' || aiTyping}
               availableModels={availableModels}

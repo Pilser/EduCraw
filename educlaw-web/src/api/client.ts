@@ -77,6 +77,21 @@ export const api = {
     return res.blob()
   },
 
+  async uploadStudentFile(sessionId: string, filePath: string, content: string | ArrayBuffer, token: string): Promise<void> {
+    const res = await fetch(`${BASE}/files/student/${sessionId}/write?path=${encodeURIComponent(filePath)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ content: typeof content === 'string' ? content : new TextDecoder().decode(content) }),
+    })
+    if (!res.ok) {
+      const error = await res.text()
+      throw new Error(`Failed to upload file: ${error || res.statusText}`)
+    }
+  },
+
   async getProgress(sessionId: string, token: string): Promise<AssignmentProgress | null> {
     const res = await fetch(`${BASE}/sessions/${sessionId}/progress`, {
       headers: { Authorization: `Bearer ${token}` },

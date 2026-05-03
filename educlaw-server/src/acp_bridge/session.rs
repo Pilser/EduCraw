@@ -130,7 +130,7 @@ pub async fn run_acp_session(
 
     // Bootstrap SACP client and create ACP session
     tracing::info!(session_id = %session_id, "🔗 [GOOSE-ACP] Initializing ACP handshake...");
-    let (cx, acp_session_id) = spawn_sacp_client(
+    let (cx, acp_session_id, available_models_from_goose) = spawn_sacp_client(
         child_stdin,
         child_stdout,
         workspace.clone(),
@@ -140,6 +140,9 @@ pub async fn run_acp_session(
         student_id.clone(),
     )
     .await?;
+
+    // Store available models from goose in Arc for WebSocket GetModels handler
+    let available_models_arc = Arc::new(tokio::sync::Mutex::new(available_models_from_goose.clone()));
 
     tracing::info!(
         session_id = %session_id,
@@ -219,6 +222,7 @@ pub async fn run_acp_session(
                     &ctrl_tx,
                     &turn_tx,
                     &last_input_at,
+                    &available_models_arc,
                 )
                 .await;
                 tracing::info!(session_id = %session_id, "✓ [WS] Message processed");
@@ -244,6 +248,7 @@ async fn handle_client_message(
     ctrl_tx: &mpsc::Sender<String>,
     turn_tx: &mpsc::Sender<String>,
     last_input_at: &Arc<AtomicU64>,
+    available_models_arc: &Arc<tokio::sync::Mutex<Vec<String>>>,
 ) {
     match msg {
         ClientMessage::Input { data, image, mime_type } => {
@@ -346,6 +351,75 @@ async fn handle_client_message(
                 tracing::info!(session_id = %session_id_for_prompt, "📤 [WS] Sending frame back to frontend: {}", frame);
                 let _ = turn_tx_prompt.send(frame).await;
             });
+        }
+
+        ClientMessage::GetModels => {
+            tracing::info!(session_id = %session_id, "📋 [GET-MODELS] Requesting available models");
+            // Get available models from goose (source of truth)
+            let goose_models = available_models_arc.lock().await.clone();
+            tracing::debug!(models_from_goose = ?goose_models, count = goose_models.len(), "📋 [GET-MODELS] Got models from goose");
+
+            // Check if student has specific model restrictions in educlaw DB
+            let has_restrictions = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM student_models WHERE student_id = ?"
+            )
+            .bind(student_id)
+            .fetch_one(pool)
+            .await
+            .map(|count| count > 0)
+            .unwrap_or(false);
+
+            // If NO restrictions, use all goose models. If restrictions exist, filter by them.
+            let filtered_models = if !has_restrictions {
+                tracing::info!(student_id = %student_id, count = goose_models.len(), "✓ [GET-MODELS] No restrictions - returning all goose models");
+                goose_models.clone()
+            } else {
+                // Student has specific model restrictions - filter goose models by allowed list
+                match crate::db::models::models_for_student(pool, student_id).await {
+                    Ok(allowed_models) => {
+                        let filtered: Vec<String> = goose_models
+                            .iter()
+                            .filter(|m| allowed_models.contains(m))
+                            .cloned()
+                            .collect();
+                        tracing::debug!(
+                            allowed_by_educlaw = ?allowed_models,
+                            after_filtering = ?filtered,
+                            "📋 [GET-MODELS] Filtered goose models by educlaw restrictions"
+                        );
+                        filtered
+                    }
+                    Err(e) => {
+                        tracing::warn!(student_id = %student_id, error = %e, "✗ [GET-MODELS] Failed to check restrictions");
+                        goose_models.clone()
+                    }
+                }
+            };
+
+            // Get the session's current model (if any), otherwise first available
+            let active = match crate::db::sessions::get_session(pool, session_id).await {
+                Ok(Some(sess)) => {
+                    if let Some(current) = sess.model {
+                        if filtered_models.contains(&current) {
+                            current
+                        } else {
+                            filtered_models.first().cloned().unwrap_or_default()
+                        }
+                    } else {
+                        filtered_models.first().cloned().unwrap_or_default()
+                    }
+                }
+                _ => filtered_models.first().cloned().unwrap_or_default(),
+            };
+
+            let frame = serde_json::json!({
+                "type": "models",
+                "models": filtered_models,
+                "active": active,
+            })
+            .to_string();
+            let _ = ctrl_tx.send(frame).await;
+            tracing::info!(session_id = %session_id, count = filtered_models.len(), active = %active, "✓ [MODELS] Sent to frontend ({} models)", filtered_models.len());
         }
 
         ClientMessage::Cancel => {

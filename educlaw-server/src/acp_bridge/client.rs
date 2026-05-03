@@ -26,11 +26,7 @@ use super::notifications::{notification_to_frames};
 use super::permissions::auto_approve;
 
 /// Spawns the sacp Client task, performs the ACP handshake, and returns the
-/// live connection and ACP session id once the client signals it is ready.
-///
-/// The sacp task runs forever inside its `connect_with` closure
-/// (`std::future::pending()`), draining notifications and responding to
-/// permission requests until the child process exits.
+/// live connection, ACP session id, and available models from goose.
 pub async fn spawn_sacp_client(
     child_stdin: ChildStdin,
     child_stdout: ChildStdout,
@@ -39,13 +35,22 @@ pub async fn spawn_sacp_client(
     notif_tx: mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>,
     pool: SqlitePool,
     student_id: String,
-) -> Result<(ConnectionTo<SacpAgent>, SessionId)> {
+) -> Result<(ConnectionTo<SacpAgent>, SessionId, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
     // Shared handles for extracting cx / session_id from inside connect_with.
     let cx_holder: Arc<tokio::sync::Mutex<Option<ConnectionTo<SacpAgent>>>> =
         Arc::new(tokio::sync::Mutex::new(None));
     let cx_holder_spawn = cx_holder.clone();
+
+    let acp_sid_holder: Arc<tokio::sync::Mutex<Option<SessionId>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+    let acp_sid_spawn = acp_sid_holder.clone();
+
+    // Shared holder for available models from NewSessionResponse
+    let models_holder: Arc<tokio::sync::Mutex<Vec<String>>> =
+        Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let models_holder_spawn = models_holder.clone();
 
     let acp_sid_holder: Arc<tokio::sync::Mutex<Option<SessionId>>> =
         Arc::new(tokio::sync::Mutex::new(None));
@@ -153,7 +158,22 @@ pub async fn spawn_sacp_client(
                         return Err(e);
                     }
                 };
-                *acp_sid_spawn.lock().await = Some(sess_resp.session_id);
+                *acp_sid_spawn.lock().await = Some(sess_resp.session_id.clone());
+
+                // ── Capture available models from SessionModelState ────────────────────────
+                if let Some(model_state) = sess_resp.models {
+                    let model_names: Vec<String> = model_state
+                        .available_models
+                        .iter()
+                        .map(|m| m.name.clone())
+                        .collect();
+                    *models_holder_spawn.lock().await = model_names.clone();
+                    tracing::info!(
+                        model_count = model_names.len(),
+                        models = ?model_names,
+                        "✓ [GOOSE-ACP] Captured available models from SessionModelState"
+                    );
+                }
 
                 // ── Set initial model if specified ─────────────────────
                 if let Some(ref m) = model_for_init {
@@ -228,17 +248,17 @@ pub async fn spawn_sacp_client(
         .await
         .clone()
         .expect("acp session_id set after ready signal");
+    let available_models = models_holder
+        .lock()
+        .await
+        .clone();
 
     tracing::info!(
         acp_session_id = %acp_session_id.0,
-        "✓ [GOOSE-ACP] ╔════════════════════════════════════════╗"
-    );
-    tracing::info!(
-        "✓ [GOOSE-ACP] ║  Ready for prompts - ACP active      ║"
-    );
-    tracing::info!(
-        "✓ [GOOSE-ACP] ╚════════════════════════════════════════╝"
+        model_count = available_models.len(),
+        "✓ [GOOSE-ACP] Ready with {} available models",
+        available_models.len()
     );
 
-    Ok((cx, acp_session_id))
+    Ok((cx, acp_session_id, available_models))
 }

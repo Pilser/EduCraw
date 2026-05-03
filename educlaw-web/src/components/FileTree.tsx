@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronRight, Folder, FileText, File, FileJson, FileCode, Image, FileStack } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { ChevronDown, ChevronRight, Folder, FileText, File, FileJson, FileCode, Image, FileStack, Upload, AlertCircle } from 'lucide-react'
 import { api } from '../api/client'
 import type { FileNode } from '../api/types'
 
@@ -80,6 +80,9 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
   const [files, setFiles]   = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const fetchFiles = () => {
@@ -124,6 +127,50 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
     return () => clearInterval(interval)
   }, [tab, token, subjectIds, sessionId])
 
+  // Handle file upload directly to workspace
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.currentTarget.files
+    if (!files || files.length === 0) return
+
+    setUploading(true)
+    setUploadError('')
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        
+        // Read file content - use text with latin1 encoding to preserve binary
+        const content = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsText(file, 'latin1')
+        })
+
+        // Upload to workspace under /uploads directory
+        const relativePath = `uploads/${file.name}`
+        await api.uploadStudentFile(sessionId, relativePath, content, token)
+      }
+
+      // Reset input and refresh file list
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      
+      // Trigger immediate refresh
+      setTimeout(() => {
+        setTab('mine')
+        setLoading(true)
+        api.listStudentFiles(sessionId, token)
+          .then(setFiles)
+          .catch(e => setError(e instanceof Error ? e.message : 'Failed to load files'))
+          .finally(() => setLoading(false))
+      }, 100)
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Tabs */}
@@ -155,6 +202,34 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
           </button>
         ))}
       </div>
+
+      {/* Upload button - show only on "My Files" tab */}
+      {tab === 'mine' && (
+        <div className="shrink-0 px-2 md:px-3 py-2 border-b border-slate-200 bg-blue-50">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileUpload}
+            className="hidden"
+            disabled={uploading}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-400 text-white rounded-wp-md text-xs md:text-sm font-semibold transition-all shadow-sm hover:shadow-md disabled:cursor-not-allowed"
+          >
+            <Upload className="w-4 h-4" />
+            <span>{uploading ? 'Uploading...' : 'Add File'}</span>
+          </button>
+          {uploadError && (
+            <div className="flex items-center gap-1.5 mt-2 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-xs">
+              <AlertCircle className="w-3 h-3 shrink-0" />
+              <span>{uploadError}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* File list */}
       <div className="flex-1 overflow-y-auto py-1 md:py-2 px-0.5 md:px-1">

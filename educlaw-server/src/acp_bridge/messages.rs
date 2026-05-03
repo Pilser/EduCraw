@@ -16,6 +16,9 @@ pub enum ClientMessage {
         #[serde(default)]
         mime_type: Option<String>,
     },
+    /// Request available models for this session.
+    /// Backend returns: {"type":"models","models":[...],"active":"..."}
+    GetModels,
     /// Terminal resize event (no-op for ACP — goose runs headless).
     Resize { cols: u16, rows: u16 },
     /// Cancel the current in-flight prompt.

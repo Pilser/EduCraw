@@ -49,6 +49,56 @@ pub fn spawn_model_poller(
             // repeated attempts if the request fails.
             let _ = tokio::fs::remove_file(&pending_model_path).await;
 
+            // Validate student is allowed to use this model (permission enforcement)
+            let allowed_to_switch = match db_sess::get_session(&pool, &session_id).await {
+                Ok(Some(sess)) => {
+                    match crate::db::models::models_for_student(&pool, &sess.student_id).await {
+                        Ok(allowed_models) => {
+                            if allowed_models.contains(&model_name) {
+                                tracing::info!(
+                                    model = %model_name,
+                                    student_id = %sess.student_id,
+                                    "✓ [MODEL-POLLER] Student permitted to use model"
+                                );
+                                true
+                            } else {
+                                tracing::warn!(
+                                    model = %model_name,
+                                    student_id = %sess.student_id,
+                                    "✗ [MODEL-POLLER] Model not in student's allowed list (ACCESS DENIED)"
+                                );
+                                false
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                model = %model_name,
+                                error = %e,
+                                "✗ [MODEL-POLLER] Failed to check student permissions"
+                            );
+                            false
+                        }
+                    }
+                }
+                _ => {
+                    tracing::warn!(
+                        model = %model_name,
+                        session_id = %session_id,
+                        "✗ [MODEL-POLLER] Session not found (cannot verify permissions)"
+                    );
+                    false
+                }
+            };
+
+            if !allowed_to_switch {
+                tracing::warn!(
+                    model = %model_name,
+                    session_id = %session_id,
+                    "[MODEL-POLLER] Rejecting unauthorized model switch attempt"
+                );
+                continue;
+            }
+
             match cx
                 .send_request(SetSessionModelRequest::new(
                     acp_session_id.clone(),

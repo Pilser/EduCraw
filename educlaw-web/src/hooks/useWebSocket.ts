@@ -16,12 +16,13 @@ interface Options {
   onTokenUsage?: (usage: TurnTokenUsage) => void
   onTokenLimitReached?: (banner: string) => void
   onModelChanged?: (model: string) => void
+  onModelsReceived?: (models: string[], active: string) => void
 }
 
 export function useWebSocket({
   sessionId, token, onPtyData, onImage,
   onChatStart, onToolStart, onToolEnd, onAssistantText, onChatEnd,
-  onTokenUsage, onTokenLimitReached, onModelChanged,
+  onTokenUsage, onTokenLimitReached, onModelChanged, onModelsReceived,
 }: Options) {
   const [status, setStatus] = useState<WsStatus>('connecting')
   const wsRef = useRef<WebSocket | null>(null)
@@ -36,12 +37,28 @@ export function useWebSocket({
     send({ type: 'input', data })
   }, [send])
 
+  const sendInputWithImage = useCallback(
+    (data: string, imageDataUrl?: string, mimeType?: string) => {
+      const msg: any = { type: 'input', data }
+      if (imageDataUrl) {
+        msg.image = imageDataUrl
+        msg.mime_type = mimeType || 'image/png'
+      }
+      send(msg)
+    },
+    [send]
+  )
+
   const sendResize = useCallback((cols: number, rows: number) => {
     send({ type: 'resize', cols, rows })
   }, [send])
 
   const sendCancel = useCallback(() => {
     send({ type: 'cancel' })
+  }, [send])
+
+  const sendGetModels = useCallback(() => {
+    send({ type: 'getmodels' })
   }, [send])
 
   useEffect(() => {
@@ -121,6 +138,12 @@ export function useWebSocket({
             case 'model_changed':
               if (frame.model) onModelChanged?.(frame.model)
               break
+            case 'models': {
+              const models = (frame as any).models ?? []
+              const active = (frame as any).active ?? ''
+              onModelsReceived?.(models, active)
+              break
+            }
             default:
               break
           }
@@ -141,5 +164,5 @@ export function useWebSocket({
     }
   }, [sessionId, token, onPtyData, onImage, onChatStart, onToolStart, onToolEnd, onAssistantText, onChatEnd, onTokenUsage, onTokenLimitReached, onModelChanged])
 
-  return { status, sendInput, sendResize, sendCancel }
+  return { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels }
 }

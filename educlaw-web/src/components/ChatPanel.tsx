@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -7,12 +7,15 @@ import { Send, Square, Zap, AlertCircle, Bot, User } from 'lucide-react'
 import type { ChatMessage, MessageSegment, TokenUsage } from '../api/types'
 import ToolCallCard from './ToolCallCard'
 import ChatFilePreview from './ChatFilePreview'
+import FileInputAttachment, { type AttachedFile, type FileInputAttachmentHandle } from './FileInputAttachment'
 
 interface Props {
   messages: ChatMessage[]
   inputValue: string
   onInputChange: (v: string) => void
   onSend: (text: string) => void
+  onSendWithImage?: (text: string, imageDataUrl?: string, mimeType?: string) => void
+  onFilesForUpload?: (files: AttachedFile[]) => void
   onCancel?: () => void
   disabled: boolean
   // model selector
@@ -82,6 +85,15 @@ interface SegmentViewProps {
 
 function SegmentView({ seg, sessionId, token, onFileSelect }: SegmentViewProps) {
   if (seg.kind === 'tool') return <ToolCallCard seg={seg} />
+  if (seg.kind === 'image') {
+    return (
+      <img 
+        src={seg.dataUrl} 
+        alt="Attached image" 
+        className="rounded-wp-md border border-wp-border-mid max-w-full h-auto my-2 shadow-sm" 
+      />
+    )
+  }
   
   return (
     <ReactMarkdown 
@@ -127,11 +139,23 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
       {/* Bubble */}
       <div className={`max-w-xs sm:max-w-sm md:max-w-xl lg:max-w-2xl rounded-2xl px-5 py-4 shadow-sm leading-relaxed transition-all
         ${isUser
-          ? 'bg-wp-accent text-wp-on-accent rounded-tr-sm font-medium text-base'
+          ? 'bg-wp-accent text-wp-on-accent rounded-tr-sm font-medium text-base border-2 border-wp-accentMuted shadow-md'
           : `bg-wp-surface border border-wp-border-mid text-wp-text-primary rounded-tl-sm text-base ${msg.pending ? 'ring-2 ring-violet-300 ring-opacity-50' : ''}`
         }`}>
         {isUser ? (
-          <p className="whitespace-pre-wrap break-words">{userText}</p>
+          <div className="space-y-3">
+            {userText && <p className="whitespace-pre-wrap break-words">{userText}</p>}
+            {msg.segments.filter(s => s.kind === 'image').map((seg, i) => (
+              seg.kind === 'image' && (
+                <img
+                  key={i}
+                  src={seg.dataUrl}
+                  alt="Sent image"
+                  className="rounded-wp-md max-w-full h-auto border border-wp-on-accent/20 shadow-sm"
+                />
+              )
+            ))}
+          </div>
         ) : (
           <div className="prose max-w-none
             prose-headings:font-bold prose-headings:text-wp-text-primary
@@ -169,17 +193,33 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
 }
 
 export default function ChatPanel({
-  messages, inputValue, onInputChange, onSend, onCancel, disabled,
+  messages, inputValue, onInputChange, onSend, onSendWithImage, onFilesForUpload, onCancel, disabled,
   availableModels, activeModel, onModelChange,
   tokenUsage, tokenBlocked, tokenBannerText,
   sessionId, token, onFileSelect,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputAttachmentRef = useRef<FileInputAttachmentHandle>(null)
+  const [attachedImage, setAttachedImage] = useState<AttachedFile | null>(null)
+  const [filesToUpload, setFilesToUpload] = useState<AttachedFile[]>([])
+  const [uploadStatus, setUploadStatus] = useState<string>('')
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const handleImageSelected = useCallback((file: AttachedFile | null) => {
+    setAttachedImage(file)
+  }, [])
+
+  const handleFilesReadyForUpload = useCallback((files: AttachedFile[]) => {
+    setFilesToUpload(files)
+  }, [])
+
+  const handleStatusChange = useCallback((status: string) => {
+    setUploadStatus(status)
+  }, [])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -190,9 +230,27 @@ export default function ChatPanel({
 
   function doSend() {
     const text = inputValue.trim()
-    if (!text || disabled || tokenBlocked) return
-    onSend(text)
+    if (!text && !attachedImage && filesToUpload.length === 0) return
+    if (disabled || tokenBlocked) return
+
+    // If there's an attached image and onSendWithImage is provided, use it
+    if (attachedImage && onSendWithImage) {
+      onSendWithImage(text, attachedImage.dataUrl, attachedImage.mimeType)
+    } else {
+      // Otherwise use regular send
+      onSend(text)
+    }
+
+    // Upload files if present
+    if (filesToUpload.length > 0 && onFilesForUpload) {
+      onFilesForUpload(filesToUpload)
+    }
+
     onInputChange('')
+    setAttachedImage(null)
+    setFilesToUpload([])
+    setUploadStatus('')
+    fileInputAttachmentRef.current?.clearAll()
     setTimeout(() => textareaRef.current?.focus(), 0)
   }
 
@@ -206,7 +264,7 @@ export default function ChatPanel({
       {/* ── Top bar: model selector + token usage ─────────────────────────── */}
       <div className="shrink-0 flex items-center gap-3 px-4 py-3 bg-wp-surface border-b border-wp-border-mid flex-wrap">
         {/* Model selector */}
-        {availableModels && availableModels.length > 0 && (
+        {availableModels && availableModels.length > 0 ? (
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-wp-text-secondary uppercase tracking-wide">Model</span>
             <select
@@ -221,6 +279,11 @@ export default function ChatPanel({
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-wp-text-secondary uppercase tracking-wide">Model</span>
+            <span className="text-xs text-wp-text-tertiary italic">Loading models...</span>
           </div>
         )}
 
@@ -271,55 +334,74 @@ export default function ChatPanel({
             Messaging is disabled — token limit reached.
           </p>
         ) : (
-          <div className="flex gap-2 md:gap-3 items-end">
-            <textarea
-              ref={textareaRef}
-              className="flex-1 resize-none rounded-wp-lg border-2 border-wp-border-mid px-3 md:px-4 py-2 md:py-3 text-sm md:text-base text-wp-text-primary
-                placeholder:text-wp-text-tertiary focus:outline-none focus:ring-2 focus:ring-wp-accent focus:border-wp-accent
-                bg-wp-page max-h-40 min-h-[2.5rem] md:min-h-[3rem] font-sans transition-all shadow-sm"
-              placeholder="Ask EduClaw anything… (Enter to send, Shift+Enter for new line)"
-              rows={1}
-              value={inputValue}
-              onChange={e => {
-                onInputChange(e.target.value)
-                e.target.style.height = 'auto'
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
-              }}
-              onKeyDown={handleKeyDown}
+          <div className="flex flex-col gap-2">
+            {/* File input attachment component */}
+            <FileInputAttachment
+              ref={fileInputAttachmentRef}
+              onImageSelected={handleImageSelected}
+              onFilesUploaded={handleFilesReadyForUpload}
+              onStatusChange={handleStatusChange}
               disabled={disabled}
             />
-            {disabled && onCancel && (
-              <button
-                onClick={onCancel}
-                className="shrink-0 px-3 md:px-4 py-2 md:py-3 rounded-wp-lg bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold flex items-center justify-center gap-1 md:gap-2 transition-all shadow-lg hover:shadow-xl text-xs md:text-sm border border-red-700"
-                title="Stop generating"
-              >
-                <Square className="w-4 h-4" />
-                <span className="hidden sm:inline">Stop</span>
-              </button>
+
+            {/* Show attachment status */}
+            {uploadStatus && (
+              <div className="text-xs text-wp-text-secondary flex items-center gap-2 px-2">
+                {uploadStatus}
+              </div>
             )}
-            <button
-              onClick={doSend}
-              disabled={disabled || !inputValue.trim()}
-              className="shrink-0 px-3 md:px-5 py-2 md:py-3 rounded-wp-lg bg-wp-accent hover:bg-wp-accent-hover active:bg-wp-accent disabled:bg-wp-border-soft
-                disabled:cursor-not-allowed text-wp-on-accent font-bold flex items-center justify-center gap-1 md:gap-2 transition-all shadow-lg hover:shadow-xl disabled:shadow text-xs md:text-sm border border-wp-accent-hover disabled:border-wp-border-soft whitespace-nowrap"
-              title="Send (Enter)"
-            >
-              {disabled
-                ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-wp-on-accent/40 border-t-wp-on-accent rounded-full animate-spin" />
-                    <span>Sending…</span>
-                  </>
-                )
-                : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>Send</span>
-                  </>
-                )
-              }
-            </button>
+
+            {/* Input area */}
+            <div className="flex gap-2 md:gap-3 items-end">
+              <textarea
+                ref={textareaRef}
+                className="flex-1 resize-none rounded-wp-lg border-2 border-wp-border-mid px-3 md:px-4 py-2 md:py-3 text-sm md:text-base text-wp-text-primary
+                  placeholder:text-wp-text-tertiary focus:outline-none focus:ring-2 focus:ring-wp-accent focus:border-wp-accent
+                  bg-wp-page max-h-40 min-h-[2.5rem] md:min-h-[3rem] font-sans transition-all shadow-sm"
+                placeholder="Ask EduClaw anything… (Enter to send, Shift+Enter for new line)"
+                rows={1}
+                value={inputValue}
+                onChange={e => {
+                  onInputChange(e.target.value)
+                  e.target.style.height = 'auto'
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
+                }}
+                onKeyDown={handleKeyDown}
+                disabled={disabled}
+              />
+              {disabled && onCancel && (
+                <button
+                  onClick={onCancel}
+                  className="shrink-0 px-3 md:px-4 py-2 md:py-3 rounded-wp-lg bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold flex items-center justify-center gap-1 md:gap-2 transition-all shadow-lg hover:shadow-xl text-xs md:text-sm border border-red-700"
+                  title="Stop generating"
+                >
+                  <Square className="w-4 h-4" />
+                  <span className="hidden sm:inline">Stop</span>
+                </button>
+              )}
+              <button
+                onClick={doSend}
+                disabled={disabled || (!inputValue.trim() && !attachedImage && filesToUpload.length === 0)}
+                className="shrink-0 px-3 md:px-5 py-2 md:py-3 rounded-wp-lg bg-wp-accent hover:bg-wp-accent-hover active:bg-wp-accent disabled:bg-wp-border-soft
+                  disabled:cursor-not-allowed text-wp-on-accent font-bold flex items-center justify-center gap-1 md:gap-2 transition-all shadow-lg hover:shadow-xl disabled:shadow text-xs md:text-sm border border-wp-accent-hover disabled:border-wp-border-soft whitespace-nowrap"
+                title="Send (Enter)"
+              >
+                {disabled
+                  ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-wp-on-accent/40 border-t-wp-on-accent rounded-full animate-spin" />
+                      <span>Sending…</span>
+                    </>
+                  )
+                  : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Send</span>
+                    </>
+                  )
+                }
+              </button>
+            </div>
           </div>
         )}
       </div>

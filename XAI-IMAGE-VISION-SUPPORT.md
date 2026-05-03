@@ -4,7 +4,7 @@
 
 ### Evidence in Goose Code
 
-**xAI Model List** (goose-source-code/crates/goose/src/providers/xai.rs):
+**xAI Model List** (goose-workspace/crates/goose/src/providers/xai.rs):
 ```rust
 pub const XAI_KNOWN_MODELS: &[&str] = &[
     "grok-code-fast-1",
@@ -35,7 +35,7 @@ pub const XAI_KNOWN_MODELS: &[&str] = &[
 ## HOW IMAGES ARE HANDLED IN GOOSE
 
 ### 1. **Message Content Types**
-File: `goose-source-code/crates/goose/src/conversation/message.rs`
+File: `goose-workspace/crates/goose/src/conversation/message.rs`
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ Goose natively supports `ImageContent` as a message type.
 ---
 
 ### 2. **Image Format Conversion**
-File: `goose-source-code/crates/goose/src/providers/utils.rs`
+File: `goose-workspace/crates/goose/src/providers/utils.rs`
 
 ```rust
 #[derive(Debug, Copy, Clone)]
@@ -92,7 +92,7 @@ pub fn convert_image(image: &ImageContent, image_format: &ImageFormat) -> Value 
 ---
 
 ### 3. **Image Message Formatting**
-File: `goose-source-code/crates/goose/src/providers/formats/openai.rs`
+File: `goose-workspace/crates/goose/src/providers/formats/openai.rs`
 
 ```rust
 pub fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Value> {
