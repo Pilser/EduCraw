@@ -1,0 +1,128 @@
+// educlaw-server/src/session/namespace.rs
+//
+// OverlayFS management (via fuse-overlayfs) and claw session spawn.
+// Uses the unshare(mount+pid) approach — no Docker, sub-100ms startup.
+
+use std::path::Path;
+
+use tokio::process::Command;
+
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt as _;
+
+use crate::error::{AppError, Result};
+use crate::session::dirs::SessionDirs;
+
+// ── OverlayFS ──────────────────────────────────────────────────────────────
+
+/// Mount fuse-overlayfs over the session's lower/upper/work dirs into merged/.
+pub async fn mount_overlay(dirs: &SessionDirs) -> Result<()> {
+    let output = Command::new("fuse-overlayfs")
+        .arg("-o")
+        .arg(format!(
+            "lowerdir={},upperdir={},workdir={}",
+            dirs.lower.display(),
+            dirs.upper.display(),
+            dirs.work.display(),
+        ))
+        .arg(dirs.merged.display().to_string())
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("fuse-overlayfs failed to start: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!(
+            "fuse-overlayfs mount failed: {stderr}"
+        )));
+    }
+    Ok(())
+}
+
+/// Unmount fuse-overlayfs (best-effort — does not propagate errors).
+pub async fn umount_overlay(merged: &Path) {
+    let _ = Command::new("fusermount")
+        .arg("-u")
+        .arg(merged.display().to_string())
+        .output()
+        .await;
+}
+
+
+
+// ── Session spawn ──────────────────────────────────────────────────────────
+//
+// Primary spawn path: pty_bridge.rs uses portable-pty which handles PTY
+// attachment. This function is the namespace-only wrapper, useful for
+// headless sessions or future broker-managed spawns.
+
+#[derive(Debug)]
+pub struct SpawnParams {
+    pub session_id: String,
+    pub student_json: String,
+    pub dirs: SessionDirs,
+    pub claw_bin: String,
+    pub model: Option<String>,
+    /// Extra env vars (API keys, etc.) to forward into the session.
+    pub env: Vec<(String, String)>,
+}
+
+/// Spawn `claw` inside `unshare --mount --pid --fork`.
+/// Returns the OS PID of the outer wrapper process.
+pub async fn spawn_claw_session(params: &SpawnParams) -> Result<u32> {
+    let mut claw_args = vec![params.claw_bin.clone()];
+    if let Some(ref model) = params.model {
+        claw_args.push("--model".to_string());
+        claw_args.push(model.clone());
+    }
+    let claw_cmd = claw_args.join(" ");
+
+    let mut cmd = Command::new("unshare");
+    cmd.args(["--user", "--map-root-user", "--mount", "--pid", "--fork", "sh", "-c", &claw_cmd]);
+    cmd.current_dir(&params.dirs.merged);
+    cmd.env("CLAW_CONFIG_HOME", &params.dirs.config);
+    cmd.env("EDUCLAW_STUDENT_JSON", &params.student_json);
+    cmd.env("EDUCLAW_SESSION_ID", &params.session_id);
+    cmd.env("EDUCLAW_WORKSPACE", &params.dirs.merged);
+    for (key, value) in &params.env {
+        cmd.env(key, value);
+    }
+
+    // Apply seccomp BPF deny-list in the child process (Linux only).
+    // Built once here in the parent, serial-copied into the pre_exec closure.
+    #[cfg(target_os = "linux")]
+    {
+        match crate::security::seccomp::build_student_filter() {
+            Ok(filter) => {
+                // SAFETY: pre_exec runs in the child after fork(), single-threaded,
+                // before exec(). seccompiler::apply_filter is async-signal-safe
+                // (only calls prctl).
+                unsafe {
+                    cmd.pre_exec(move || {
+                        seccompiler::apply_filter(&filter)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                        Ok(())
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::warn!("seccomp filter build failed, running without: {e}");
+            }
+        }
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::Session(format!("failed to spawn claw: {e}")))?;
+
+    let pid = child
+        .id()
+        .ok_or_else(|| AppError::Session("spawned process has no PID".to_string()))?;
+
+    // Let Tokio reap the child when it exits; PTY bridge manages the actual I/O.
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+
+    Ok(pid)
+}
