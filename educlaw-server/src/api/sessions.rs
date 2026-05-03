@@ -93,22 +93,15 @@ async fn create_session(
     dirs.create_all()
         .map_err(|e| AppError::Session(format!("failed to create session dirs: {e}")))?;
 
-    // Write student context into the upper (persistent) layer BEFORE OverlayFS mounts.
-    // claw reads instructions.md while building the system prompt — before init.sh runs.
-    // Writing to upper/ directly means the file appears in merged/ after the mount.
-    //
-    // We also base64-encode a short tutor intro and store it in student.json so ws.rs
-    // can forward it as EDUCLAW_SYSTEM_PROMPT — that replaces claw's hardcoded
-    // "software engineering tasks" opening section (section #1 of the system prompt).
-    let (instructions_md, system_prompt_b64) = {
+    // Generate system prompt override (tutor intro) for this student.
+    // This is JSON-encoded and stored in student.json so the ACP session can use it.
+    let system_prompt_b64 = {
         let display_name = if student.display_name.trim().is_empty() {
             student.username.clone()
         } else {
             student.display_name.clone()
         };
-        let workspace_path = dirs.merged.display().to_string();
 
-        // ── Layer 1: tutor intro (replaces hardcoded section #1 via env var) ──
         let intro = format!(
             "You are a personal AI tutor for {display_name}.\n\
              \n\
@@ -134,50 +127,8 @@ async fn create_session(
                do not describe what the result would look like instead of showing it.\
             "
         );
-        // JSON-encode the intro so it is safe as a single env var value (newlines and
-        // quotes become \n / \") while remaining readable in logs and student.json.
-        let b64 = serde_json::to_string(&intro).unwrap_or_default();
-
-        // ── Layer 2: instructions.md — session context + workspace tree ──
-        let tree = build_workspace_tree(&dirs.lower, &dirs.upper);
-        let md = format!(
-            "## Student context\n\
-             - Name: {display_name}\n\
-             - Session ID: {session_id}\n\
-             {cohort_line}\
-             \n\
-             ## Workspace layout\n\
-             \n\
-             {tree}\n\
-             \n\
-             ## How to use the workspace\n\
-             - Subject materials are in the subject folders above (read-only).\n\
-             - Use your tools to open files dont wait student to ask you becuse he/she \n\
-               might not even know that they exist. Summarise in plain language — do not quote large raw blocks.\n\
-             - Use Python,or bash to solve equations, draw diagrams,To open PDF files\n\
-               or compute answers. These are your internal tools — show only the result.\n\
-             - The student's personal files (if any) are their saved work. Treat with care. Use python to convert pdf to .md in student's root if you want to read it,if it fails Tell Student The file was scanned You cant Read it\n\
-             - Working directory: {workspace_path}\n\
-             \n\
-             ## Image / plot rules\n\
-             - Always save plots with `plt.savefig('name.png')` — never use `plt.show()`.\n\
-             - Never print, cat, or pipe binary file contents to the terminal.\n\
-             - After saving, tell the student the filename so they can view it in this formart for frontend to render it well  ![Title of File](file_name.file-extension). Use this everytime showing any file to Student even if its in subject Folder metods stays the same.\n",
-            cohort_line = if student.cohort_id.is_empty() {
-                String::new()
-            } else {
-                format!("- Cohort ID: {}\n", student.cohort_id)
-            },
-        );
-
-        (md, b64)
+        serde_json::to_string(&intro).unwrap_or_default()
     };
-
-    let claw_dir = dirs.upper.join(".claw");
-    std::fs::create_dir_all(&claw_dir)
-        .map_err(|e| AppError::Session(format!("failed to create .claw dir: {e}")))?;
-    std::fs::write(claw_dir.join("instructions.md"), &instructions_md)
-        .map_err(|e| AppError::Session(format!("failed to write instructions.md: {e}")))?;
 
     // Write initial settings.json so claw can configure permissions.
     // init.sh will merge its own keys (systemPrompt, permissionMode) into this.
@@ -227,11 +178,6 @@ async fn create_session(
 
     // Mount OverlayFS
     mount_overlay(&dirs).await?;
-
-    // Create logs directory for claw diagnostic output
-    let logs_dir = dirs.upper.join(".claw/logs");
-    std::fs::create_dir_all(&logs_dir)
-        .map_err(|e| AppError::Session(format!("failed to create logs directory: {e}")))?;
 
     // Resolve subject slugs for this cohort
     let subject_ids: Vec<String> = if student.cohort_id.is_empty() {
@@ -335,8 +281,6 @@ async fn create_session(
         // Force matplotlib to use the non-interactive Agg backend so plt.show()
         // never blocks waiting for a GUI display that doesn't exist.
         ("MPLBACKEND".to_string(), "Agg".to_string()),
-        // Pass log file path to claw so it can write diagnostics
-        ("CLAW_LOG_FILE".to_string(), logs_dir.join("claw.log").display().to_string()),
     ];
     
     if let Some(latest_session_id) = detect_latest_student_session(&dirs.upper) {

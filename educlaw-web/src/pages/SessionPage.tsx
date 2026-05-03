@@ -72,7 +72,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   // Model + token state
   const [availableModels, setAvailableModels] = useState<string[]>([])
-  const [activeModel, setActiveModel]         = useState<string>('grok-4-1-fast-reasoning')
+  // Use grok-3-fast (valid xAI model; grok-4-1-fast-reasoning doesn't exist)
+  const [activeModel, setActiveModel]         = useState<string>('grok-3-fast')
   const [tokenUsage, setTokenUsage]           = useState<TokenUsage | null>(null)
   const [tokenBlocked, setTokenBlocked]       = useState(false)
   const [tokenBannerText, setTokenBannerText] = useState('')

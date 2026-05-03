@@ -89,7 +89,7 @@ pub async fn spawn_sacp_client(
                 *cx_holder_spawn.lock().await = Some(cx.clone());
 
                 // ── ACP Initialize ─────────────────────────────────────
-                if let Err(e) = cx
+                match cx
                     .send_request(
                         InitializeRequest::new(ProtocolVersion::LATEST)
                             .client_capabilities(ClientCapabilities::new()),
@@ -97,13 +97,29 @@ pub async fn spawn_sacp_client(
                     .block_task()
                     .await
                 {
-                    tracing::error!("ACP initialize failed: {e}");
-                    if let Some(tx) = ready_tx_spawn.lock().await.take() {
-                        let _ = tx.send(Err(AppError::Session(format!(
-                            "ACP initialize failed: {e}"
-                        ))));
+                    Ok(init_resp) => {
+                        tracing::info!(
+                            "✓ [GOOSE-ACP] Initialize response received"
+                        );
+                        tracing::debug!(
+                            "📋 [GOOSE-ACP] Protocol: {:?}, Load session: {}, MCP enabled: {}",
+                            init_resp.protocol_version,
+                            init_resp.agent_capabilities.load_session,
+                            init_resp.agent_capabilities.mcp_capabilities.http
+                        );
                     }
-                    return Err(e);
+                    Err(e) => {
+                        tracing::error!(
+                            "✗ [GOOSE-ACP] Initialize FAILED: {}",
+                            e
+                        );
+                        if let Some(tx) = ready_tx_spawn.lock().await.take() {
+                            let _ = tx.send(Err(AppError::Session(format!(
+                                "ACP initialize failed: {e}"
+                            ))));
+                        }
+                        return Err(e);
+                    }
                 }
 
                 // ── Create ACP session ─────────────────────────────────
@@ -112,9 +128,23 @@ pub async fn spawn_sacp_client(
                     .block_task()
                     .await
                 {
-                    Ok(r) => r,
+                    Ok(r) => {
+                        tracing::info!(
+                            session_id = %r.session_id.0,
+                            "✓ [GOOSE-ACP] Session created successfully"
+                        );
+                        tracing::debug!(
+                            "📋 [GOOSE-ACP] Session ID: {}, Workspace: {}",
+                            r.session_id.0,
+                            workspace.display()
+                        );
+                        r
+                    }
                     Err(e) => {
-                        tracing::error!("ACP new_session failed: {e}");
+                        tracing::error!(
+                            "✗ [GOOSE-ACP] Session creation FAILED: {}",
+                            e
+                        );
                         if let Some(tx) = ready_tx_spawn.lock().await.take() {
                             let _ = tx.send(Err(AppError::Session(format!(
                                 "ACP new_session failed: {e}"
@@ -127,19 +157,32 @@ pub async fn spawn_sacp_client(
 
                 // ── Set initial model if specified ─────────────────────
                 if let Some(ref m) = model_for_init {
-                    if let Err(e) = cx
-                        .send_request(SetSessionModelRequest::new(
-                            acp_sid_spawn
-                                .lock()
-                                .await
-                                .clone()
-                                .expect("session_id just set"),
-                            m.clone(),
-                        ))
+                    let sid = acp_sid_spawn
+                        .lock()
+                        .await
+                        .clone()
+                        .expect("session_id just set");
+                    tracing::debug!(model = %m, "📋 [GOOSE-ACP] Attempting to set model");
+                    match cx
+                        .send_request(SetSessionModelRequest::new(sid.clone(), m.clone()))
                         .block_task()
                         .await
                     {
-                        tracing::warn!(model = %m, error = %e, "failed to set initial model");
+                        Ok(_) => {
+                            tracing::info!(
+                                model = %m,
+                                "✓ [GOOSE-ACP] Model set successfully"
+                            );
+                        }
+                        Err(e) => {
+                            // Don't fail the session on model set error
+                            // Goose may have a different default or require different model name
+                            tracing::warn!(
+                                model = %m,
+                                error = %e,
+                                "⚠️  [GOOSE-ACP] Failed to set model (continuing with goose default)"
+                            );
+                        }
                     }
                 }
 
@@ -154,15 +197,21 @@ pub async fn spawn_sacp_client(
             .await;
 
         if let Err(e) = result {
-            tracing::error!("sacp client terminated with error: {e}");
+            tracing::error!("✗ [GOOSE-ACP] Client terminated with error: {e}");
         }
     });
 
     // Wait for the client to finish initialization before handing control back.
     match ready_rx.await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(e),
+        Ok(Ok(())) => {
+            tracing::debug!("📋 [GOOSE-ACP] Initialization complete, proceeding");
+        }
+        Ok(Err(e)) => {
+            tracing::error!("✗ [GOOSE-ACP] Initialization error: {e}");
+            return Err(e);
+        }
         Err(_) => {
+            tracing::error!("✗ [GOOSE-ACP] Client dropped unexpectedly during init");
             return Err(AppError::Session(
                 "goose ACP client dropped before ready".into(),
             ))
@@ -179,6 +228,17 @@ pub async fn spawn_sacp_client(
         .await
         .clone()
         .expect("acp session_id set after ready signal");
+
+    tracing::info!(
+        acp_session_id = %acp_session_id.0,
+        "✓ [GOOSE-ACP] ╔════════════════════════════════════════╗"
+    );
+    tracing::info!(
+        "✓ [GOOSE-ACP] ║  Ready for prompts - ACP active      ║"
+    );
+    tracing::info!(
+        "✓ [GOOSE-ACP] ╚════════════════════════════════════════╝"
+    );
 
     Ok((cx, acp_session_id))
 }

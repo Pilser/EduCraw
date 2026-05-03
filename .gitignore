@@ -21,3 +21,12 @@ goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/test_image.pd
 goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/sample.docx
 goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/test.pdf
 goose-workspace/goose
+
+open-design/
+bin
+deploy
+.copilot
+test-goose-home/data
+test-goose-home/state
+goose-home/data
+goose-home/state

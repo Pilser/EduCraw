@@ -4,6 +4,8 @@
 // GET  /students        — list all students (admin)
 // GET  /students/:id    — get one student by id (admin)
 
+use std::path::PathBuf;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -25,6 +27,25 @@ pub fn routes() -> Router<AppState> {
         .route("/students", post(create_student))
         .route("/students", get(list_students))
         .route("/students/:id", get(get_student))
+}
+
+// Recursively copy directory and all contents
+fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let src_path = entry.path();
+        let file_name = entry.file_name();
+        let dst_path = dst.join(&file_name);
+        
+        if ty.is_dir() {
+            copy_dir_all(&src_path.into(), &dst_path.into())?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 // ── Create student ────────────────────────────────────────────────────────
@@ -62,6 +83,34 @@ async fn create_student(
     };
 
     students::insert_student(&state.pool, &student).await?;
+
+    // Copy goose config template to student's persistent directory
+    let student_dir = PathBuf::from(&state.students_root).join(&student.username);
+    let goose_template = PathBuf::from("/srv/educraw/templates/goose-config/config");
+    let goose_dst = student_dir.join("config");
+
+    if goose_template.exists() {
+        if let Err(e) = copy_dir_all(&goose_template, &goose_dst) {
+            tracing::warn!(
+                student_id = %student.id,
+                error = %e,
+                "failed to copy goose config template"
+            );
+        } else {
+            // Set file permissions: config.yaml 644, secrets.yaml 600
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(goose_dst.join("config.yaml"), std::fs::Permissions::from_mode(0o644));
+                let _ = std::fs::set_permissions(goose_dst.join("secrets.yaml"), std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    } else {
+        tracing::warn!(
+            path = %goose_template.display(),
+            "goose config template not found at /srv/educraw/templates/goose-config/config"
+        );
+    }
 
     tracing::info!(
         student_id = %student.id,

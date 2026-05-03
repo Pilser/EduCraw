@@ -4,13 +4,15 @@
 //
 // `run_acp_session` is the single public entry point called by the WebSocket
 // handler.  It:
-//   1. Writes the per-student system-prompt override to goose's config dir.
-//   2. Spawns `goose acp` as a subprocess with piped stdio.
-//   3. Drains stderr to the tracing log.
-//   4. Bootstraps the sacp client (ACP handshake + session creation).
-//   5. Starts the model-switch poller.
-//   6. Runs the WebSocket writer task (single writer for all output channels).
-//   7. Runs the WebSocket input loop (prompt dispatch + cancel + resize no-op).
+//   1. Initializes isolated namespace (goose auto-creates config/data/state dirs)
+//   2. Validates model name against known xAI grok models
+//   3. Writes per-student system-prompt override to goose's config dir
+//   4. Spawns `goose acp` as a subprocess with piped stdio (provider config via env vars)
+//   5. Drains stderr to the tracing log
+//   6. Bootstraps the sacp client (ACP handshake + session creation)
+//   7. Starts the model-switch poller
+//   8. Runs the WebSocket writer task (single writer for all output channels)
+//   9. Runs the WebSocket input loop (prompt dispatch + cancel + resize no-op)
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -51,17 +53,20 @@ pub async fn run_acp_session(
     _logs_dir: PathBuf,
     system_prompt: Option<String>,
 ) -> Result<()> {
-    // ── 1. Write system-prompt override ───────────────────────────────────
+    // Initialize isolated namespace (config pre-populated during student onboarding)
+    tokio::fs::create_dir_all(&goose_path_root).await.ok();
+
+    // Write per-session system-prompt override
     if let Some(ref prompt) = system_prompt {
-        let prompt_dir = goose_path_root.join("config/prompts");
+        let goose_config_dir = goose_path_root.join("config");
+        let prompt_dir = goose_config_dir.join("prompts");
         tokio::fs::create_dir_all(&prompt_dir).await.ok();
         tokio::fs::write(prompt_dir.join("system.md"), prompt)
             .await
             .ok();
-        tracing::debug!(session_id = %session_id, "wrote system prompt override");
     }
 
-    // ── 2. Spawn `goose acp` ──────────────────────────────────────────────
+    // Spawn goose acp subprocess with piped stdio
     let mut cmd = tokio::process::Command::new(&goose_bin);
     cmd.arg("acp");
     cmd.current_dir(&workspace);
@@ -76,45 +81,55 @@ pub async fn run_acp_session(
 
     tracing::info!(
         session_id = %session_id,
-        bin = %goose_bin.display(),
         model = ?model,
-        workspace = %workspace.display(),
-        goose_path_root = %goose_path_root.display(),
-        xai_key = env_vars.iter().any(|(k, _)| k == "XAI_API_KEY"),
-        anthropic_key = env_vars.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY"),
-        "acp: spawning goose"
+        has_xai_key = env_vars.iter().any(|(k, _)| k == "XAI_API_KEY"),
+        "📦 [GOOSE] Spawning ACP subprocess..."
     );
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| AppError::Session(format!("failed to spawn goose: {e}")))?;
+        .map_err(|e| {
+            tracing::error!("✗ [GOOSE] Spawn FAILED: {e}");
+            AppError::Session(format!("failed to spawn goose: {e}"))
+        })?;
+
+    tracing::info!(
+        session_id = %session_id,
+        "✓ [GOOSE] Subprocess spawned successfully"
+    );
 
     let child_stdin = child.stdin.take().expect("stdin piped");
     let child_stdout = child.stdout.take().expect("stdout piped");
     let child_stderr = child.stderr.take().expect("stderr piped");
 
-    // ── 3. Drain stderr to tracing ────────────────────────────────────────
+    // Drain goose stderr to logs
+    let session_id_for_stderr = session_id.clone();
     tokio::spawn(async move {
         use tokio::io::AsyncBufReadExt;
         let mut lines = tokio::io::BufReader::new(child_stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            tracing::debug!(target: "goose_stderr", "{}", line);
+            // Log goose stderr with visual markers for errors/warnings
+            if line.contains("error") || line.contains("Error") || line.contains("ERROR") {
+                tracing::error!(target: "goose_stderr", session_id = %session_id_for_stderr, "✗ {}", line);
+            } else if line.contains("warn") || line.contains("Warn") {
+                tracing::warn!(target: "goose_stderr", session_id = %session_id_for_stderr, "⚠️  {}", line);
+            } else {
+                tracing::info!(target: "goose_stderr", session_id = %session_id_for_stderr, "📋 {}", line);
+            }
         }
     });
 
-    // ── 4. Output channels ────────────────────────────────────────────────
-    // notification frames (assistant text, tool events, token usage)
+    // Output channels for notifications, control messages, and turn completions
     let (notif_tx, mut notif_rx) =
         mpsc::channel::<(Option<serde_json::Value>, Option<Vec<u8>>)>(128);
-    // control frames (chat_start, model_changed, token_limit_reached)
     let (ctrl_tx, mut ctrl_rx) = mpsc::channel::<String>(16);
-    // per-turn completion frames (chat_end / chat_error)
     let (turn_tx, mut turn_rx) = mpsc::channel::<String>(4);
 
     // Shared current-model tracker updated by model_poller and read by notifications.
     let model_arc = Arc::new(tokio::sync::Mutex::new(model.clone()));
 
-    // ── 5. Bootstrap sacp client ──────────────────────────────────────────
+    // Bootstrap SACP client and create ACP session
+    tracing::info!(session_id = %session_id, "🔗 [GOOSE-ACP] Initializing ACP handshake...");
     let (cx, acp_session_id) = spawn_sacp_client(
         child_stdin,
         child_stdout,
@@ -129,10 +144,16 @@ pub async fn run_acp_session(
     tracing::info!(
         session_id = %session_id,
         acp_session_id = %acp_session_id.0,
-        "ACP session ready"
+        "✓ [SESSION] ════════════════════════════════════════"
+    );
+    tracing::info!(
+        "✓ [SESSION] Session ready - waiting for prompts"
+    );
+    tracing::info!(
+        "✓ [SESSION] ════════════════════════════════════════"
     );
 
-    // ── 6. Model-switch poller ────────────────────────────────────────────
+    // Start model-switch poller
     spawn_model_poller(
         session_config_dir.join("pending_model.txt"),
         cx.clone(),
@@ -143,7 +164,7 @@ pub async fn run_acp_session(
         ctrl_tx.clone(),
     );
 
-    // ── 7. WebSocket split + single writer task ───────────────────────────
+    // WebSocket writer task (single writer for all output channels)
     let (mut ws_sender, mut ws_receiver) = ws.split();
 
     let writer_task = tokio::spawn(async move {
@@ -178,13 +199,16 @@ pub async fn run_acp_session(
         }
     });
 
-    // ── 8. WebSocket input loop ───────────────────────────────────────────
+    // WebSocket input loop (prompt dispatch, cancel, resize no-op)
     while let Some(msg) = ws_receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
+                tracing::info!(session_id = %session_id, "📨 [WS] Message received from frontend: {}", text);
                 let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) else {
+                    tracing::warn!(session_id = %session_id, "✗ [WS] Failed to parse client message");
                     continue;
                 };
+                tracing::info!(session_id = %session_id, "✓ [WS] Parsed message, dispatching to ACP...");
                 handle_client_message(
                     client_msg,
                     &cx,
@@ -197,6 +221,7 @@ pub async fn run_acp_session(
                     &last_input_at,
                 )
                 .await;
+                tracing::info!(session_id = %session_id, "✓ [WS] Message processed");
             }
             Ok(Message::Close(_)) | Err(_) => break,
             _ => {}
@@ -208,10 +233,7 @@ pub async fn run_acp_session(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Input dispatch helper (keeps the main loop readable)
-// ---------------------------------------------------------------------------
-
+// Dispatch client messages to ACP session
 async fn handle_client_message(
     msg: ClientMessage,
     cx: &ConnectionTo<SacpAgent>,
@@ -225,6 +247,8 @@ async fn handle_client_message(
 ) {
     match msg {
         ClientMessage::Input { data, image, mime_type } => {
+            tracing::info!(session_id = %session_id, "📥 [INPUT] Processing input message (len={}, has_image={})", data.len(), image.is_some());
+            
             // ── Token-block gate ──────────────────────────────────────
             let blocked = db_students::get_student(pool, student_id)
                 .await
@@ -287,42 +311,55 @@ async fn handle_client_message(
             let cx_prompt = cx.clone();
             let sid_prompt = acp_session_id.clone();
             let turn_tx_prompt = turn_tx.clone();
+            let session_id_for_prompt = session_id.to_string();
             tokio::spawn(async move {
+                tracing::info!(session_id = %session_id_for_prompt, "🚀 [ACP] Sending PromptRequest to goose...");
                 let resp = cx_prompt
                     .send_request(PromptRequest::new(sid_prompt, content_blocks))
                     .block_task()
                     .await;
+                tracing::info!(session_id = %session_id_for_prompt, "📡 [ACP] PromptRequest response received: {:?}", resp.is_ok());
 
                 let frame = match resp {
-                    Ok(r) => match r.stop_reason {
-                        StopReason::EndTurn | StopReason::Cancelled => {
-                            r#"{"type":"chat_end"}"#.to_string()
+                    Ok(r) => {
+                        tracing::info!(session_id = %session_id_for_prompt, "✓ [ACP] Response OK, stop_reason: {:?}", r.stop_reason);
+                        match r.stop_reason {
+                            StopReason::EndTurn | StopReason::Cancelled => {
+                                r#"{"type":"chat_end"}"#.to_string()
+                            }
+                            other => serde_json::json!({
+                                "type": "chat_error",
+                                "error": format!("stop_reason: {other:?}")
+                            })
+                            .to_string(),
                         }
-                        other => serde_json::json!({
-                            "type": "chat_error",
-                            "error": format!("stop_reason: {other:?}")
-                        })
-                        .to_string(),
                     },
-                    Err(e) => serde_json::json!({
-                        "type": "chat_error",
-                        "error": e.to_string()
-                    })
-                    .to_string(),
+                    Err(e) => {
+                        tracing::error!(session_id = %session_id_for_prompt, "✗ [ACP] PromptRequest failed: {}", e);
+                        serde_json::json!({
+                            "type": "chat_error",
+                            "error": e.to_string()
+                        })
+                        .to_string()
+                    }
                 };
+                tracing::info!(session_id = %session_id_for_prompt, "📤 [WS] Sending frame back to frontend: {}", frame);
                 let _ = turn_tx_prompt.send(frame).await;
             });
         }
 
         ClientMessage::Cancel => {
+            tracing::info!(session_id = %session_id, "🛑 [CANCEL] Received cancel request");
             if let Err(e) =
                 cx.send_notification(CancelNotification::new(acp_session_id.clone()))
             {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,
-                    "failed to send cancel notification"
+                    "✗ [CANCEL] Failed to send cancel notification"
                 );
+            } else {
+                tracing::info!(session_id = %session_id, "✓ [CANCEL] Cancel notification sent");
             }
         }
 
