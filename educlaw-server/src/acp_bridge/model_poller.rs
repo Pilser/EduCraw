@@ -26,7 +26,7 @@ use crate::db::sessions as db_sess;
 pub fn spawn_model_poller(
     pending_model_path: PathBuf,
     cx: ConnectionTo<SacpAgent>,
-    acp_session_id: SessionId,
+    acp_session_id_holder: Arc<tokio::sync::Mutex<Option<SessionId>>>,
     session_id: String,
     pool: SqlitePool,
     model_arc: Arc<tokio::sync::Mutex<Option<String>>>,
@@ -48,6 +48,15 @@ pub fn spawn_model_poller(
             // Consume the signal file before issuing the request to avoid
             // repeated attempts if the request fails.
             let _ = tokio::fs::remove_file(&pending_model_path).await;
+
+            // Check if we have an active session - if not, skip model switch
+            let Some(acp_session_id) = acp_session_id_holder.lock().await.clone() else {
+                tracing::warn!(
+                    model = %model_name,
+                    "⚠️ [MODEL-POLLER] No active ACP session yet - skipping model switch"
+                );
+                continue;
+            };
 
             // Validate student is allowed to use this model (permission enforcement)
             let allowed_to_switch = match db_sess::get_session(&pool, &session_id).await {

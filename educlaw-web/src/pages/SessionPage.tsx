@@ -1,14 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Files, BarChart3, GraduationCap, User, Menu } from 'lucide-react'
+import { Files, BarChart3, GraduationCap, User, Menu, BookOpen } from 'lucide-react'
 import TutorTerminal from '../components/TutorTerminal'
 import FileTree from '../components/FileTree'
 import AssignmentPanel from '../components/AssignmentPanel'
 import ChatPanel from '../components/ChatPanel'
 import FilePreview from '../components/FilePreview'
 import DraggableModal from '../components/DraggableModal'
+import SessionSelector from '../components/SessionSelector'
 import { useWebSocket, type WsStatus } from '../hooks/useWebSocket'
 import { api } from '../api/client'
-import type { LoginResponse, Session, ShowImagePayload, ChatMessage, TokenUsage, TurnTokenUsage } from '../api/types'
+import type { LoginResponse, Session, ShowImagePayload, ChatMessage, MessageSegment, TokenUsage, TurnTokenUsage } from '../api/types'
 
 interface Props {
   auth: LoginResponse
@@ -41,11 +42,23 @@ let msgCounter = 0
 function nextId() { return `msg-${++msgCounter}` }
 
 export default function SessionPage({ auth, session, onEnd }: Props) {
+  // Show SessionSelector as overlay modal (not blocking chat)
+  const [showSessionSelectorModal, setShowSessionSelectorModal] = useState(false)
+  
+  // Auto-load last session on mount
+  const [autoLoadedLastSession, setAutoLoadedLastSession] = useState(false)
+  const [isAutoLoadingLastSession, setIsAutoLoadingLastSession] = useState(false)
+  
   // On mobile, default sidebars to closed
   const [sidebarOpen, setSidebarOpen]           = useState(window.innerWidth >= 768)
   const [rightPanelOpen, setRightPanelOpen]     = useState(false)
   const [terminalOpen, setTerminalOpen]         = useState(false)
   const [lightboxImage, setLightboxImage]       = useState<ShowImagePayload | null>(null)
+  
+  // Track if we're loading a thread (from session selector)
+  const [sourceThreadId, setSourceThreadId]     = useState<string | null>(null)
+  const [isLoadingThread, setIsLoadingThread]   = useState(false)
+  const sessionsPromiseResolverRef = useRef<(sessions: any[]) => void>()
   
   // Handle window resize to auto-close sidebars on mobile
   useEffect(() => {
@@ -69,6 +82,21 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [chatInput, setChatInput] = useState('')
   const [aiTyping, setAiTyping]   = useState(false)
   const pendingMsgIdRef = useRef<string | null>(null)
+  
+  // Debug: Log messages state changes
+  useEffect(() => {
+    console.log(`📝 [MESSAGES STATE] Updated: ${messages.length} messages`, 
+      messages.map(m => ({ id: m.id.slice(0, 8), role: m.role, segCount: m.segments.length }))
+    )
+  }, [messages])
+  
+  // Replay buffering (to avoid O(N²) re-renders during session load)
+  const [isLoadingSession, setIsLoadingSession] = useState(false)
+  const replayBufferRef = useRef<ChatMessage[]>([])
+  const isLoadingSessionRef = useRef(false)  // Sync ref for immediate access in callbacks
+
+  // Sessions loading state for the selector
+  const [sessionsLoading, setSessionsLoading] = useState(false)
 
   // Model + token state (models come from backend via WebSocket)
   const [availableModels, setAvailableModels] = useState<string[]>([])
@@ -109,11 +137,56 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     const id = nextId()
     pendingMsgIdRef.current = id
     setAiTyping(true)
-    setMessages(prev => [...prev, { id, role: 'assistant', segments: [], pending: true }])
+    
+    const msg: ChatMessage = { id, role: 'assistant', segments: [], pending: true }
+    
+    if (isLoadingSessionRef.current) {
+      // Buffer during replay
+      console.log(`[REPLAY] Buffering chat_start (${id})`)
+      replayBufferRef.current.push(msg)
+    } else {
+      // Live mode - add directly
+      setMessages(prev => [...prev, msg])
+    }
+  }, [])
+
+  const handleUserText = useCallback((text: string) => {
+    // During LoadSession replay, user messages arrive here (not live input)
+    const id = nextId()
+    const msg: ChatMessage = { 
+      id, 
+      role: 'user' as const, 
+      segments: [{ kind: 'text' as const, content: text }],
+      pending: false
+    }
+    
+    if (isLoadingSessionRef.current) {
+      // Buffer during replay - O(N) instead of O(N²)
+      console.log(`[REPLAY] Buffering user message (${id}):`, text.slice(0, 50))
+      replayBufferRef.current.push(msg)
+    } else {
+      // Live mode - add directly
+      console.log(`[LIVE] Adding user message (${id}):`, text.slice(0, 50))
+      setMessages(prev => [...prev, msg])
+    }
   }, [])
 
   const handleToolStart = useCallback((tool: string, command: string) => {
     const id = pendingMsgIdRef.current
+    
+    if (isLoadingSessionRef.current) {
+      // During replay, tools belong to the last assistant message
+      const lastMsg = replayBufferRef.current[replayBufferRef.current.length - 1]
+      if (lastMsg && lastMsg.role === 'assistant') {
+        lastMsg.segments.push({ kind: 'tool' as const, tool, command, exitCode: 0, done: false, output: '' })
+        console.log(`[REPLAY] Added tool_start to assistant message: ${tool}`)
+      } else {
+        console.warn(`[REPLAY] tool_start but no assistant message to attach to:`, tool)
+      }
+      return
+    }
+    
+    // Live mode
     if (!id) return
     setMessages(prev => prev.map(m =>
       m.id === id
@@ -123,6 +196,26 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, [])
 
   const handleToolEnd = useCallback((exitCode: number, stdout: string, stderr: string) => {
+    if (isLoadingSessionRef.current) {
+      // During replay, update the last undone tool in the last assistant message
+      const lastMsg = replayBufferRef.current[replayBufferRef.current.length - 1]
+      if (lastMsg && lastMsg.role === 'assistant') {
+        const lastIdx = lastMsg.segments.reduce<number>(
+          (acc, seg, i) => (seg.kind === 'tool' && !seg.done ? i : acc), -1
+        )
+        if (lastIdx !== -1) {
+          const seg = lastMsg.segments[lastIdx]
+          if (seg.kind === 'tool') {
+            const output = (stdout + (stderr ? '\n[stderr]\n' + stderr : '')).trimEnd()
+            lastMsg.segments[lastIdx] = { kind: 'tool' as const, tool: seg.tool, command: seg.command, exitCode, done: true, output }
+            console.log(`[REPLAY] tool_end for ${seg.tool}: exit=${exitCode}, output=${output.length} chars`)
+          }
+        }
+      }
+      return
+    }
+    
+    // Live mode
     const id = pendingMsgIdRef.current
     if (!id) return
     setMessages(prev => prev.map(m => {
@@ -144,8 +237,38 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, [])
 
   const handleAssistantText = useCallback((text: string) => {
+    // During replay, Goose sends AgentMessageChunk WITHOUT chat_start
+    // We need to create assistant messages on-the-fly
+    if (isLoadingSessionRef.current) {
+      const lastMsg = replayBufferRef.current[replayBufferRef.current.length - 1]
+      
+      // Check if last message is assistant and can accept more text
+      if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.pending) {
+        // Same assistant message - append text
+        const lastSeg = lastMsg.segments[lastMsg.segments.length - 1]
+        if (lastSeg && lastSeg.kind === 'text') {
+          lastSeg.content += text
+        } else {
+          lastMsg.segments.push({ kind: 'text', content: text })
+        }
+      } else {
+        // New assistant message needed (replay doesn't send chat_start)
+        const newMsg: ChatMessage = {
+          id: nextId(),
+          role: 'assistant',
+          segments: [{ kind: 'text', content: text }],
+          pending: false  // Replay messages are complete
+        }
+        console.log(`[REPLAY] Creating assistant message (${newMsg.id}):`, text.slice(0, 50))
+        replayBufferRef.current.push(newMsg)
+      }
+      return
+    }
+    
+    // Live mode processing below
     const id = pendingMsgIdRef.current
     if (!id) return
+    console.log(`[REPLAY] Assistant text for (${id}):`, text.slice(0, 50) + '...')
     setMessages(prev => prev.map(m => {
       if (m.id !== id) return m
       const segs = [...m.segments]
@@ -161,10 +284,15 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   const handleChatEnd = useCallback(() => {
     const id = pendingMsgIdRef.current
+    console.log(`[REPLAY] Chat end (${id})`)
     if (id) {
-      setMessages(prev => prev.map(m =>
-        m.id === id ? { ...m, pending: false } : m
-      ))
+      setMessages(prev => {
+        const updated = prev.map(m =>
+          m.id === id ? { ...m, pending: false } : m
+        )
+        console.log(`[REPLAY] Total messages after chat_end: ${updated.length}`)
+        return updated
+      })
       pendingMsgIdRef.current = null
     }
     setAiTyping(false)
@@ -204,12 +332,66 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setActiveModel(active || models[0] || undefined)
   }, [])
 
-  const { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels } = useWebSocket({
+  const handleForkSessionComplete = useCallback((newSessionId: string) => {
+    // After fork completes, auto-load the forked session
+    console.log(`✓ Fork completed, new session: ${newSessionId}`)
+    setSourceThreadId(newSessionId)
+  }, [])
+
+  const handleSessionsListReceived = useCallback((sessions: any[]) => {
+    console.log(`📋 Received ${sessions.length} sessions`)
+    if (sessionsPromiseResolverRef.current) {
+      sessionsPromiseResolverRef.current(sessions)
+      sessionsPromiseResolverRef.current = undefined
+    }
+    setSessionsLoading(false)
+  }, [])
+
+  const handleLoadSessionComplete = useCallback((threadId: string) => {
+    console.log(`✅ [REPLAY COMPLETE] LoadSession finished for ${threadId}`)
+    console.log(`📊 [REPLAY BUFFER] ${replayBufferRef.current.length} messages buffered:`, 
+      replayBufferRef.current.map(m => ({ role: m.role, segments: m.segments.length }))
+    )
+    
+    // Flush replay buffer - single O(1) re-render instead of O(N²)
+    if (replayBufferRef.current.length > 0) {
+      setMessages(replayBufferRef.current)
+      console.log(`✅ [REPLAY] Flushed ${replayBufferRef.current.length} messages to UI`)
+    } else {
+      console.warn(`⚠️ [REPLAY] Buffer is empty - no messages to display!`)
+    }
+    
+    replayBufferRef.current = []
+    isLoadingSessionRef.current = false
+    setIsLoadingSession(false)
+    console.log(`✅ [REPLAY] Exited replay mode`)
+  }, [])
+
+  // Safety net: if replay takes too long, exit loading mode
+  useEffect(() => {
+    if (!isLoadingSession) return
+    
+    const timeout = setTimeout(() => {
+      console.warn('⚠️ [REPLAY TIMEOUT] LoadSession took too long, forcing exit from replay mode')
+      if (replayBufferRef.current.length > 0) {
+        console.log(`📤 Flushing ${replayBufferRef.current.length} buffered messages`)
+        setMessages(replayBufferRef.current)
+        replayBufferRef.current = []
+      }
+      isLoadingSessionRef.current = false
+      setIsLoadingSession(false)
+    }, 10000) // 10 second timeout
+    
+    return () => clearTimeout(timeout)
+  }, [isLoadingSession])
+
+  const { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels, sendListSessions, sendLoadSession, sendForkSession } = useWebSocket({
     sessionId:            session.session_id,
     token:                session.token,
     onPtyData:            handlePtyData,
     onImage:              handleImage,
     onChatStart:          handleChatStart,
+    onUserText:           handleUserText,
     onToolStart:          handleToolStart,
     onToolEnd:            handleToolEnd,
     onAssistantText:      handleAssistantText,
@@ -218,7 +400,87 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     onTokenLimitReached:  handleTokenLimitReached,
     onModelChanged:       handleModelChanged,
     onModelsReceived:     handleModelsReceived,
+    onSessionsListReceived: handleSessionsListReceived,
+    onForkSessionComplete: handleForkSessionComplete,
+    onLoadSessionComplete: handleLoadSessionComplete,
   })
+
+  // Auto-load the last session on first connection
+  useEffect(() => {
+    if (status !== 'connected' || autoLoadedLastSession || isAutoLoadingLastSession) return
+
+    setIsAutoLoadingLastSession(true)
+    console.log('🔄 Auto-loading last session...')
+    
+    // Fetch session list and load the most recent one
+    const autoLoadLastSession = async () => {
+      try {
+        const sessions = await new Promise<any[]>((resolve) => {
+          const resolver = (sessions: any[]) => {
+            sessionsPromiseResolverRef.current = undefined
+            resolve(sessions)
+          }
+          sessionsPromiseResolverRef.current = resolver
+          sendListSessions()
+        })
+
+        if (sessions.length > 0) {
+          console.log('📋 [AUTO-LOAD] Received sessions:', sessions.map((s: any) => ({
+            id: s.id?.slice(0, 8),
+            message_count: s.message_count,
+            messageCount: s.metadata?.messageCount,
+            meta: s.metadata
+          })))
+          
+          // Skip sessions with 0 messages (likely just-created empty sessions)
+          const sessionsWithMessages = sessions.filter((s: any) => {
+            // Check if session has messages (message_count from Goose meta, or assume yes if not provided)
+            const messageCount = s.message_count ?? s.metadata?.messageCount ?? 1
+            console.log(`📊 Session ${s.id?.slice(0, 8)}: messageCount=${messageCount}`)
+            return messageCount > 0
+          })
+          
+          if (sessionsWithMessages.length > 0) {
+            const lastSession = sessionsWithMessages[0]  // Most recent with messages
+            console.log(`📌 Auto-loading last session: ${lastSession.id} (${sessionsWithMessages.length} sessions with messages)`)
+            setSourceThreadId(lastSession.id)
+            setIsLoadingThread(true)
+          } else {
+            console.log('ℹ️ All sessions are empty - skipping auto-load')
+          }
+        } else {
+          console.log('ℹ️ No previous sessions found')
+        }
+      } catch (err) {
+        console.error('Failed to auto-load last session:', err)
+      } finally {
+        setAutoLoadedLastSession(true)
+        setIsAutoLoadingLastSession(false)
+      }
+    }
+
+    autoLoadLastSession()
+  }, [status, autoLoadedLastSession, isAutoLoadingLastSession, sendListSessions])
+
+  // Trigger load when we have a thread to load (from session selector or auto-load)
+  useEffect(() => {
+    if (status !== 'connected' || !isLoadingThread || !sourceThreadId) return
+
+    console.log(`🔄 [REPLAY START] Loading thread: ${sourceThreadId}, WS status: ${status}`)
+    console.log(`🔄 [REPLAY] Entering replay mode, clearing buffer...`)
+    setMessages([])  // Clear messages before loading session history
+    replayBufferRef.current = []  // Clear replay buffer
+    isLoadingSessionRef.current = true  // Set ref FIRST for immediate effect
+    setIsLoadingSession(true)  // Then set state for UI
+    
+    const sent = sendLoadSession(sourceThreadId)
+    if (!sent) {
+      console.error('❌ Failed to send LoadSession - connection not ready')
+      isLoadingSessionRef.current = false
+      setIsLoadingSession(false)  // Exit replay mode on failure
+    }
+    setIsLoadingThread(false)
+  }, [status, isLoadingThread, sourceThreadId, sendLoadSession])
 
   // Request available models from goose once connected
   useEffect(() => {
@@ -229,30 +491,32 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   // Patch handleSend to use the real sendInput (avoid closure ordering issue)
   const handleSendWithWs = useCallback((text: string) => {
-    setMessages(prev => [...prev, {
+    const msg: ChatMessage = {
       id: nextId(),
-      role: 'user',
+      role: 'user' as const,
       segments: [{ kind: 'text' as const, content: text }],
       pending: false,
-    }])
+    }
+    setMessages(prev => [...prev, msg])
     sendInput(text + '\n')
   }, [sendInput])
 
   // Handle sending with image attachment
   const handleSendWithImage = useCallback((text: string, imageDataUrl?: string, mimeType?: string) => {
-    const segments: any[] = []
+    const segments: MessageSegment[] = []
     if (text) {
       segments.push({ kind: 'text' as const, content: text })
     }
     if (imageDataUrl) {
       segments.push({ kind: 'image' as const, dataUrl: imageDataUrl, mimeType: mimeType || 'image/png' })
     }
-    setMessages(prev => [...prev, {
+    const msg: ChatMessage = {
       id: nextId(),
-      role: 'user',
-      segments: segments.length > 0 ? segments : [{ kind: 'text' as const, content: text }],
+      role: 'user' as const,
+      segments,
       pending: false,
-    }])
+    }
+    setMessages(prev => [...prev, msg])
     if (imageDataUrl) {
       sendInputWithImage(text + '\n', imageDataUrl, mimeType)
     } else {
@@ -293,6 +557,44 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
       // Non-critical — the /model inject will be retried on next reconnect
     }
   }, [session.session_id, session.token])
+
+  // ── SessionSelector Handlers (modal overlay) ────────────────────────────
+
+  const handleSessionSelectorListSessions = async (): Promise<any[]> => {
+    return new Promise((resolve) => {
+      sessionsPromiseResolverRef.current = resolve
+      setSessionsLoading(true)
+      sendListSessions()
+    })
+  }
+
+  const handleSessionSelectorNewSession = () => {
+    setShowSessionSelectorModal(false)
+    // Chat area keeps running, nothing to load
+  }
+
+  const handleSessionSelectorLoadSession = (threadId: string) => {
+    setShowSessionSelectorModal(false)
+    console.log(`📂 [USER] Loading session: ${threadId}`)
+    setSourceThreadId(threadId)
+    setIsLoadingThread(true)
+    // useEffect will send LoadSession when connected
+  }
+
+  const handleSessionSelectorForkSession = (threadId: string) => {
+    setShowSessionSelectorModal(false)
+    console.log(`🔗 [USER] User clicked fork, starting fork: ${threadId}`)
+    // Direct fork - don't use sourceThreadId, send fork directly
+    if (status === 'connected') {
+      console.log(`✓ Connected, sending fork immediately`)
+      sendForkSession(threadId)
+    } else {
+      // If not connected yet, queue fork via sourceThreadId
+      setSourceThreadId(threadId)
+      setIsLoadingThread(true)
+      // Special flag to indicate this should fork, not load
+    }
+  }
 
   async function handleEndSession() {
     if (!confirm('End this session? Your progress is saved.')) return
@@ -359,6 +661,16 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         >
           <BarChart3 className="w-5 h-5" />
           <span className="text-sm">Progress</span>
+        </button>
+
+        {/* Browse sessions */}
+        <button
+          onClick={() => setShowSessionSelectorModal(true)}
+          title="Browse and switch sessions"
+          className="hidden sm:flex items-center gap-1 md:gap-2 px-2 md:px-2.5 py-1.5 md:py-2 rounded-wp-md text-sm font-semibold transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white shadow-sm hover:shadow-md"
+        >
+          <BookOpen className="w-5 h-5 md:w-5 md:h-5" />
+          <span className="text-xs md:text-sm">Sessions</span>
         </button>
 
         {/* End session */}
@@ -467,6 +779,32 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
           </aside>
         )}
       </div>
+
+      {/* ── Session Selector Modal Overlay ──────────────────────────────── */}
+      {showSessionSelectorModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-wp-bgSurface rounded-lg shadow-xl w-full max-w-sm max-h-[70vh] flex flex-col border border-wp-borderMid">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-wp-borderMid">
+              <h2 className="text-lg font-bold text-wp-textPrimary">Sessions</h2>
+              <button
+                onClick={() => setShowSessionSelectorModal(false)}
+                className="text-wp-textSecondary hover:text-wp-textPrimary transition-colors text-2xl leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <SessionSelector
+                onNewSession={handleSessionSelectorNewSession}
+                onLoadSession={handleSessionSelectorLoadSession}
+                onForkSession={handleSessionSelectorForkSession}
+                onListSessions={handleSessionSelectorListSessions}
+                isLoading={sessionsLoading}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Image lightbox ───────────────────────────────────────────────── */}
       {lightboxImage && (

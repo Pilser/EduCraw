@@ -52,11 +52,18 @@ Maps ACP APIs to their Goose implementation locations.
 - **Purpose**: Authentication flow (currently no-op)
 
 ### LoadSession
+- **Educlaw**: [commands.rs#L66-L89](educlaw-server/src/acp_bridge/commands.rs#L66-L89)
 - **Goose Dispatch**: [dispatch.rs#L46-L61](goose-workspace/crates/goose/src/acp/server/dispatch.rs#L46-L61)
 - **Goose Handler**: [server.rs#L2034-L2280](goose-workspace/crates/goose/src/acp/server.rs#L2034-L2280) `on_load_session()`
 - **Purpose**: Resume existing session from previous connection
 - **Chat Chain**: ✅ YES - Streams full message history via SessionNotification
 - **How**: Reads thread_manager.list_messages() and replays all UserMessageChunk/AgentMessageChunk/ToolCall/ToolCallUpdate notifications to rebuild UI
+- **Requirements**: 
+  - `session_id`: Thread ID to load
+  - `cwd`: Working directory (PathBuf)
+  - Optional: `mcp_servers` array
+- **Note**: Only replays messages where `metadata.user_visible = true`
+- **⚠️ Auto-Load Trap**: NewSession creates empty thread with current timestamp → becomes "most recent" → auto-load loads empty session. Filter by `messageCount > 0` in meta!
 
 ### SetSessionConfigOption
 - **Goose Dispatch**: [dispatch.rs#L91-L276](goose-workspace/crates/goose/src/acp/server/dispatch.rs#L91-L276)

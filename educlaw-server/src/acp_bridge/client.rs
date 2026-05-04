@@ -25,8 +25,9 @@ use crate::error::{AppError, Result};
 use super::notifications::{notification_to_frames};
 use super::permissions::auto_approve;
 
-/// Spawns the sacp Client task, performs the ACP handshake, and returns the
-/// live connection, ACP session id, and available models from goose.
+/// Spawns the sacp Client task, performs the ACP handshake (Initialize only).
+/// Returns connection, session_id holder (None initially - set by LoadSession or first Prompt),
+/// and available models from goose.
 pub async fn spawn_sacp_client(
     child_stdin: ChildStdin,
     child_stdout: ChildStdout,
@@ -35,7 +36,7 @@ pub async fn spawn_sacp_client(
     notif_tx: mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>,
     pool: SqlitePool,
     student_id: String,
-) -> Result<(ConnectionTo<SacpAgent>, SessionId, Vec<String>)> {
+) -> Result<(ConnectionTo<SacpAgent>, Arc<tokio::sync::Mutex<Option<SessionId>>>, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
     // Shared handles for extracting cx / session_id from inside connect_with.
@@ -75,8 +76,15 @@ pub async fn spawn_sacp_client(
                         // Token accounting would go here if UsageUpdate events were available.
                         // For now, token tracking happens via the PromptResponse.
 
+                        tracing::debug!("🔔 [NOTIFICATION] Received: {:?}", notif.update);
+
                         // Forward all notifications to the WS writer.
                         let frames = notification_to_frames(&notif);
+                        if frames.0.is_some() || frames.1.is_some() {
+                            tracing::debug!("📤 [NOTIFICATION] Forwarding to WebSocket");
+                        } else {
+                            tracing::debug!("⚠️ [NOTIFICATION] No frames generated - skipped");
+                        }
                         let _ = tx.send(frames).await;
                         Ok(())
                     }
@@ -171,39 +179,17 @@ pub async fn spawn_sacp_client(
                     tracing::info!(
                         model_count = model_names.len(),
                         models = ?model_names,
-                        "✓ [GOOSE-ACP] Captured available models from SessionModelState"
+                        "✓ [GOOSE-ACP] Captured available models from temp session"
                     );
                 }
 
-                // ── Set initial model if specified ─────────────────────
-                if let Some(ref m) = model_for_init {
-                    let sid = acp_sid_spawn
-                        .lock()
-                        .await
-                        .clone()
-                        .expect("session_id just set");
-                    tracing::debug!(model = %m, "📋 [GOOSE-ACP] Attempting to set model");
-                    match cx
-                        .send_request(SetSessionModelRequest::new(sid.clone(), m.clone()))
-                        .block_task()
-                        .await
-                    {
-                        Ok(_) => {
-                            tracing::info!(
-                                model = %m,
-                                "✓ [GOOSE-ACP] Model set successfully"
-                            );
-                        }
-                        Err(e) => {
-                            // Don't fail the session on model set error
-                            // Goose may have a different default or require different model name
-                            tracing::warn!(
-                                model = %m,
-                                error = %e,
-                                "⚠️  [GOOSE-ACP] Failed to set model (continuing with goose default)"
-                            );
-                        }
-                    }
+                // Note: Can't set initial model yet since we have no active session.
+                // Model will be set when the session is created (LoadSession or NewSession).
+                if model_for_init.is_some() {
+                    tracing::debug!(
+                        model = ?model_for_init,
+                        "📋 [GOOSE-ACP] Initial model will be set when session is created"
+                    );
                 }
 
                 // Signal the outer future that the client is ready.
@@ -243,22 +229,17 @@ pub async fn spawn_sacp_client(
         .await
         .clone()
         .expect("cx set after ready signal");
-    let acp_session_id = acp_sid_holder
-        .lock()
-        .await
-        .clone()
-        .expect("acp session_id set after ready signal");
     let available_models = models_holder
         .lock()
         .await
         .clone();
 
     tracing::info!(
-        acp_session_id = %acp_session_id.0,
         model_count = available_models.len(),
-        "✓ [GOOSE-ACP] Ready with {} available models",
+        "✓ [GOOSE-ACP] Ready (no session yet - will be created lazily), {} available models",
         available_models.len()
     );
 
-    Ok((cx, acp_session_id, available_models))
+    // Return the Arc holder itself so session.rs can update session_id later
+    Ok((cx, acp_sid_holder, available_models))
 }

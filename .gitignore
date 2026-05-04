@@ -32,3 +32,6 @@ goose-home/data
 goose-home/state
 
 .github
+
+goose-source -codes
+sacp-source

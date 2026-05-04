@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use sacp::schema::{CancelNotification, ContentBlock, ImageContent, PromptRequest, SessionId, StopReason, TextContent};
+use sacp::schema::{CancelNotification, ContentBlock, ImageContent, NewSessionRequest, PromptRequest, SessionId, StopReason, TextContent};
 use sacp::{Agent as SacpAgent, ConnectionTo};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
@@ -130,7 +130,7 @@ pub async fn run_acp_session(
 
     // Bootstrap SACP client and create ACP session
     tracing::info!(session_id = %session_id, "🔗 [GOOSE-ACP] Initializing ACP handshake...");
-    let (cx, acp_session_id, available_models_from_goose) = spawn_sacp_client(
+    let (cx, acp_session_id_holder, available_models_from_goose) = spawn_sacp_client(
         child_stdin,
         child_stdout,
         workspace.clone(),
@@ -146,11 +146,10 @@ pub async fn run_acp_session(
 
     tracing::info!(
         session_id = %session_id,
-        acp_session_id = %acp_session_id.0,
         "✓ [SESSION] ════════════════════════════════════════"
     );
     tracing::info!(
-        "✓ [SESSION] Session ready - waiting for prompts"
+        "✓ [SESSION] Session ready (no goose session yet - lazy init)"
     );
     tracing::info!(
         "✓ [SESSION] ════════════════════════════════════════"
@@ -160,7 +159,7 @@ pub async fn run_acp_session(
     spawn_model_poller(
         session_config_dir.join("pending_model.txt"),
         cx.clone(),
-        acp_session_id.clone(),
+        acp_session_id_holder.clone(),
         session_id.clone(),
         pool.clone(),
         model_arc.clone(),
@@ -206,16 +205,26 @@ pub async fn run_acp_session(
     while let Some(msg) = ws_receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                tracing::info!(session_id = %session_id, "📨 [WS] Message received from frontend: {}", text);
                 let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) else {
-                    tracing::warn!(session_id = %session_id, "✗ [WS] Failed to parse client message");
+                    tracing::debug!(session_id = %session_id, "✗ [WS] Failed to parse: {}", text.chars().take(100).collect::<String>());
                     continue;
                 };
-                tracing::info!(session_id = %session_id, "✓ [WS] Parsed message, dispatching to ACP...");
+                
+                // Only log non-resize messages to reduce noise
+                match &client_msg {
+                    ClientMessage::Resize { .. } => {
+                        tracing::debug!(session_id = %session_id, "🔧 [WS] Resize: {}", text);
+                    }
+                    _ => {
+                        tracing::info!(session_id = %session_id, "📨 [WS] Message: {}", text);
+                    }
+                }
+                
                 handle_client_message(
                     client_msg,
                     &cx,
-                    &acp_session_id,
+                    &acp_session_id_holder,
+                    &workspace,
                     &pool,
                     &student_id,
                     &session_id,
@@ -225,7 +234,6 @@ pub async fn run_acp_session(
                     &available_models_arc,
                 )
                 .await;
-                tracing::info!(session_id = %session_id, "✓ [WS] Message processed");
             }
             Ok(Message::Close(_)) | Err(_) => break,
             _ => {}
@@ -241,7 +249,8 @@ pub async fn run_acp_session(
 async fn handle_client_message(
     msg: ClientMessage,
     cx: &ConnectionTo<SacpAgent>,
-    acp_session_id: &SessionId,
+    acp_session_id_holder: &Arc<tokio::sync::Mutex<Option<SessionId>>>,
+    workspace: &PathBuf,
     pool: &SqlitePool,
     student_id: &str,
     session_id: &str,
@@ -314,10 +323,57 @@ async fn handle_client_message(
 
             // ── Spawn prompt task ─────────────────────────────────────
             let cx_prompt = cx.clone();
-            let sid_prompt = acp_session_id.clone();
+            let sid_holder_prompt = acp_session_id_holder.clone();
             let turn_tx_prompt = turn_tx.clone();
             let session_id_for_prompt = session_id.to_string();
+            let workspace_for_prompt = workspace.clone();
             tokio::spawn(async move {
+                // Ensure we have an active ACP session - create NewSession if needed
+                let sid_prompt = {
+                    let mut holder = sid_holder_prompt.lock().await;
+                    if let Some(existing_sid) = holder.as_ref() {
+                        tracing::info!(
+                            session_id = %session_id_for_prompt,
+                            acp_session_id = %existing_sid.0,
+                            "✅ [ACP] Using existing session for prompt"
+                        );
+                        existing_sid.clone()
+                    } else {
+                        // First prompt - create NewSession now
+                        tracing::info!(session_id = %session_id_for_prompt, "🆕 [ACP] No session yet - creating NewSession for first prompt");
+                        match cx_prompt
+                            .send_request(NewSessionRequest::new(&workspace_for_prompt))
+                            .block_task()
+                            .await
+                        {
+                            Ok(new_sess_resp) => {
+                                let new_sid = new_sess_resp.session_id.clone();
+                                tracing::info!(
+                                    session_id = %session_id_for_prompt,
+                                    acp_session_id = %new_sid.0,
+                                    "✓ [ACP] NewSession created for first prompt"
+                                );
+                                *holder = Some(new_sid.clone());
+                                new_sid
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    session_id = %session_id_for_prompt,
+                                    "✗ [ACP] Failed to create NewSession: {}", e
+                                );
+                                // Send error frame and return early
+                                let frame = serde_json::json!({
+                                    "type": "chat_error",
+                                    "error": format!("Failed to create session: {}", e)
+                                })
+                                .to_string();
+                                let _ = turn_tx_prompt.send(frame).await;
+                                return;
+                            }
+                        }
+                    }
+                };
+
                 tracing::info!(session_id = %session_id_for_prompt, "🚀 [ACP] Sending PromptRequest to goose...");
                 let resp = cx_prompt
                     .send_request(PromptRequest::new(sid_prompt, content_blocks))
@@ -424,9 +480,14 @@ async fn handle_client_message(
 
         ClientMessage::Cancel => {
             tracing::info!(session_id = %session_id, "🛑 [CANCEL] Received cancel request");
-            if let Err(e) =
-                cx.send_notification(CancelNotification::new(acp_session_id.clone()))
-            {
+            
+            // Check if we have an active session to cancel
+            let Some(sid) = acp_session_id_holder.lock().await.clone() else {
+                tracing::warn!(session_id = %session_id, "⚠️ [CANCEL] No active session to cancel");
+                return;
+            };
+            
+            if let Err(e) = cx.send_notification(CancelNotification::new(sid)) {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,
@@ -439,5 +500,96 @@ async fn handle_client_message(
 
         // Resize events are no-ops for ACP (goose runs headless, no PTY).
         ClientMessage::Resize { .. } => {}
+
+        ClientMessage::ListSessions => {
+            tracing::info!(session_id = %session_id, "📝 [LIST-SESSIONS] Fetching threads from Goose");
+            match super::handle_list_sessions(&cx).await {
+                Ok(sessions) => {
+                    let frame = serde_json::json!({
+                        "type": "sessions_list",
+                        "sessions": sessions,
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                    tracing::info!(session_id = %session_id, count = sessions.len(), "✓ [LIST-SESSIONS] Sent {} sessions to frontend", sessions.len());
+                }
+                Err(e) => {
+                    tracing::error!(session_id = %session_id, error = %e, "✗ [LIST-SESSIONS] Failed to list sessions");
+                    let frame = serde_json::json!({
+                        "type": "error",
+                        "message": format!("Failed to list sessions: {}", e),
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+            }
+        }
+
+        ClientMessage::LoadSession { thread_id } => {
+            tracing::info!(session_id = %session_id, thread_id = %thread_id, "🔄 [LOAD-SESSION] Loading thread");
+            match super::handle_load_session(&cx, thread_id.clone()).await {
+                Ok(()) => {
+                    // LoadSession succeeded - the thread_id is now our active ACP session_id
+                    let loaded_sid = SessionId::new(thread_id.clone());
+                    *acp_session_id_holder.lock().await = Some(loaded_sid.clone());
+                    tracing::info!(
+                        session_id = %session_id,
+                        thread_id = %thread_id,
+                        acp_session_id = %loaded_sid.0,
+                        "✓ [LOAD-SESSION] LoadSession complete, session_id set to thread_id"
+                    );
+                    
+                    // Send completion frame so frontend can flush replay buffer
+                    let frame = serde_json::json!({
+                        "type": "load_session_complete",
+                        "thread_id": thread_id,
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+                Err(e) => {
+                    tracing::error!(session_id = %session_id, thread_id = %thread_id, error = %e, "✗ [LOAD-SESSION] Failed to load session");
+                    let frame = serde_json::json!({
+                        "type": "error",
+                        "message": format!("Failed to load session: {}", e),
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+            }
+        }
+
+        ClientMessage::ForkSession { thread_id } => {
+            tracing::info!(session_id = %session_id, thread_id = %thread_id, "🔗 [FORK-SESSION] Forking thread with message history");
+            match super::handle_fork_session(&cx, thread_id.clone()).await {
+                Ok(result) => {
+                    // ForkSession succeeded - the new session_id becomes our active ACP session_id
+                    let forked_sid = SessionId::new(result.new_session_id.clone());
+                    *acp_session_id_holder.lock().await = Some(forked_sid.clone());
+                    tracing::info!(
+                        session_id = %session_id,
+                        thread_id = %thread_id,
+                        new_session_id = %result.new_session_id,
+                        acp_session_id = %forked_sid.0,
+                        "✓ [FORK-SESSION] Successfully forked, session_id set to new fork"
+                    );
+                    let frame = serde_json::json!({
+                        "type": "forked_session",
+                        "new_session_id": result.new_session_id,
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+                Err(e) => {
+                    tracing::error!(session_id = %session_id, thread_id = %thread_id, error = %e, "✗ [FORK-SESSION] Failed to fork session");
+                    let frame = serde_json::json!({
+                        "type": "error",
+                        "message": format!("Failed to fork session: {}", e),
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+            }
+        }
     }
 }

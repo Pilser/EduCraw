@@ -3,7 +3,7 @@
 // Convert `SessionNotification` events into WebSocket frames (JSON + xterm binary),
 // and persist token usage to the database with student-level limit enforcement.
 
-use sacp::schema::{ContentBlock, SessionNotification, SessionUpdate, ToolCallStatus};
+use sacp::schema::{Content, ContentBlock, SessionNotification, SessionUpdate, ToolCallContent, ToolCallStatus};
 use sqlx::SqlitePool;
 
 use crate::db::{students as db_students, token_usage as db_tokens};
@@ -19,9 +19,23 @@ pub fn notification_to_frames(
     notif: &SessionNotification,
 ) -> (Option<serde_json::Value>, Option<Vec<u8>>) {
     match &notif.update {
+        SessionUpdate::UserMessageChunk(chunk) => {
+            if let ContentBlock::Text(t) = &chunk.content {
+                let text = t.text.clone();
+                tracing::info!("👤 [REPLAY] User: {}", text.chars().take(60).collect::<String>());
+                let json = serde_json::json!({"type": "user_text", "text": text});
+                let binary = text.into_bytes();
+                (Some(json), Some(binary))
+            } else {
+                tracing::debug!("⚠️ UserMessageChunk with non-text content");
+                (None, None)
+            }
+        }
+
         SessionUpdate::AgentMessageChunk(chunk) => {
             if let ContentBlock::Text(t) = &chunk.content {
                 let text = t.text.clone();
+                tracing::info!("🤖 [REPLAY] Agent: {}", text.chars().take(60).collect::<String>());
                 let json = serde_json::json!({"type": "assistant_text", "text": text});
                 let binary = text.into_bytes();
                 (Some(json), Some(binary))
@@ -48,21 +62,54 @@ pub fn notification_to_frames(
         }
 
         SessionUpdate::ToolCallUpdate(tcu) => {
-            if let Some(status) = tcu.fields.status {
-                match status {
-                    ToolCallStatus::Completed => (
-                        Some(serde_json::json!({"type": "tool_end", "status": "completed"})),
-                        None,
-                    ),
-                    ToolCallStatus::Failed => (
-                        Some(serde_json::json!({"type": "tool_end", "status": "failed"})),
-                        None,
-                    ),
-                    _ => (None, None),
+            let status_str = tcu
+                .fields
+                .status
+                .as_ref()
+                .map(|s| match s {
+                    ToolCallStatus::Completed => "completed",
+                    ToolCallStatus::Failed => "failed",
+                    _ => "unknown",
+                })
+                .unwrap_or("unknown");
+
+            // Extract content (stdout/stderr) if present
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+            if let Some(content_blocks) = &tcu.fields.content {
+                for tool_content in content_blocks {
+                    if let ToolCallContent::Content(content) = tool_content {
+                        // Try tuple struct pattern - Content is likely Content(ContentBlock)
+                        if let ContentBlock::Text(tc) = &content.0 {
+                            stdout.push_str(&tc.text);
+                        }
+                    }
                 }
-            } else {
-                (None, None)
             }
+
+            let exit_code = if status_str == "completed" { 0 } else { 1 };
+
+            let json = serde_json::json!({
+                "type": "tool_end",
+                "status": status_str,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr
+            });
+            (Some(json), None)
+        }
+
+        SessionUpdate::UsageUpdate(usage) => {
+            // Send token usage to frontend
+            tracing::debug!("📊 [USAGE] Tokens used: {}", usage.used);
+            let json = serde_json::json!({
+                "type": "token_usage",
+                "input_tokens": usage.used,
+                "output_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0
+            });
+            (Some(json), None)
         }
 
         _ => (None, None),

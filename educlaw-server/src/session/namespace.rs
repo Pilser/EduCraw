@@ -7,9 +7,6 @@ use std::path::Path;
 
 use tokio::process::Command;
 
-#[cfg(target_os = "linux")]
-use std::os::unix::process::CommandExt as _;
-
 use crate::error::{AppError, Result};
 use crate::session::dirs::SessionDirs;
 
@@ -92,6 +89,8 @@ pub async fn spawn_claw_session(params: &SpawnParams) -> Result<u32> {
     // Built once here in the parent, serial-copied into the pre_exec closure.
     #[cfg(target_os = "linux")]
     {
+        use std::os::unix::process::CommandExt as _;
+        
         match crate::security::seccomp::build_student_filter() {
             Ok(filter) => {
                 // SAFETY: pre_exec runs in the child after fork(), single-threaded,

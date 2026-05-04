@@ -29,8 +29,15 @@ async fn main() -> anyhow::Result<()> {
     let dotenv_result = dotenvy::dotenv();
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with(tracing_subscriber::fmt::layer())
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,educlaw_server=debug".into()))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .without_time()  // Remove timestamp
+                .with_target(true)  // Show module path
+                .with_line_number(true)  // Show line numbers
+                .with_ansi(true)  // Enable colors
+                .compact()  // More compact format
+        )
         .init();
 
     // ── startup env diagnostics ──

@@ -23,4 +23,16 @@ pub enum ClientMessage {
     Resize { cols: u16, rows: u16 },
     /// Cancel the current in-flight prompt.
     Cancel,
+    /// List available threads/sessions from Goose.
+    /// Backend returns: {"type":"sessions_list","sessions":[...]}
+    #[serde(rename = "list_sessions")]
+    ListSessions,
+    /// Load a specific thread and replay its message history.
+    /// Backend streams SessionNotifications with message replay.
+    #[serde(rename = "load_session")]
+    LoadSession { thread_id: String },
+    /// Fork an existing session: copy thread + messages into new session.
+    /// Backend returns: {"type":"forked_session","new_session_id":"..."}
+    #[serde(rename = "fork_session")]
+    ForkSession { thread_id: String },
 }

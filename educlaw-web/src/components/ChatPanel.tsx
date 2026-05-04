@@ -97,15 +97,17 @@ function SegmentView({ seg, sessionId, token, onFileSelect }: SegmentViewProps) 
   }
   
   return (
-    <ReactMarkdown 
-      remarkPlugins={[remarkGfm]} 
-      components={{ 
-        code: mdCode,
-        img: createMdImage(sessionId, token, onFileSelect ? (path, name) => onFileSelect(path, name, false) : undefined)
-      }}
-    >
-      {seg.content}
-    </ReactMarkdown>
+    <div className="markdown-body">
+      <ReactMarkdown 
+        remarkPlugins={[remarkGfm]} 
+        components={{ 
+          code: mdCode,
+          img: createMdImage(sessionId, token, onFileSelect ? (path, name) => onFileSelect(path, name, false) : undefined)
+        }}
+      >
+        {seg.content}
+      </ReactMarkdown>
+    </div>
   )
 }
 

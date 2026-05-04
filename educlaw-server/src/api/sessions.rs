@@ -644,3 +644,4 @@ fn detect_latest_student_session(student_dir: &std::path::Path) -> Option<String
     // Return the ID of the most recently modified session
     session_files.into_iter().next().map(|(_, id)| id)
 }
+
