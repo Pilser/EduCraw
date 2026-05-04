@@ -3,11 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { Send, Square, Zap, AlertCircle, Bot, User } from 'lucide-react'
+import { Send, Square, Zap, AlertCircle, Bot } from 'lucide-react'
 import type { ChatMessage, MessageSegment, TokenUsage } from '../api/types'
 import ToolCallCard from './ToolCallCard'
 import ChatFilePreview from './ChatFilePreview'
 import FileInputAttachment, { type AttachedFile, type FileInputAttachmentHandle } from './FileInputAttachment'
+import UserMessageBubble from './UserMessageBubble'
 
 interface Props {
   messages: ChatMessage[]
@@ -118,75 +119,53 @@ interface MessageBubbleProps {
 
 function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubbleProps) {
   const isUser = msg.role === 'user'
-  const userText = isUser
-    ? msg.segments
-        .filter((s): s is Extract<MessageSegment, { kind: 'text' }> => s.kind === 'text')
-        .map(s => s.content)
-        .join('')
-    : ''
 
+  // Use dedicated UserMessageBubble component for user messages
+  if (isUser) {
+    return <UserMessageBubble msg={msg} />
+  }
+
+  // AI message rendering
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start`}>
+    <div className="flex gap-3 flex-row items-start">
       {/* Avatar - animate when AI is responding */}
       <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shadow-sm transition-all
-        ${isUser 
-          ? 'bg-wp-accent text-wp-on-accent' 
-          : `bg-gradient-to-br from-violet-500 to-indigo-600 text-white ${msg.pending ? 'animate-pulse scale-110' : ''}`
-        }`}>
-        {isUser ? <User className="w-5 h-5" /> : <Bot className={`w-5 h-5 ${msg.pending ? 'animate-spin' : ''}`} />}
+        bg-gradient-to-br from-violet-500 to-indigo-600 text-white ${msg.pending ? 'animate-pulse scale-110' : ''}`}>
+        <Bot className={`w-5 h-5 ${msg.pending ? 'animate-spin' : ''}`} />
       </div>
 
       {/* Bubble */}
       <div className={`max-w-xs sm:max-w-sm md:max-w-xl lg:max-w-2xl rounded-2xl px-5 py-4 shadow-sm leading-relaxed transition-all
-        ${isUser
-          ? 'bg-wp-accent text-wp-on-accent rounded-tr-sm font-medium text-base border-2 border-wp-accentMuted shadow-md'
-          : `bg-wp-surface border border-wp-border-mid text-wp-text-primary rounded-tl-sm text-base ${msg.pending ? 'ring-2 ring-violet-300 ring-opacity-50' : ''}`
-        }`}>
-        {isUser ? (
-          <div className="space-y-3">
-            {userText && <p className="whitespace-pre-wrap break-words">{userText}</p>}
-            {msg.segments.filter(s => s.kind === 'image').map((seg, i) => (
-              seg.kind === 'image' && (
-                <img
-                  key={i}
-                  src={seg.dataUrl}
-                  alt="Sent image"
-                  className="rounded-wp-md max-w-full h-auto border border-wp-on-accent/20 shadow-sm"
-                />
-              )
-            ))}
-          </div>
-        ) : (
-          <div className="prose max-w-none
-            prose-headings:font-bold prose-headings:text-wp-text-primary
-            prose-h1:text-lg prose-h2:text-base prose-h3:text-[15px]
-            prose-p:text-wp-text-primary prose-p:my-2 prose-p:leading-relaxed prose-p:text-base
-            prose-ul:my-2 prose-ul:text-wp-text-primary prose-ul:text-base
-            prose-ol:my-2 prose-ol:text-wp-text-primary prose-ol:text-base
-            prose-li:my-1 prose-li:text-base
-            prose-strong:font-bold prose-strong:text-wp-text-primary
-            prose-em:text-wp-text-secondary
-            prose-blockquote:border-l-4 prose-blockquote:border-wp-accent
-            prose-blockquote:bg-wp-accent-subtle prose-blockquote:pl-4
-            prose-blockquote:py-2 prose-blockquote:my-3 prose-blockquote:rounded-r
-            prose-blockquote:text-wp-text-primary prose-blockquote:text-base
-            prose-a:text-wp-accent prose-a:underline prose-a:decoration-wp-accent prose-a:hover:text-wp-accent-hover
-            prose-table:my-4 prose-table:border-collapse prose-table:text-base
-            prose-thead:bg-wp-accent-subtle
-            prose-th:border prose-th:border-wp-border-mid prose-th:px-3 prose-th:py-2 prose-th:font-semibold prose-th:text-left prose-th:text-base
-            prose-td:border prose-td:border-wp-border-soft prose-td:px-3 prose-td:py-2 prose-td:text-base
-            prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:my-3 prose-pre:p-4 prose-pre:text-sm
-            prose-hr:border-wp-border-mid prose-hr:my-4
-            prose-code:font-mono prose-code:text-wp-accent prose-code:bg-wp-accent-subtle prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm">
-            {msg.segments.length === 0 && msg.pending && (
-              <span className="inline-block w-1.5 h-4 bg-wp-accent animate-pulse rounded-sm align-middle" />
-            )}
-            {msg.segments.map((seg, i) => <SegmentView key={i} seg={seg} sessionId={sessionId} token={token} onFileSelect={onFileSelect} />)}
-            {msg.pending && (
-              <span className="inline-block w-1.5 h-4 bg-wp-accent animate-pulse ml-0.5 rounded-sm align-middle" />
-            )}
-          </div>
-        )}
+        bg-wp-surface border border-wp-border-mid text-wp-text-primary rounded-tl-sm text-base ${msg.pending ? 'ring-2 ring-violet-300 ring-opacity-50' : ''}`}>
+        <div className="prose max-w-none
+          prose-headings:font-bold prose-headings:text-wp-text-primary
+          prose-h1:text-lg prose-h2:text-base prose-h3:text-[15px]
+          prose-p:text-wp-text-primary prose-p:my-2 prose-p:leading-relaxed prose-p:text-base
+          prose-ul:my-2 prose-ul:text-wp-text-primary prose-ul:text-base
+          prose-ol:my-2 prose-ol:text-wp-text-primary prose-ol:text-base
+          prose-li:my-1 prose-li:text-base
+          prose-strong:font-bold prose-strong:text-wp-text-primary
+          prose-em:text-wp-text-secondary
+          prose-blockquote:border-l-4 prose-blockquote:border-wp-accent
+          prose-blockquote:bg-wp-accent-subtle prose-blockquote:pl-4
+          prose-blockquote:py-2 prose-blockquote:my-3 prose-blockquote:rounded-r
+          prose-blockquote:text-wp-text-primary prose-blockquote:text-base
+          prose-a:text-wp-accent prose-a:underline prose-a:decoration-wp-accent prose-a:hover:text-wp-accent-hover
+          prose-table:my-4 prose-table:border-collapse prose-table:text-base
+          prose-thead:bg-wp-accent-subtle
+          prose-th:border prose-th:border-wp-border-mid prose-th:px-3 prose-th:py-2 prose-th:font-semibold prose-th:text-left prose-th:text-base
+          prose-td:border prose-td:border-wp-border-soft prose-td:px-3 prose-td:py-2 prose-td:text-base
+          prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:my-3 prose-pre:p-4 prose-pre:text-sm
+          prose-hr:border-wp-border-mid prose-hr:my-4
+          prose-code:font-mono prose-code:text-wp-accent prose-code:bg-wp-accent-subtle prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm">
+          {msg.segments.length === 0 && msg.pending && (
+            <span className="inline-block w-1.5 h-4 bg-wp-accent animate-pulse rounded-sm align-middle" />
+          )}
+          {msg.segments.map((seg, i) => <SegmentView key={i} seg={seg} sessionId={sessionId} token={token} onFileSelect={onFileSelect} />)}
+          {msg.pending && (
+            <span className="inline-block w-1.5 h-4 bg-wp-accent animate-pulse ml-0.5 rounded-sm align-middle" />
+          )}
+        </div>
       </div>
     </div>
   )
