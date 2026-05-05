@@ -133,3 +133,14 @@ export interface TurnTokenUsage {
   cache_read_input_tokens: number
 }
 
+export interface Cost {
+  amount: number
+  currency: string
+}
+
+export interface TokenUsageUpdate {
+  used: number           // total tokens used
+  size?: number          // token context window size
+  cost?: Cost | null     // cost from goose provider
+}
+

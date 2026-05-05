@@ -11,8 +11,7 @@ use std::sync::Arc;
 
 use sacp::schema::{
     ClientCapabilities, InitializeRequest, NewSessionRequest, ProtocolVersion,
-    RequestPermissionRequest, SessionId, SessionNotification,
-    SetSessionModelRequest,
+    RequestPermissionRequest, SessionId, SessionNotification, SessionUpdate,
 };
 use sacp::{Agent as SacpAgent, ByteStreams, Client, ConnectionTo};
 use sqlx::SqlitePool;
@@ -22,7 +21,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::error::{AppError, Result};
 
-use super::notifications::{notification_to_frames};
+use super::notifications::{notification_to_frames, spawn_token_accounting};
 use super::permissions::auto_approve;
 
 /// Spawns the sacp Client task, performs the ACP handshake (Initialize only).
@@ -69,23 +68,95 @@ pub async fn spawn_sacp_client(
             .builder()
             .on_receive_notification(
                 {
-                    let pool = pool;
-                    let student_id = student_id;
+                    let pool = pool.clone();
+                    let student_id = student_id.clone();
                     let tx = notif_tx;
                     async move |notif: SessionNotification, _cx| {
-                        // Token accounting would go here if UsageUpdate events were available.
-                        // For now, token tracking happens via the PromptResponse.
-
-                        tracing::debug!("🔔 [NOTIFICATION] Received: {:?}", notif.update);
+                        let session_id = notif.session_id.0.to_string();
 
                         // Forward all notifications to the WS writer.
                         let frames = notification_to_frames(&notif);
-                        if frames.0.is_some() || frames.1.is_some() {
-                            tracing::debug!("📤 [NOTIFICATION] Forwarding to WebSocket");
-                        } else {
-                            tracing::debug!("⚠️ [NOTIFICATION] No frames generated - skipped");
-                        }
                         let _ = tx.send(frames).await;
+
+                        // Persist statistics to backend based on notification type.
+                        match &notif.update {
+                            SessionUpdate::UsageUpdate(usage) => {
+                                tracing::debug!(
+                                    session_id = %session_id,
+                                    student_id = %student_id,
+                                    tokens_used = usage.used,
+                                    cost = ?usage.cost,
+                                    "💰 [TOKEN] Usage update from goose"
+                                );
+                                spawn_token_accounting(
+                                    pool.clone(),
+                                    session_id.clone(),
+                                    student_id.clone(),
+                                    "gpt-4".to_string(),  // TODO: extract actual model name from session state
+                                    usage.used as i64,
+                                );
+                            }
+                            SessionUpdate::Plan(plan) => {
+                                let completed = plan.entries.iter()
+                                    .filter(|e| e.status == sacp::schema::PlanEntryStatus::Completed)
+                                    .count();
+                                let in_progress = plan.entries.iter()
+                                    .filter(|e| e.status == sacp::schema::PlanEntryStatus::InProgress)
+                                    .count();
+                                tracing::debug!(
+                                    session_id = %session_id,
+                                    student_id = %student_id,
+                                    total = plan.entries.len(),
+                                    completed,
+                                    in_progress,
+                                    "📊 [STATS] Plan update received from goose (persistence deferred)"
+                                );
+                            }
+                            SessionUpdate::CurrentModeUpdate(mode) => {
+                                tracing::debug!(
+                                    session_id = %session_id,
+                                    student_id = %student_id,
+                                    mode_id = %mode.current_mode_id.0,
+                                    "� [STATS] Mode change received from goose (persistence deferred)"
+                                );
+                            }
+                            SessionUpdate::SessionInfoUpdate(info) => {
+                                let title = match &info.title {
+                                    sacp::schema::MaybeUndefined::Value(v) => Some(v.clone()),
+                                    _ => None
+                                };
+                                let updated_at = match &info.updated_at {
+                                    sacp::schema::MaybeUndefined::Value(v) => Some(v.clone()),
+                                    _ => None
+                                };
+                                tracing::debug!(
+                                    session_id = %session_id,
+                                    student_id = %student_id,
+                                    title = ?title,
+                                    "� [STATS] Session info update received from goose (persistence deferred)"
+                                );
+                            }
+                            SessionUpdate::AvailableCommandsUpdate(cmds) => {
+
+                                tracing::debug!(
+                                    session_id = %session_id,
+                                    student_id = %student_id,
+                                    command_count = cmds.available_commands.len(),
+                                    "� [STATS] Available commands update received from goose (persistence deferred)"
+                                );
+                            }
+                            SessionUpdate::ConfigOptionUpdate(config) => {
+
+                                tracing::debug!(
+                                    session_id = %session_id,
+                                    student_id = %student_id,
+                                    config_count = config.config_options.len(),
+                                    "� [STATS] Config options update received from goose (persistence deferred)"
+                                );
+                            }
+                            _ => {}
+                        }
+
                         Ok(())
                     }
                 },

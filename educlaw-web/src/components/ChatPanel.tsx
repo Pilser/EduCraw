@@ -25,6 +25,8 @@ interface Props {
   onModelChange?: (model: string) => void
   // token usage
   tokenUsage?: TokenUsage | null
+  currentCost?: { amount: number; currency: string } | null
+  totalTokensUsed?: number
   // block state
   tokenBlocked?: boolean
   tokenBannerText?: string
@@ -96,8 +98,9 @@ function SegmentView({ seg, sessionId, token, onFileSelect }: SegmentViewProps) 
     )
   }
   
+  // Text segment
   return (
-    <div className="markdown-body">
+    <div className="markdown-body mt-2">
       <ReactMarkdown 
         remarkPlugins={[remarkGfm]} 
         components={{ 
@@ -163,7 +166,7 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
           {msg.segments.length === 0 && msg.pending && (
             <span className="inline-block w-1.5 h-4 bg-wp-accent animate-pulse rounded-sm align-middle" />
           )}
-          {msg.segments.map((seg, i) => <SegmentView key={i} seg={seg} sessionId={sessionId} token={token} onFileSelect={onFileSelect} />)}
+          {msg.segments.map((seg, i) => <SegmentView key={`${msg.id}-seg-${i}-${seg.kind}`} seg={seg} sessionId={sessionId} token={token} onFileSelect={onFileSelect} />)}
           {msg.pending && (
             <span className="inline-block w-1.5 h-4 bg-wp-accent animate-pulse ml-0.5 rounded-sm align-middle" />
           )}
@@ -176,7 +179,7 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
 export default function ChatPanel({
   messages, inputValue, onInputChange, onSend, onSendWithImage, onFilesForUpload, onCancel, disabled,
   availableModels, activeModel, onModelChange,
-  tokenUsage, tokenBlocked, tokenBannerText,
+  tokenUsage, currentCost, totalTokensUsed, tokenBlocked, tokenBannerText,
   sessionId, token, onFileSelect,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -235,10 +238,6 @@ export default function ChatPanel({
     setTimeout(() => textareaRef.current?.focus(), 0)
   }
 
-  const totalTokens = tokenUsage
-    ? tokenUsage.total_input_tokens + tokenUsage.total_output_tokens
-    : 0
-
   return (
     <div className="flex flex-col h-full">
 
@@ -271,15 +270,20 @@ export default function ChatPanel({
         <div className="flex-1" />
 
         {/* Token usage — bold, prominent */}
-        {tokenUsage && (
-          <div className="flex items-center gap-2 text-sm font-bold">
+        {((totalTokensUsed ?? 0) > 0 || tokenUsage) && (
+          <div className="flex items-center gap-3 text-sm font-bold">
             <Zap className="w-4 h-4 text-wp-accent" />
-            <span className={`font-bold tabular-nums ${tokenBlocked ? 'text-wp-error' : 'text-wp-text-primary'}`}>
-              {totalTokens.toLocaleString()}
-            </span>
-            <span className="text-wp-text-tertiary font-normal text-xs">
-              ({tokenUsage.total_input_tokens.toLocaleString()} in · {tokenUsage.total_output_tokens.toLocaleString()} out)
-            </span>
+            <div className="flex flex-col gap-1">
+              {/* Current token usage from goose */}
+              {(totalTokensUsed ?? 0) > 0 && (
+                <div className={`font-bold tabular-nums ${tokenBlocked ? 'text-wp-error' : 'text-wp-text-primary'}`}>
+                  {(totalTokensUsed ?? 0).toLocaleString()} tokens
+                  {currentCost && <span className="font-normal text-xs text-wp-text-tertiary ml-2">
+                    ({currentCost.amount.toFixed(4)} {currentCost.currency})
+                  </span>}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

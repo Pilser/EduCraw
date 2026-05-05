@@ -1,10 +1,11 @@
 // acp_bridge/notifications.rs
 //
 // Convert `SessionNotification` events into WebSocket frames (JSON + xterm binary),
-// and persist token usage to the database with student-level limit enforcement.
+// persist statistics to the database, and enforce student token limits.
 
-use sacp::schema::{Content, ContentBlock, SessionNotification, SessionUpdate, ToolCallContent, ToolCallStatus};
+use sacp::schema::{ContentBlock, SessionNotification, SessionUpdate, ToolCallContent, ToolCallStatus, PlanEntryStatus};
 use sqlx::SqlitePool;
+use serde_json::json;
 
 use crate::db::{students as db_students, token_usage as db_tokens};
 
@@ -22,12 +23,10 @@ pub fn notification_to_frames(
         SessionUpdate::UserMessageChunk(chunk) => {
             if let ContentBlock::Text(t) = &chunk.content {
                 let text = t.text.clone();
-                tracing::info!("👤 [REPLAY] User: {}", text.chars().take(60).collect::<String>());
                 let json = serde_json::json!({"type": "user_text", "text": text});
                 let binary = text.into_bytes();
                 (Some(json), Some(binary))
             } else {
-                tracing::debug!("⚠️ UserMessageChunk with non-text content");
                 (None, None)
             }
         }
@@ -35,7 +34,6 @@ pub fn notification_to_frames(
         SessionUpdate::AgentMessageChunk(chunk) => {
             if let ContentBlock::Text(t) = &chunk.content {
                 let text = t.text.clone();
-                tracing::info!("🤖 [REPLAY] Agent: {}", text.chars().take(60).collect::<String>());
                 let json = serde_json::json!({"type": "assistant_text", "text": text});
                 let binary = text.into_bytes();
                 (Some(json), Some(binary))
@@ -79,8 +77,7 @@ pub fn notification_to_frames(
             if let Some(content_blocks) = &tcu.fields.content {
                 for tool_content in content_blocks {
                     if let ToolCallContent::Content(content) = tool_content {
-                        // Try tuple struct pattern - Content is likely Content(ContentBlock)
-                        if let ContentBlock::Text(tc) = &content.0 {
+                        if let ContentBlock::Text(tc) = &content.content {
                             stdout.push_str(&tc.text);
                         }
                     }
@@ -100,14 +97,140 @@ pub fn notification_to_frames(
         }
 
         SessionUpdate::UsageUpdate(usage) => {
-            // Send token usage to frontend
-            tracing::debug!("📊 [USAGE] Tokens used: {}", usage.used);
-            let json = serde_json::json!({
+            tracing::debug!(
+                used = usage.used,
+                size = usage.size,
+                cost = ?usage.cost,
+                "📊 [STATS] UsageUpdate received from goose"
+            );
+            let json = json!({
                 "type": "token_usage",
-                "input_tokens": usage.used,
-                "output_tokens": 0,
-                "cache_creation_input_tokens": 0,
-                "cache_read_input_tokens": 0
+                "used": usage.used,
+                "size": usage.size,
+                "cost": usage.cost.as_ref().map(|c| {
+                    json!({
+                        "amount": c.amount,
+                        "currency": &c.currency
+                    })
+                })
+            });
+            (Some(json), None)
+        }
+
+        SessionUpdate::Plan(plan) => {
+            let completed = plan.entries.iter().filter(|e| e.status == PlanEntryStatus::Completed).count();
+            let in_progress = plan.entries.iter().filter(|e| e.status == PlanEntryStatus::InProgress).count();
+            let total = plan.entries.len();
+            
+            tracing::debug!(
+                total_tasks = total,
+                completed = completed,
+                in_progress = in_progress,
+                pending = total - completed - in_progress,
+                "📊 [STATS] Plan update received from goose"
+            );
+            
+            let entries = plan.entries.iter().map(|e| {
+                json!({
+                    "content": &e.content,
+                    "priority": format!("{:?}", e.priority),
+                    "status": format!("{:?}", e.status)
+                })
+            }).collect::<Vec<_>>();
+
+            let percent = if total > 0 { (completed as f32 / total as f32 * 100.0) as u32 } else { 0 };
+
+            let json = json!({
+                "type": "plan_update",
+                "entries": entries,
+                "stats": {
+                    "total": total,
+                    "completed": completed,
+                    "in_progress": in_progress,
+                    "pending": total - completed - in_progress,
+                    "progress_percent": percent
+                }
+            });
+            (Some(json), None)
+        }
+
+        SessionUpdate::CurrentModeUpdate(mode) => {
+            tracing::debug!(
+                mode_id = %mode.current_mode_id.0,
+                "📊 [STATS] Mode change received from goose"
+            );
+            let json = json!({
+                "type": "mode_update",
+                "current_mode_id": mode.current_mode_id.0.as_ref()
+            });
+            (Some(json), None)
+        }
+
+        SessionUpdate::SessionInfoUpdate(info) => {
+            let title = match &info.title {
+                sacp::schema::MaybeUndefined::Value(v) => Some(v.clone()),
+                _ => None
+            };
+            let updated_at = match &info.updated_at {
+                sacp::schema::MaybeUndefined::Value(v) => Some(v.clone()),
+                _ => None
+            };
+            
+            tracing::debug!(
+                title = ?title,
+                updated_at = ?updated_at,
+                "📊 [STATS] Session info update received from goose"
+            );
+            
+            let json = json!({
+                "type": "session_info_update",
+                "title": title,
+                "updated_at": updated_at
+            });
+            (Some(json), None)
+        }
+
+        SessionUpdate::ConfigOptionUpdate(config) => {
+            tracing::debug!(
+                config_count = config.config_options.len(),
+                configs = ?config.config_options.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                "📊 [STATS] Config options update received from goose"
+            );
+            
+            let options = config.config_options.iter().map(|opt| {
+                json!({
+                    "id": opt.id.0.as_ref(),
+                    "name": &opt.name,
+                    "description": &opt.description,
+                    "category": &opt.category
+                })
+            }).collect::<Vec<_>>();
+
+            let json = json!({
+                "type": "config_update",
+                "config_options": options
+            });
+            (Some(json), None)
+        }
+
+        SessionUpdate::AvailableCommandsUpdate(cmds) => {
+            tracing::debug!(
+                command_count = cmds.available_commands.len(),
+                commands = ?cmds.available_commands.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                "📊 [STATS] Available commands update received from goose"
+            );
+            
+            let commands = cmds.available_commands.iter().map(|cmd| {
+                json!({
+                    "name": &cmd.name,
+                    "description": &cmd.description
+                })
+            }).collect::<Vec<_>>();
+
+            let json = json!({
+                "type": "available_commands",
+                "commands": commands,
+                "count": commands.len()
             });
             (Some(json), None)
         }

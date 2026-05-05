@@ -83,13 +83,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [aiTyping, setAiTyping]   = useState(false)
   const pendingMsgIdRef = useRef<string | null>(null)
   
-  // Debug: Log messages state changes
-  useEffect(() => {
-    console.log(`📝 [MESSAGES STATE] Updated: ${messages.length} messages`, 
-      messages.map(m => ({ id: m.id.slice(0, 8), role: m.role, segCount: m.segments.length }))
-    )
-  }, [messages])
-  
   // Replay buffering (to avoid O(N²) re-renders during session load)
   const [isLoadingSession, setIsLoadingSession] = useState(false)
   const replayBufferRef = useRef<ChatMessage[]>([])
@@ -104,6 +97,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [tokenUsage, setTokenUsage]           = useState<TokenUsage | null>(null)
   const [tokenBlocked, setTokenBlocked]       = useState(false)
   const [tokenBannerText, setTokenBannerText] = useState('')
+  const [currentCost, setCurrentCost]         = useState<{ amount: number; currency: string } | null>(null)
+  const [totalTokensUsed, setTotalTokensUsed] = useState(0)
 
   // Load current token usage from server on mount
   // Models are now requested via WebSocket when session connects
@@ -142,7 +137,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     
     if (isLoadingSessionRef.current) {
       // Buffer during replay
-      console.log(`[REPLAY] Buffering chat_start (${id})`)
       replayBufferRef.current.push(msg)
     } else {
       // Live mode - add directly
@@ -162,11 +156,9 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     
     if (isLoadingSessionRef.current) {
       // Buffer during replay - O(N) instead of O(N²)
-      console.log(`[REPLAY] Buffering user message (${id}):`, text.slice(0, 50))
       replayBufferRef.current.push(msg)
     } else {
       // Live mode - add directly
-      console.log(`[LIVE] Adding user message (${id}):`, text.slice(0, 50))
       setMessages(prev => [...prev, msg])
     }
   }, [])
@@ -177,11 +169,17 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     if (isLoadingSessionRef.current) {
       // During replay, tools belong to the last assistant message
       const lastMsg = replayBufferRef.current[replayBufferRef.current.length - 1]
-      if (lastMsg && lastMsg.role === 'assistant') {
+      if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.pending) {
         lastMsg.segments.push({ kind: 'tool' as const, tool, command, exitCode: 0, done: false, output: '' })
-        console.log(`[REPLAY] Added tool_start to assistant message: ${tool}`)
       } else {
-        console.warn(`[REPLAY] tool_start but no assistant message to attach to:`, tool)
+        // No assistant message yet - create one for the tools
+        const newMsg: ChatMessage = {
+          id: nextId(),
+          role: 'assistant',
+          segments: [{ kind: 'tool' as const, tool, command, exitCode: 0, done: false, output: '' }],
+          pending: false
+        }
+        replayBufferRef.current.push(newMsg)
       }
       return
     }
@@ -208,7 +206,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
           if (seg.kind === 'tool') {
             const output = (stdout + (stderr ? '\n[stderr]\n' + stderr : '')).trimEnd()
             lastMsg.segments[lastIdx] = { kind: 'tool' as const, tool: seg.tool, command: seg.command, exitCode, done: true, output }
-            console.log(`[REPLAY] tool_end for ${seg.tool}: exit=${exitCode}, output=${output.length} chars`)
           }
         }
       }
@@ -247,7 +244,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         // Same assistant message - append text
         const lastSeg = lastMsg.segments[lastMsg.segments.length - 1]
         if (lastSeg && lastSeg.kind === 'text') {
-          lastSeg.content += text
+          // Replace the last segment with updated content
+          lastMsg.segments[lastMsg.segments.length - 1] = { kind: 'text', content: lastSeg.content + text }
         } else {
           lastMsg.segments.push({ kind: 'text', content: text })
         }
@@ -259,7 +257,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
           segments: [{ kind: 'text', content: text }],
           pending: false  // Replay messages are complete
         }
-        console.log(`[REPLAY] Creating assistant message (${newMsg.id}):`, text.slice(0, 50))
         replayBufferRef.current.push(newMsg)
       }
       return
@@ -268,7 +265,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     // Live mode processing below
     const id = pendingMsgIdRef.current
     if (!id) return
-    console.log(`[REPLAY] Assistant text for (${id}):`, text.slice(0, 50) + '...')
     setMessages(prev => prev.map(m => {
       if (m.id !== id) return m
       const segs = [...m.segments]
@@ -284,13 +280,11 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   const handleChatEnd = useCallback(() => {
     const id = pendingMsgIdRef.current
-    console.log(`[REPLAY] Chat end (${id})`)
     if (id) {
       setMessages(prev => {
         const updated = prev.map(m =>
           m.id === id ? { ...m, pending: false } : m
         )
-        console.log(`[REPLAY] Total messages after chat_end: ${updated.length}`)
         return updated
       })
       pendingMsgIdRef.current = null
@@ -317,6 +311,17 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     if (usage.model) setActiveModel(usage.model)
   }, [])
 
+  const handleTokenUsageUpdate = useCallback((update: any) => {
+    // Update direct token usage and cost from goose
+    setTotalTokensUsed(update.used ?? 0)
+    if (update.cost) {
+      setCurrentCost({
+        amount: update.cost.amount ?? 0,
+        currency: update.cost.currency ?? 'USD'
+      })
+    }
+  }, [])
+
   const handleTokenLimitReached = useCallback((banner: string) => {
     setTokenBlocked(true)
     setTokenBannerText(banner)
@@ -334,12 +339,10 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   const handleForkSessionComplete = useCallback((newSessionId: string) => {
     // After fork completes, auto-load the forked session
-    console.log(`✓ Fork completed, new session: ${newSessionId}`)
     setSourceThreadId(newSessionId)
   }, [])
 
   const handleSessionsListReceived = useCallback((sessions: any[]) => {
-    console.log(`📋 Received ${sessions.length} sessions`)
     if (sessionsPromiseResolverRef.current) {
       sessionsPromiseResolverRef.current(sessions)
       sessionsPromiseResolverRef.current = undefined
@@ -347,24 +350,19 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setSessionsLoading(false)
   }, [])
 
-  const handleLoadSessionComplete = useCallback((threadId: string) => {
-    console.log(`✅ [REPLAY COMPLETE] LoadSession finished for ${threadId}`)
-    console.log(`📊 [REPLAY BUFFER] ${replayBufferRef.current.length} messages buffered:`, 
-      replayBufferRef.current.map(m => ({ role: m.role, segments: m.segments.length }))
-    )
-    
-    // Flush replay buffer - single O(1) re-render instead of O(N²)
+  const handleLoadSessionComplete = useCallback(() => {
+    // Flush replay buffer - create new copies to ensure React detects changes
     if (replayBufferRef.current.length > 0) {
-      setMessages(replayBufferRef.current)
-      console.log(`✅ [REPLAY] Flushed ${replayBufferRef.current.length} messages to UI`)
-    } else {
-      console.warn(`⚠️ [REPLAY] Buffer is empty - no messages to display!`)
+      const messages = replayBufferRef.current.map(msg => ({
+        ...msg,
+        segments: [...msg.segments] // Create new array reference
+      }))
+      setMessages(messages)
     }
     
     replayBufferRef.current = []
     isLoadingSessionRef.current = false
     setIsLoadingSession(false)
-    console.log(`✅ [REPLAY] Exited replay mode`)
   }, [])
 
   // Safety net: if replay takes too long, exit loading mode
@@ -372,9 +370,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     if (!isLoadingSession) return
     
     const timeout = setTimeout(() => {
-      console.warn('⚠️ [REPLAY TIMEOUT] LoadSession took too long, forcing exit from replay mode')
       if (replayBufferRef.current.length > 0) {
-        console.log(`📤 Flushing ${replayBufferRef.current.length} buffered messages`)
         setMessages(replayBufferRef.current)
         replayBufferRef.current = []
       }
@@ -397,6 +393,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     onAssistantText:      handleAssistantText,
     onChatEnd:            handleChatEnd,
     onTokenUsage:         handleTokenUsage,
+    onTokenUsageUpdate:   handleTokenUsageUpdate,
     onTokenLimitReached:  handleTokenLimitReached,
     onModelChanged:       handleModelChanged,
     onModelsReceived:     handleModelsReceived,
@@ -410,7 +407,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     if (status !== 'connected' || autoLoadedLastSession || isAutoLoadingLastSession) return
 
     setIsAutoLoadingLastSession(true)
-    console.log('🔄 Auto-loading last session...')
     
     // Fetch session list and load the most recent one
     const autoLoadLastSession = async () => {
@@ -425,31 +421,18 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         })
 
         if (sessions.length > 0) {
-          console.log('📋 [AUTO-LOAD] Received sessions:', sessions.map((s: any) => ({
-            id: s.id?.slice(0, 8),
-            message_count: s.message_count,
-            messageCount: s.metadata?.messageCount,
-            meta: s.metadata
-          })))
-          
           // Skip sessions with 0 messages (likely just-created empty sessions)
           const sessionsWithMessages = sessions.filter((s: any) => {
             // Check if session has messages (message_count from Goose meta, or assume yes if not provided)
             const messageCount = s.message_count ?? s.metadata?.messageCount ?? 1
-            console.log(`📊 Session ${s.id?.slice(0, 8)}: messageCount=${messageCount}`)
             return messageCount > 0
           })
           
           if (sessionsWithMessages.length > 0) {
             const lastSession = sessionsWithMessages[0]  // Most recent with messages
-            console.log(`📌 Auto-loading last session: ${lastSession.id} (${sessionsWithMessages.length} sessions with messages)`)
             setSourceThreadId(lastSession.id)
             setIsLoadingThread(true)
-          } else {
-            console.log('ℹ️ All sessions are empty - skipping auto-load')
           }
-        } else {
-          console.log('ℹ️ No previous sessions found')
         }
       } catch (err) {
         console.error('Failed to auto-load last session:', err)
@@ -466,8 +449,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   useEffect(() => {
     if (status !== 'connected' || !isLoadingThread || !sourceThreadId) return
 
-    console.log(`🔄 [REPLAY START] Loading thread: ${sourceThreadId}, WS status: ${status}`)
-    console.log(`🔄 [REPLAY] Entering replay mode, clearing buffer...`)
     setMessages([])  // Clear messages before loading session history
     replayBufferRef.current = []  // Clear replay buffer
     isLoadingSessionRef.current = true  // Set ref FIRST for immediate effect
@@ -475,7 +456,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     
     const sent = sendLoadSession(sourceThreadId)
     if (!sent) {
-      console.error('❌ Failed to send LoadSession - connection not ready')
       isLoadingSessionRef.current = false
       setIsLoadingSession(false)  // Exit replay mode on failure
     }
@@ -541,9 +521,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         // Upload to workspace under /uploads directory
         const relativePath = `uploads/${file.file.name}`
         await api.uploadStudentFile(session.session_id, relativePath, fileContent, session.token)
-        console.log(`✓ File uploaded: ${file.file.name}`)
       } catch (err) {
-        console.error(`Failed to upload ${file.file.name}:`, err)
       }
     }
   }, [session.session_id, session.token])
@@ -575,7 +553,6 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   const handleSessionSelectorLoadSession = (threadId: string) => {
     setShowSessionSelectorModal(false)
-    console.log(`📂 [USER] Loading session: ${threadId}`)
     setSourceThreadId(threadId)
     setIsLoadingThread(true)
     // useEffect will send LoadSession when connected
@@ -583,10 +560,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   const handleSessionSelectorForkSession = (threadId: string) => {
     setShowSessionSelectorModal(false)
-    console.log(`🔗 [USER] User clicked fork, starting fork: ${threadId}`)
     // Direct fork - don't use sourceThreadId, send fork directly
     if (status === 'connected') {
-      console.log(`✓ Connected, sending fork immediately`)
       sendForkSession(threadId)
     } else {
       // If not connected yet, queue fork via sourceThreadId
@@ -730,6 +705,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
               tokenUsage={tokenUsage}
               tokenBlocked={tokenBlocked}
               tokenBannerText={tokenBannerText}
+              currentCost={currentCost}
+              totalTokensUsed={totalTokensUsed}
               sessionId={session.session_id}
               token={session.token}
               onFileSelect={(path, name) => setSelectedFile({ path, name, isSubject: false })}

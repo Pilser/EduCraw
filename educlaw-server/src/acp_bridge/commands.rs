@@ -69,25 +69,17 @@ pub async fn handle_load_session(
     cx: &ConnectionTo<SacpAgent>,
     thread_id: String,
 ) -> Result<()> {
-    tracing::info!("📨 [LOAD-SESSION] Sending LoadSessionRequest for thread: {}", thread_id);
-    
     let req = LoadSessionRequest::new(SessionId::new(thread_id.clone()), PathBuf::from("."));
 
     // block_task is safe here: called from the WebSocket receive loop (a plain
     // tokio task), NOT from inside the SACP dispatch loop.  The dispatch loop
     // stays free to deliver the replay SessionNotification events that Goose
     // sends BEFORE it sends the LoadSessionResponse.
-    let result = cx.send_request(req)
+    cx.send_request(req)
         .block_task()
         .await
-        .map_err(|e| AppError::Session(format!("LoadSession ACP error: {e}")));
-
-    match &result {
-        Ok(_) => tracing::info!("✅ [LOAD-SESSION] LoadSessionResponse received for thread: {}", thread_id),
-        Err(e) => tracing::error!("❌ [LOAD-SESSION] Failed: {} for thread: {}", e, thread_id),
-    }
-
-    result.map(|_| ()) // Discard LoadSessionResponse, return ()
+        .map_err(|e| AppError::Session(format!("LoadSession ACP error: {e}")))
+        .map(|_| ()) // Discard LoadSessionResponse, return ()
 }
 
 /// Handle ForkSessionRequest: copy source thread and create new session with forked history

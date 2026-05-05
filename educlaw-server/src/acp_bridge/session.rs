@@ -526,18 +526,18 @@ async fn handle_client_message(
         }
 
         ClientMessage::LoadSession { thread_id } => {
-            tracing::info!(session_id = %session_id, thread_id = %thread_id, "🔄 [LOAD-SESSION] Loading thread");
             match super::handle_load_session(&cx, thread_id.clone()).await {
                 Ok(()) => {
                     // LoadSession succeeded - the thread_id is now our active ACP session_id
                     let loaded_sid = SessionId::new(thread_id.clone());
                     *acp_session_id_holder.lock().await = Some(loaded_sid.clone());
-                    tracing::info!(
-                        session_id = %session_id,
-                        thread_id = %thread_id,
-                        acp_session_id = %loaded_sid.0,
-                        "✓ [LOAD-SESSION] LoadSession complete, session_id set to thread_id"
-                    );
+                    
+                    // CRITICAL: Wait for notification queue to drain
+                    // LoadSessionResponse arrives synchronously, but historical SessionNotifications
+                    // are still being forwarded asynchronously via notif_rx channel.
+                    // Without this delay, frontend receives load_session_complete before all
+                    // assistant_text frames arrive, causing text segments to not render.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
                     
                     // Send completion frame so frontend can flush replay buffer
                     let frame = serde_json::json!({
@@ -548,7 +548,7 @@ async fn handle_client_message(
                     let _ = ctrl_tx.send(frame).await;
                 }
                 Err(e) => {
-                    tracing::error!(session_id = %session_id, thread_id = %thread_id, error = %e, "✗ [LOAD-SESSION] Failed to load session");
+                    tracing::error!(session_id = %session_id, thread_id = %thread_id, error = %e, "✗ [SESSION] Failed to load session");
                     let frame = serde_json::json!({
                         "type": "error",
                         "message": format!("Failed to load session: {}", e),

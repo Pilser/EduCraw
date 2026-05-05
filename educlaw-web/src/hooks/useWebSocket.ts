@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { WsEnvelope, ShowImagePayload, TurnTokenUsage } from '../api/types'
+import type { WsEnvelope, ShowImagePayload, TurnTokenUsage, TokenUsageUpdate } from '../api/types'
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -15,6 +15,7 @@ interface Options {
   onAssistantText?: (text: string) => void
   onChatEnd?: () => void
   onTokenUsage?: (usage: TurnTokenUsage) => void
+  onTokenUsageUpdate?: (update: TokenUsageUpdate) => void
   onTokenLimitReached?: (banner: string) => void
   onModelChanged?: (model: string) => void
   onModelsReceived?: (models: string[], active: string) => void
@@ -26,7 +27,7 @@ interface Options {
 export function useWebSocket({
   sessionId, token, onPtyData, onImage,
   onChatStart, onUserText, onToolStart, onToolEnd, onAssistantText, onChatEnd,
-  onTokenUsage, onTokenLimitReached, onModelChanged, onModelsReceived, onSessionsListReceived, onForkSessionComplete, onLoadSessionComplete,
+  onTokenUsage, onTokenUsageUpdate, onTokenLimitReached, onModelChanged, onModelsReceived, onSessionsListReceived, onForkSessionComplete, onLoadSessionComplete,
 }: Options) {
   const [status, setStatus] = useState<WsStatus>('connecting')
   const wsRef = useRef<WebSocket | null>(null)
@@ -67,10 +68,9 @@ export function useWebSocket({
 
   const sendLoadSession = useCallback((threadId: string) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) {
-      console.error('❌ Cannot send LoadSession - WebSocket not open:', wsRef.current?.readyState)
+      console.error('WebSocket not open')
       return false
     }
-    console.log('📤 [WS] Sending load_session:', threadId)
     send({ type: 'load_session', thread_id: threadId })
     return true
   }, [send])
@@ -87,7 +87,6 @@ export function useWebSocket({
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${proto}//${location.host}/sessions/${sessionId}/ws?token=${encodeURIComponent(token)}`
 
-    console.log('🔌 [WS] Creating WebSocket connection')
     const ws = new WebSocket(url)
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
@@ -95,13 +94,12 @@ export function useWebSocket({
     // Store callbacks in refs to avoid reconnecting when they change
     const callbacksRef = {
       onPtyData, onImage, onChatStart, onUserText, onToolStart, onToolEnd,
-      onAssistantText, onChatEnd, onTokenUsage, onTokenLimitReached,
+      onAssistantText, onChatEnd, onTokenUsage, onTokenUsageUpdate, onTokenLimitReached,
       onModelChanged, onModelsReceived, onSessionsListReceived,
       onForkSessionComplete, onLoadSessionComplete
     }
 
     ws.onopen = () => {
-      console.log('✅ [WS] Connected')
       setStatus('connected')
       keepaliveRef.current = setInterval(() => {
         ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'ping' }))
@@ -133,21 +131,17 @@ export function useWebSocket({
             cache_creation_input_tokens?: number; cache_read_input_tokens?: number;
             banner?: string; thread_id?: string; new_session_id?: string; sessions?: any[];
           }
-          console.debug(`📨 WebSocket frame:`, frame.type, frame)
           switch (frame.type) {
             case 'show_image':
               callbacksRef.onImage(frame.payload as ShowImagePayload)
               break
             case 'chat_start':
-              console.log('🟢 chat_start')
               callbacksRef.onChatStart?.()
               break
             case 'user_text':
-              console.log('🔵 user_text:', frame.text)
               if (frame.text) callbacksRef.onUserText?.(frame.text)
               break
             case 'tool_start':
-              console.log('🔧 tool_start:', frame.name || frame.tool)
               callbacksRef.onToolStart?.(frame.name ?? frame.tool ?? '', frame.input ?? frame.command ?? '')
               break
             case 'tool_end': {
@@ -164,13 +158,24 @@ export function useWebSocket({
               callbacksRef.onChatEnd?.()
               break
             case 'token_usage':
-              callbacksRef.onTokenUsage?.({
-                model: frame.model ?? '',
-                input_tokens: frame.input_tokens ?? 0,
-                output_tokens: frame.output_tokens ?? 0,
-                cache_creation_input_tokens: frame.cache_creation_input_tokens ?? 0,
-                cache_read_input_tokens: frame.cache_read_input_tokens ?? 0,
-              })
+              // Try new format first (used, size, cost)
+              if ('used' in frame) {
+                const tokenFrame = frame as any
+                callbacksRef.onTokenUsageUpdate?.({
+                  used: tokenFrame.used ?? 0,
+                  size: tokenFrame.size ?? undefined,
+                  cost: tokenFrame.cost ?? null,
+                })
+              } else {
+                // Fallback to old format (input_tokens, output_tokens, etc.)
+                callbacksRef.onTokenUsage?.({
+                  model: frame.model ?? '',
+                  input_tokens: frame.input_tokens ?? 0,
+                  output_tokens: frame.output_tokens ?? 0,
+                  cache_creation_input_tokens: frame.cache_creation_input_tokens ?? 0,
+                  cache_read_input_tokens: frame.cache_read_input_tokens ?? 0,
+                })
+              }
               break
             case 'token_limit_reached':
               callbacksRef.onTokenLimitReached?.(frame.banner ?? 'Token limit reached. Please contact your administrator.')
@@ -199,7 +204,6 @@ export function useWebSocket({
             case 'load_session_complete': {
               const threadId = (frame as any).thread_id
               if (threadId) {
-                console.log(`✅ [WS] load_session_complete received for ${threadId}`)
                 callbacksRef.onLoadSessionComplete?.(threadId)
               }
               break
@@ -212,18 +216,15 @@ export function useWebSocket({
     }
 
     ws.onclose = () => {
-      console.log('❌ [WS] Disconnected')
       setStatus('disconnected')
       if (keepaliveRef.current) clearInterval(keepaliveRef.current)
     }
 
     ws.onerror = () => {
-      console.error('❌ [WS] Error')
       setStatus('error')
     }
 
     return () => {
-      console.log('🔌 [WS] Cleaning up connection')
       ws.close()
       if (keepaliveRef.current) clearInterval(keepaliveRef.current)
     }

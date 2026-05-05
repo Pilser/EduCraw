@@ -272,6 +272,17 @@ const warmParchment = {
       fontSize:     "13px",
     },
 
+    // -- Error/warning message box (for agent errors like stream failures) --
+    errorMessage: {
+      background:   "#fef9c3",   // Light yellow
+      color:        "#3D1F00",
+      border:       "2px solid #ef4444",   // Red border
+      borderRadius: "8px",
+      padding:      "8px",
+      fontSize:     "14px",
+      lineHeight:   1.6,
+    },
+
     // -- Divider --
     divider: {
       border:     "none",

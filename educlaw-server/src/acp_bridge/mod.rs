@@ -18,6 +18,7 @@ mod images;
 mod messages;
 mod model_poller;
 mod notifications;
+// pub mod stats;  // Deferred: tables to be planned later
 mod permissions;
 mod session;
 
