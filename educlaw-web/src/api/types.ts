@@ -119,6 +119,7 @@ export interface SessionModels {
 }
 
 export interface TokenUsage {
+  total_tokens_used: number
   total_input_tokens: number
   total_output_tokens: number
   total_cache_creation_tokens: number

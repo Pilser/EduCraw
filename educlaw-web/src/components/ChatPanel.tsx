@@ -27,6 +27,7 @@ interface Props {
   tokenUsage?: TokenUsage | null
   tokenBalance?: number | null
   sessionTokensUsed?: number
+  tokenContextSize?: number | null
   // block state
   tokenBlocked?: boolean
   tokenBannerText?: string
@@ -179,12 +180,14 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
 export default function ChatPanel({
   messages, inputValue, onInputChange, onSend, onSendWithImage, onFilesForUpload, onCancel, disabled,
   availableModels, activeModel, onModelChange,
-  tokenUsage, tokenBalance, sessionTokensUsed, tokenBlocked, tokenBannerText,
+  tokenUsage, tokenBalance, sessionTokensUsed, tokenContextSize, tokenBlocked, tokenBannerText,
   sessionId, token, onFileSelect,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputAttachmentRef = useRef<FileInputAttachmentHandle>(null)
+
+  const derivedUsedTokens = sessionTokensUsed ?? 0
   const [attachedImage, setAttachedImage] = useState<AttachedFile | null>(null)
   const [filesToUpload, setFilesToUpload] = useState<AttachedFile[]>([])
   const [uploadStatus, setUploadStatus] = useState<string>('')
@@ -270,14 +273,19 @@ export default function ChatPanel({
         <div className="flex-1" />
 
         {/* Token usage — bold, prominent */}
-        {(((sessionTokensUsed ?? 0) > 0) || !!tokenUsage || (tokenBalance !== undefined && tokenBalance !== null)) && (
+        {(((sessionTokensUsed ?? 0) > 0) || !!tokenUsage || (tokenBalance !== undefined && tokenBalance !== null) || (tokenContextSize !== undefined && tokenContextSize !== null)) && (
           <div className="flex items-center gap-3 text-sm font-bold">
             <Zap className="w-4 h-4 text-wp-accent" />
             <div className="flex flex-col gap-1">
               {/* Current token usage and balance */}
-              {(sessionTokensUsed ?? 0) > 0 && (
+              {derivedUsedTokens > 0 && (
                 <div className={`font-bold tabular-nums text-wp-text-primary`}>
-                  {(sessionTokensUsed ?? 0).toLocaleString()} tokens used
+                  {derivedUsedTokens.toLocaleString()} tokens used
+                </div>
+              )}
+              {tokenContextSize !== undefined && tokenContextSize !== null && (
+                <div className="text-xs text-wp-text-secondary font-normal">
+                  Context size: <span className="text-wp-text-primary">{tokenContextSize.toLocaleString()}</span>
                 </div>
               )}
               {tokenBalance !== undefined && tokenBalance !== null && (

@@ -96,6 +96,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [activeModel, setActiveModel]         = useState<string | undefined>(undefined)
   const [modelsLoadedFromBackend, setModelsLoadedFromBackend] = useState(false)
   const [tokenUsage, setTokenUsage]           = useState<TokenUsage | null>(null)
+  const [sessionTokensUsed, setSessionTokensUsed] = useState(0)
+  const [tokenContextSize, setTokenContextSize] = useState<number | null>(null)
   const [tokenBalance, setTokenBalance]       = useState<number | null>(null)
   const [tokenBlocked, setTokenBlocked]       = useState(false)
   const [tokenBannerText, setTokenBannerText] = useState('')
@@ -110,7 +112,10 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         setActiveModel(r.active || r.models?.[0] || undefined)
         setModelsLoadedFromBackend(true)
       }),
-      api.getSessionTokenUsage(session.session_id, session.token).then(r => setTokenUsage(r)),
+      api.getSessionTokenUsage(session.session_id, session.token).then(r => {
+        setTokenUsage(r)
+        setSessionTokensUsed(r.total_tokens_used ?? 0)
+      }),
       api.getMyTokenBalance(session.token).then(r => {
         setTokenBalance(r.balance)
         // Block if balance is zero or negative
@@ -307,14 +312,16 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, [])
 
   const handleTokenUsage = useCallback((usage: TurnTokenUsage) => {
-    // Accumulate into session totals
+    // Legacy WS format fallback; merged total is sourced from backend `used` updates.
     setTokenUsage(prev => prev ? {
       total_input_tokens: prev.total_input_tokens + usage.input_tokens,
       total_output_tokens: prev.total_output_tokens + usage.output_tokens,
       total_cache_creation_tokens: prev.total_cache_creation_tokens + usage.cache_creation_input_tokens,
       total_cache_read_tokens: prev.total_cache_read_tokens + usage.cache_read_input_tokens,
+      total_tokens_used: prev.total_tokens_used,
       turn_count: prev.turn_count + 1,
     } : {
+      total_tokens_used: 0,
       total_input_tokens: usage.input_tokens,
       total_output_tokens: usage.output_tokens,
       total_cache_creation_tokens: usage.cache_creation_input_tokens,
@@ -326,6 +333,14 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, [])
 
   const handleTokenUsageUpdate = useCallback((update: any) => {
+    // New WS format from backend/goose: cumulative used tokens.
+    if (typeof update.used === 'number') {
+      setSessionTokensUsed(update.used)
+    }
+    if (typeof update.size === 'number') {
+      setTokenContextSize(update.size)
+    }
+
     // Handle balance update from WebSocket
     if (update.balance !== undefined) {
       setTokenBalance(update.balance)
@@ -736,6 +751,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
               activeModel={activeModel}
               onModelChange={handleModelChange}
               tokenUsage={tokenUsage}
+              sessionTokensUsed={sessionTokensUsed}
+              tokenContextSize={tokenContextSize}
               tokenBalance={tokenBalance}
               tokenBlocked={tokenBlocked}
               tokenBannerText={tokenBannerText}
