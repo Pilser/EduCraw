@@ -214,14 +214,15 @@ async fn create_session(
         .map_err(|e| AppError::Session(format!("failed to write student.json: {e}")))?;
 
     // Model priority (highest → lowest):
-    //   1. request body `model` field
-    //   2. first model in the student's DB-assigned model list
-    //   3. first globally-enabled model in the `models` table
-    //   4. CLAW_MODEL env var
-    // This ensures the student's UI-selected model (or the DB default) is used
-    // instead of always deferring to the server-wide CLAW_MODEL env var.
+    //   1. request body `model` field (explicit override from frontend)
+    //   2. student.last_model (persisted preference from previous session)
+    //   3. first model in the student's DB-assigned model list
+    //   4. first globally-enabled model in the `models` table
+    //   5. CLAW_MODEL env var
     let effective_model = if let Some(m) = body.model.clone().filter(|m| !m.is_empty()) {
         Some(m)
+    } else if let Some(last) = student.last_model.clone().filter(|m| !m.is_empty()) {
+        Some(last)
     } else {
         let student_models = db_models::models_for_student(&state.pool, &student.id).await
             .unwrap_or_default();
@@ -430,8 +431,15 @@ async fn get_session_models(
 
     let models =
         db_models::models_for_student(&state.pool, &session.student_id).await?;
-    let active = session
-        .model
+    // Priority: student.last_model (persisted preference) → session.model → default
+    let student_last_model = students::get_student(&state.pool, &session.student_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.last_model);
+
+    let active = student_last_model
+        .or(session.model)
         .unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string());
 
     Ok(Json(serde_json::json!({

@@ -28,6 +28,8 @@ pub struct Student {
     pub token_block_banner: Option<String>,
     /// Timestamp when the student was first blocked; NULL = not blocked.
     pub token_blocked_at: Option<String>,
+    /// Last model used by the student (persisted across sessions).
+    pub last_model: Option<String>,
     pub created_at: String,
     pub last_seen: Option<String>,
 }
@@ -162,6 +164,16 @@ pub async fn mark_token_blocked(pool: &SqlitePool, id: &str) -> Result<(), sqlx:
 /// Clear the block so a student can chat again (admin resets it).
 pub async fn clear_token_block(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE students SET token_blocked_at = NULL WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update the student's last used model (persisted across sessions).
+pub async fn set_last_model(pool: &SqlitePool, id: &str, model: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE students SET last_model = ? WHERE id = ?")
+        .bind(model)
         .bind(id)
         .execute(pool)
         .await?;

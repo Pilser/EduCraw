@@ -98,6 +98,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         "ALTER TABLE students ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE students ADD COLUMN token_block_banner TEXT",
         "ALTER TABLE students ADD COLUMN token_blocked_at TEXT",
+        "ALTER TABLE students ADD COLUMN last_model TEXT",
         "ALTER TABLE models ADD COLUMN multiplier REAL NOT NULL DEFAULT 1.0",
         "ALTER TABLE sessions ADD COLUMN last_token_checkpoint INTEGER NOT NULL DEFAULT 0",
     ] {

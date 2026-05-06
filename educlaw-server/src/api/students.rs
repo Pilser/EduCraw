@@ -83,6 +83,7 @@ async fn create_student(
         token_balance: 0,
         token_block_banner: None,
         token_blocked_at: None,
+        last_model: None,
     };
 
     students::insert_student(&state.pool, &student).await?;

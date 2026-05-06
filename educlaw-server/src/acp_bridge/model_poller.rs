@@ -13,7 +13,7 @@ use sacp::{Agent as SacpAgent, ConnectionTo};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
-use crate::db::sessions as db_sess;
+use crate::db::{sessions as db_sess, students as db_students};
 
 /// Spawns the model-switch poller as a fire-and-forget tokio task.
 ///
@@ -127,6 +127,17 @@ pub fn spawn_model_poller(
                             error = %e,
                             "failed to update session model in DB"
                         );
+                    }
+
+                    // Save to student record for persistence across logins
+                    if let Ok(Some(sess)) = db_sess::get_session(&pool, &session_id).await {
+                        if let Err(e) = db_students::set_last_model(&pool, &sess.student_id, &model_name).await {
+                            tracing::warn!(
+                                student_id = %sess.student_id,
+                                error = %e,
+                                "failed to update student last_model"
+                            );
+                        }
                     }
 
                     let frame =
