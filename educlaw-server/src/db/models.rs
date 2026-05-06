@@ -11,6 +11,7 @@ pub struct Model {
     pub name: String,
     pub display_name: String,
     pub enabled: i64, // 1 = enabled, 0 = disabled
+    pub multiplier: f64, // Token deduction multiplier (e.g., 1.0, 2.5, 3.33)
     pub created_at: String,
 }
 
@@ -46,6 +47,19 @@ pub async fn set_enabled(
     Ok(())
 }
 
+pub async fn set_multiplier(
+    pool: &SqlitePool,
+    name: &str,
+    multiplier: f64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE models SET multiplier = ? WHERE name = ?")
+        .bind(multiplier)
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn delete_model(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM models WHERE id = ?")
         .bind(id)
@@ -70,6 +84,29 @@ pub async fn list_enabled(pool: &SqlitePool) -> Result<Vec<Model>, sqlx::Error> 
     )
     .fetch_all(pool)
     .await
+}
+
+pub async fn get_model_by_name(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<Option<Model>, sqlx::Error> {
+    sqlx::query_as::<_, Model>("SELECT * FROM models WHERE name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn get_model_multiplier(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<f64, sqlx::Error> {
+    let row: (f64,) = sqlx::query_as(
+        "SELECT COALESCE(multiplier, 1.0) FROM models WHERE name = ?"
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
 }
 
 // ── Per-student model assignments ─────────────────────────────────────────

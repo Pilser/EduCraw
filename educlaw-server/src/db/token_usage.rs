@@ -93,3 +93,36 @@ pub async fn student_total_tokens(
     .await?;
     Ok(row.0)
 }
+
+/// Record a token deduction with model multiplier applied (audit trail).
+pub async fn record_deduction(
+    pool: &SqlitePool,
+    student_id: &str,
+    session_id: &str,
+    model_name: &str,
+    multiplier: f64,
+    tokens_used: i64,
+    tokens_deducted: i64,
+    balance_before: i64,
+    balance_after: i64,
+) -> Result<(), sqlx::Error> {
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO token_deductions
+            (id, student_id, session_id, model_name, multiplier,
+             tokens_used, tokens_deducted, balance_before, balance_after)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(student_id)
+    .bind(session_id)
+    .bind(model_name)
+    .bind(multiplier)
+    .bind(tokens_used)
+    .bind(tokens_deducted)
+    .bind(balance_before)
+    .bind(balance_after)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

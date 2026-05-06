@@ -94,18 +94,32 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   // Model + token state (models come from backend via WebSocket)
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [activeModel, setActiveModel]         = useState<string | undefined>(undefined)
+  const [modelsLoadedFromBackend, setModelsLoadedFromBackend] = useState(false)
   const [tokenUsage, setTokenUsage]           = useState<TokenUsage | null>(null)
+  const [tokenBalance, setTokenBalance]       = useState<number | null>(null)
   const [tokenBlocked, setTokenBlocked]       = useState(false)
   const [tokenBannerText, setTokenBannerText] = useState('')
-  const [currentCost, setCurrentCost]         = useState<{ amount: number; currency: string } | null>(null)
-  const [totalTokensUsed, setTotalTokensUsed] = useState(0)
 
-  // Load current token usage from server on mount
-  // Models are now requested via WebSocket when session connects
+
+  // Load current token usage and balance from server on mount
+  // Load models and token state from backend on mount
   useEffect(() => {
-    api.getSessionTokenUsage(session.session_id, session.token)
-      .then(r => setTokenUsage(r))
-      .catch(() => {})
+    Promise.all([
+      api.getSessionModels(session.session_id, session.token).then(r => {
+        setAvailableModels(r.models || [])
+        setActiveModel(r.active || r.models?.[0] || undefined)
+        setModelsLoadedFromBackend(true)
+      }),
+      api.getSessionTokenUsage(session.session_id, session.token).then(r => setTokenUsage(r)),
+      api.getMyTokenBalance(session.token).then(r => {
+        setTokenBalance(r.balance)
+        // Block if balance is zero or negative
+        if (r.balance <= 0) {
+          setTokenBlocked(true)
+          setTokenBannerText('You have no tokens remaining. Please contact your instructor.')
+        }
+      }),
+    ]).catch(() => {})
   }, [session.session_id, session.token])
 
   // Terminal write function set once xterm mounts
@@ -312,13 +326,14 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, [])
 
   const handleTokenUsageUpdate = useCallback((update: any) => {
-    // Update direct token usage and cost from goose
-    setTotalTokensUsed(update.used ?? 0)
-    if (update.cost) {
-      setCurrentCost({
-        amount: update.cost.amount ?? 0,
-        currency: update.cost.currency ?? 'USD'
-      })
+    // Handle balance update from WebSocket
+    if (update.balance !== undefined) {
+      setTokenBalance(update.balance)
+      // Block if balance becomes zero or negative
+      if (update.balance <= 0) {
+        setTokenBlocked(true)
+        setTokenBannerText('You have no tokens remaining. Please contact your instructor.')
+      }
     }
   }, [])
 
@@ -332,10 +347,14 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, [])
 
   const handleModelsReceived = useCallback((models: string[], active: string) => {
-    setAvailableModels(models)
-    // Use backend's active model if provided; otherwise first available (or undefined if empty)
-    setActiveModel(active || models[0] || undefined)
-  }, [])
+    // Only update models from WebSocket if we haven't loaded them from the backend.
+    // This ensures student-specific model restrictions from DB take priority over Goose defaults.
+    if (!modelsLoadedFromBackend) {
+      setAvailableModels(models)
+      // Use backend's active model if provided; otherwise first available (or undefined if empty)
+      setActiveModel(active || models[0] || undefined)
+    }
+  }, [modelsLoadedFromBackend])
 
   const handleForkSessionComplete = useCallback((newSessionId: string) => {
     // After fork completes, auto-load the forked session
@@ -479,7 +498,21 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     }
     setMessages(prev => [...prev, msg])
     sendInput(text + '\n')
-  }, [sendInput])
+    
+    // Refetch token balance after sending (will update once response is processed)
+    setTimeout(() => {
+      api.getMyTokenBalance(session.token)
+        .then(r => {
+          setTokenBalance(r.balance)
+          // Unblock if balance is positive again
+          if (r.balance > 0) {
+            setTokenBlocked(false)
+            setTokenBannerText('')
+          }
+        })
+        .catch(() => {})
+    }, 1000)
+  }, [sendInput, session.token])
 
   // Handle sending with image attachment
   const handleSendWithImage = useCallback((text: string, imageDataUrl?: string, mimeType?: string) => {
@@ -703,10 +736,9 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
               activeModel={activeModel}
               onModelChange={handleModelChange}
               tokenUsage={tokenUsage}
+              tokenBalance={tokenBalance}
               tokenBlocked={tokenBlocked}
               tokenBannerText={tokenBannerText}
-              currentCost={currentCost}
-              totalTokensUsed={totalTokensUsed}
               sessionId={session.session_id}
               token={session.token}
               onFileSelect={(path, name) => setSelectedFile({ path, name, isSubject: false })}

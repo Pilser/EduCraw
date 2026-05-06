@@ -109,6 +109,7 @@ export interface Model {
   name: string
   display_name: string
   enabled: number   // 1 = enabled
+  multiplier: number
   created_at: string
 }
 

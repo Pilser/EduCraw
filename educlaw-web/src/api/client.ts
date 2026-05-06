@@ -255,6 +255,12 @@ export const api = {
     }).then(json)
   },
 
+  async getMyTokenBalance(token: string): Promise<{ balance: number }> {
+    return fetch(`${BASE}/me/token-balance`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(json)
+  },
+
   // ── Admin — Models ────────────────────────────────────────────────────────
 
   async adminListModels(token: string): Promise<Model[]> {
@@ -322,6 +328,35 @@ export const api = {
       body: JSON.stringify({ models }),
     })
   },
+
+  // Token balance management
+  async adminGetTokenBalance(token: string, studentId: string): Promise<{ balance: number }> {
+    return fetch(`${BASE}/admin/students/${studentId}/token-balance`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(json)
+  },
+
+  async adminTopupTokens(token: string, studentId: string, amount: number): Promise<{ new_balance: number }> {
+    return fetch(`${BASE}/admin/students/${studentId}/topup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ amount }),
+    }).then(json)
+  },
+
+  async adminDeductTokens(token: string, studentId: string, amount: number): Promise<{ new_balance: number }> {
+    return fetch(`${BASE}/admin/students/${studentId}/deduct`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ amount }),
+    }).then(json)
+  },
+
+  async adminGetTokenDeductions(token: string, studentId: string): Promise<Array<{ id: string; session_id: string; model_name: string; multiplier: number; tokens_used: number; tokens_deducted: number; balance_before: number; balance_after: number; created_at: string }>> {
+    return fetch(`${BASE}/admin/students/${studentId}/token-deductions`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(json)
+  },
 }
 
 // ── Admin types (only used by AdminPage) ─────────────────────────────────
@@ -335,6 +370,7 @@ export interface AdminStudent {
   last_seen: string | null
   has_active_session: boolean
   token_limit: number | null
+  token_balance: number
   token_blocked_at: string | null
   token_block_banner: string | null
 }

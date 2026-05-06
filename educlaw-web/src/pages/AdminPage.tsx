@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { GraduationCap, LogOut, Users, BookOpen, FolderOpen, ClipboardList, Monitor, Cpu, Plus, X } from 'lucide-react'
+import { GraduationCap, LogOut, Users, BookOpen, FolderOpen, ClipboardList, Monitor, Cpu, Plus, X, Coins, Lock } from 'lucide-react'
 import { api, type AdminStudent, type AdminSession, type CreateStudentBody, type CreateAssignmentBody } from '../api/client'
 import type { Cohort, Subject, Assignment, Model } from '../api/types'
 
@@ -270,13 +270,14 @@ function StudentsTab({ token, role }: { token: string; role: string }) {
                     </td>
                     {role === 'admin' && (
                       <td className="px-4 py-3.5 flex gap-1.5">
-                        <button onClick={() => startEdit(s)} className={`${btnSm} bg-wp-border-soft text-wp-text-secondary hover:bg-wp-border-mid`}>Edit</button>
+                        <button onClick={() => startEdit(s)} className={`${btnSm} bg-wp-bgSurface border border-wp-borderMid text-wp-textSecondary hover:border-wp-borderHard hover:bg-wp-bgSurfaceAlt`}>Edit</button>
                         <button
                           onClick={() => setDetailId(d => d === s.id ? null : s.id)}
-                          className={`${btnSm} ${detailId === s.id ? 'bg-wp-accent text-wp-on-accent' : 'bg-wp-accent-subtle text-wp-text-secondary hover:bg-wp-accent-muted'}`}>
-                          {detailId === s.id ? 'Close' : 'Manage'}
+                          className={`${btnSm} flex items-center gap-1.5 ${detailId === s.id ? 'bg-wp-accent text-white border border-wp-borderHard' : 'bg-wp-bgInset text-wp-textSecondary border border-wp-borderMid hover:bg-wp-bgSurface hover:border-wp-borderHard'}`}>
+                          <Coins size={14} />
+                          {detailId === s.id ? 'Close' : 'Tokens'}
                         </button>
-                        <button onClick={() => handleDelete(s.id, s.username)} className={`${btnSm} bg-red-50 text-red-600 hover:bg-red-100`}>Del</button>
+                        <button onClick={() => handleDelete(s.id, s.username)} className={`${btnSm} bg-wp-errorBg text-wp-error border border-wp-error/30 hover:bg-wp-error/20`}>Del</button>
                       </td>
                     )}
                   </tr>
@@ -318,16 +319,11 @@ function StudentDetail({
   allModels: Model[]
   onSaved: () => void
 }) {
-  const [tokenLimit,   setTokenLimit]   = useState(String(student.token_limit ?? ''))
-  const [banner,       setBanner]       = useState(student.token_block_banner ?? '')
-  const [tokenUsage,   setTokenUsage]   = useState<{
-    total_tokens_used: number
-    token_limit: number | null
-    token_blocked_at: string | null
-    token_block_banner: string | null
-  } | null>(null)
-  const [savingBudget, setSavingBudget] = useState(false)
-  const [budgetMsg,    setBudgetMsg]    = useState<{ ok: boolean; text: string } | null>(null)
+  const [tokenBalance, setTokenBalance] = useState(student.token_balance)
+  const [topupAmount,  setTopupAmount]  = useState('')
+  const [deductAmount, setDeductAmount] = useState('')
+  const [savingBalance, setSavingBalance] = useState(false)
+  const [balanceMsg,   setBalanceMsg]   = useState<{ ok: boolean; text: string } | null>(null)
 
   const [assignedModels, setAssignedModels] = useState<string[]>([])
   const [loadingModels,  setLoadingModels]  = useState(true)
@@ -337,46 +333,19 @@ function StudentDetail({
   const enabledModels = allModels.filter(m => m.enabled)
 
   useEffect(() => {
-    setTokenLimit(String(student.token_limit ?? ''))
-    setBanner(student.token_block_banner ?? '')
-  }, [student.token_limit, student.token_block_banner, student.token_blocked_at])
+    setTokenBalance(student.token_balance)
+  }, [student.token_balance])
 
   function fetchDetail() {
-    Promise.all([
-      api.adminGetStudentTokenUsage(token, student.id),
-      api.adminGetStudentModels(token, student.id),
-    ]).then(([usage, modelsResp]) => {
-      setTokenUsage(usage)
-      setAssignedModels(modelsResp.models)
-      setLoadingModels(false)
-    }).catch(() => setLoadingModels(false))
+    api.adminGetStudentModels(token, student.id)
+      .then(modelsResp => {
+        setAssignedModels(modelsResp.models)
+        setLoadingModels(false)
+      })
+      .catch(() => setLoadingModels(false))
   }
 
   useEffect(() => { fetchDetail() }, [token, student.id])
-
-  async function handleSaveBudget(e: FormEvent) {
-    e.preventDefault()
-    setSavingBudget(true); setBudgetMsg(null)
-    try {
-      const limit = tokenLimit.trim() === '' ? null : parseInt(tokenLimit, 10)
-      await api.adminSetTokenLimit(token, student.id, limit, banner.trim())
-      setBudgetMsg({ ok: true, text: 'Token budget saved.' })
-      fetchDetail()
-      onSaved()
-    } catch (err) {
-      setBudgetMsg({ ok: false, text: err instanceof Error ? err.message : 'Save failed' })
-    } finally { setSavingBudget(false) }
-  }
-
-  async function handleClearBlock() {
-    setSavingBudget(true); setBudgetMsg(null)
-    try {
-      await api.adminClearTokenBlock(token, student.id)
-      setBudgetMsg({ ok: true, text: 'Block cleared. Student can send messages again.' })
-      fetchDetail()
-      onSaved()
-    } finally { setSavingBudget(false) }
-  }
 
   function toggleModel(name: string) {
     setAssignedModels(prev =>
@@ -400,12 +369,51 @@ function StudentDetail({
     } finally { setSavingModels(false) }
   }
 
-  const panelInputCls = 'w-full px-3 py-2 rounded-wp-md border border-wp-border-mid bg-white focus:outline-none focus:ring-2 focus:ring-wp-accent/30 focus:border-wp-accent text-wp-text-primary text-sm placeholder-wp-text-tertiary'
+  async function handleTopup(e: FormEvent) {
+    e.preventDefault()
+    const amt = parseInt(topupAmount, 10)
+    if (isNaN(amt) || amt <= 0) { setBalanceMsg({ ok: false, text: 'Enter a positive amount' }); return }
+    setSavingBalance(true); setBalanceMsg(null)
+    try {
+      const resp = await fetch(`/api/admin/students/${student.id}/topup`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      setTokenBalance(data.new_balance)
+      setTopupAmount('')
+      setBalanceMsg({ ok: true, text: `✓ Added ${amt} tokens. New balance: ${data.new_balance.toLocaleString()}` })
+      onSaved()
+    } catch (err) {
+      setBalanceMsg({ ok: false, text: err instanceof Error ? err.message : 'Topup failed' })
+    } finally { setSavingBalance(false) }
+  }
 
-  const usedTokens   = tokenUsage?.total_tokens_used ?? 0
-  const limitTokens  = tokenUsage?.token_limit ?? 0
-  const usagePct     = limitTokens > 0 ? Math.min(100, Math.round((usedTokens / limitTokens) * 100)) : 0
-  const isBlocked    = !!(tokenUsage?.token_blocked_at)
+  async function handleDeduct(e: FormEvent) {
+    e.preventDefault()
+    const amt = parseInt(deductAmount, 10)
+    if (isNaN(amt) || amt <= 0) { setBalanceMsg({ ok: false, text: 'Enter a positive amount' }); return }
+    setSavingBalance(true); setBalanceMsg(null)
+    try {
+      const resp = await fetch(`/api/admin/students/${student.id}/deduct`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      setTokenBalance(data.new_balance)
+      setDeductAmount('')
+      setBalanceMsg({ ok: true, text: `✓ Deducted ${amt} tokens. New balance: ${data.new_balance.toLocaleString()}` })
+      onSaved()
+    } catch (err) {
+      setBalanceMsg({ ok: false, text: err instanceof Error ? err.message : 'Deduct failed' })
+    } finally { setSavingBalance(false) }
+  }
+
+  const panelInputCls = 'w-full px-3 py-2 rounded-wp-md border border-wp-border-mid bg-white focus:outline-none focus:ring-2 focus:ring-wp-accent/30 focus:border-wp-accent text-wp-text-primary text-sm placeholder-wp-text-tertiary'
 
   return (
     <div className="bg-wp-inset border-t border-wp-border-soft">
@@ -413,116 +421,86 @@ function StudentDetail({
       <div className="px-6 py-3 bg-wp-accent flex items-center gap-3">
         <span className="text-white font-semibold text-sm">Managing: {student.display_name}</span>
         <span className="text-wp-accent-muted text-xs font-mono">@{student.username}</span>
-        <span className={`ml-auto px-2.5 py-0.5 rounded-full text-xs font-medium ${
-          isBlocked ? 'bg-red-200 text-red-800' : 'bg-white/20 text-white'
-        }`}>
-          {isBlocked ? '⛔ Blocked' : student.has_active_session ? '● Active session' : '○ Offline'}
+        <span className="ml-auto px-2.5 py-0.5 rounded-full text-xs font-medium bg-white/20 text-white">
+          {student.has_active_session ? '● Active session' : '○ Offline'}
         </span>
       </div>
 
       <div className="grid grid-cols-2 divide-x divide-wp-border-soft">
 
-        {/* LEFT: Token Budget */}
+        {/* LEFT: Token Balance Management */}
         <div className="p-6 space-y-5">
 
           <div className="flex items-center gap-2">
             <div className="w-1 h-5 bg-wp-accent rounded" />
-            <h3 className="font-semibold text-wp-text-primary text-sm">Token Budget</h3>
+            <Coins size={16} className="text-wp-accent" />
+            <h3 className="font-semibold text-wp-text-primary text-sm">Token Balance</h3>
           </div>
 
-          <div className="bg-white rounded-wp-lg border border-wp-border-soft p-4 space-y-3">
-            <div className="flex items-center justify-between text-xs text-wp-text-secondary">
-              <span>Tokens used this student</span>
-              {tokenUsage?.token_limit && (
-                <span className={`font-semibold ${usagePct >= 90 ? 'text-red-600' : usagePct >= 70 ? 'text-amber-600' : 'text-wp-text-primary'}`}>
-                  {usagePct}%
-                </span>
-              )}
-            </div>
-            <div className="flex items-end gap-2">
-              <span className="text-2xl font-bold text-wp-text-primary">{usedTokens.toLocaleString()}</span>
-              {tokenUsage?.token_limit
-                ? <span className="text-sm text-wp-text-tertiary mb-0.5">/ {tokenUsage.token_limit.toLocaleString()} limit</span>
-                : <span className="text-sm text-wp-text-tertiary mb-0.5">tokens (no limit)</span>
-              }
-            </div>
-            {tokenUsage?.token_limit && (
-              <div className="w-full bg-wp-border-ghost rounded-full h-2">
-                <div
-                  className={`h-2 rounded-full transition-all ${usagePct >= 90 ? 'bg-red-500' : usagePct >= 70 ? 'bg-amber-500' : 'bg-wp-accent'}`}
-                  style={{ width: `${usagePct}%` }}
-                />
-              </div>
-            )}
+          <div className="bg-wp-inset rounded-wp-lg p-4 border border-wp-border-mid">
+            <div className="text-xs text-wp-text-secondary mb-1">Current balance</div>
+            <div className="text-3xl font-bold text-wp-accent tabular-nums">{(tokenBalance ?? 0).toLocaleString()}</div>
+            <div className="text-xs text-wp-text-tertiary mt-2">tokens allocated to {student.display_name}</div>
           </div>
 
-          {isBlocked && (
-            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-wp-lg p-4">
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-red-700">Student is blocked</p>
-                <p className="text-xs text-red-600 mt-0.5">
-                  Since {new Date(tokenUsage!.token_blocked_at!).toLocaleString()}
-                </p>
-                {tokenUsage?.token_block_banner && (
-                  <p className="text-xs text-red-500 mt-1 italic">"{tokenUsage.token_block_banner}"</p>
-                )}
-              </div>
-              <button
-                onClick={handleClearBlock}
-                disabled={savingBudget}
-                className="shrink-0 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-wp-md disabled:opacity-50 transition-colors"
-              >
-                Unblock
-              </button>
-            </div>
-          )}
-
-          <form onSubmit={handleSaveBudget} className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-wp-text-secondary mb-1.5">
-                Token limit <span className="text-wp-text-tertiary font-normal">(leave empty for unlimited)</span>
-              </label>
+          <div className="grid grid-cols-2 gap-3">
+            {/* Topup form */}
+            <form onSubmit={handleTopup} className="space-y-2">
+              <label className="block text-xs font-semibold text-wp-text-secondary">Add tokens</label>
               <input
-                type="number" min={0} step={1000}
-                value={tokenLimit}
-                onChange={e => { setTokenLimit(e.target.value); setBudgetMsg(null) }}
-                placeholder="e.g. 50000"
-                className={panelInputCls}
+                type="number" min={1}
+                value={topupAmount}
+                onChange={e => { setTopupAmount(e.target.value); setBalanceMsg(null) }}
+                placeholder="Amount"
+                className={`${panelInputCls} text-sm`}
+                disabled={savingBalance}
               />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-wp-text-secondary mb-1.5">
-                Block message <span className="text-wp-text-tertiary font-normal">(shown to student when limit is hit)</span>
-              </label>
-              <textarea
-                rows={3}
-                value={banner}
-                onChange={e => { setBanner(e.target.value); setBudgetMsg(null) }}
-                placeholder="e.g. You have reached your token limit. Please contact your teacher."
-                className={`${panelInputCls} resize-none`}
-              />
-            </div>
-            <div className="flex items-center gap-3">
               <button
                 type="submit"
-                disabled={savingBudget}
-                className="px-4 py-2 bg-wp-accent hover:bg-wp-accent-hover text-white text-xs font-medium rounded-wp-md disabled:opacity-50 transition-colors"
+                disabled={savingBalance}
+                className="w-full px-3 py-2 bg-orange-500 text-white hover:bg-orange-600 text-xs font-medium rounded-lg disabled:opacity-50 border border-orange-500 transition-colors font-semibold"
               >
-                {savingBudget ? 'Saving…' : 'Save budget'}
+                {savingBalance ? 'Adding…' : 'Add'}
               </button>
-              {tokenLimit && (
-                <button type="button" onClick={() => { setTokenLimit(''); setBudgetMsg(null) }}
-                  className="text-xs text-wp-text-tertiary hover:text-wp-text-secondary">
-                  Remove limit
-                </button>
-              )}
+            </form>
+
+            {/* Deduct form */}
+            <form onSubmit={handleDeduct} className="space-y-2">
+              <label className="block text-xs font-semibold text-wp-text-secondary">Remove tokens</label>
+              <input
+                type="number" min={1}
+                value={deductAmount}
+                onChange={e => { setDeductAmount(e.target.value); setBalanceMsg(null) }}
+                placeholder="Amount"
+                className={`${panelInputCls} text-sm`}
+                disabled={savingBalance}
+              />
+              <button
+                type="submit"
+                disabled={savingBalance}
+                className="w-full px-3 py-2 bg-red-500 text-white hover:bg-red-600 text-xs font-medium rounded-lg disabled:opacity-50 border border-red-500 transition-colors font-semibold"
+              >
+                {savingBalance ? 'Removing…' : 'Remove'}
+              </button>
+            </form>
+          </div>
+
+          {balanceMsg && (
+            <p className={`text-xs font-medium flex items-center gap-1.5 ${balanceMsg.ok ? 'text-wp-success' : 'text-wp-error'}`}>
+              {balanceMsg.ok ? '✓' : '⚠'} {balanceMsg.text}
+            </p>
+          )}
+
+          {(tokenBalance ?? 0) < 0 && (
+            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-wp-lg p-4">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-red-700">Negative balance</p>
+                <p className="text-xs text-red-600 mt-0.5">
+                  Student has {Math.abs(tokenBalance ?? 0).toLocaleString()} tokens in debt. They can still use the system.
+                </p>
+              </div>
             </div>
-            {budgetMsg && (
-              <p className={`text-xs font-medium flex items-center gap-1.5 ${budgetMsg.ok ? 'text-wp-success' : 'text-wp-error'}`}>
-                {budgetMsg.ok ? '✓' : '⚠'} {budgetMsg.text}
-              </p>
-            )}
-          </form>
+          )}
         </div>
 
         {/* RIGHT: Allowed Models */}
@@ -530,7 +508,8 @@ function StudentDetail({
 
           <div className="flex items-center gap-2">
             <div className="w-1 h-5 bg-wp-accent rounded" />
-            <h3 className="font-semibold text-wp-text-primary text-sm">Allowed Models</h3>
+            <Lock size={16} className="text-wp-accent" />
+            <h3 className="font-semibold text-wp-text-primary text-sm">Model Access</h3>
             {!loadingModels && (
               <span className="ml-auto text-xs text-wp-text-tertiary">
                 {assignedModels.length === 0
@@ -602,9 +581,9 @@ function StudentDetail({
               <button
                 onClick={handleSaveModels}
                 disabled={savingModels || loadingModels}
-                className="px-4 py-2 bg-wp-accent hover:bg-wp-accent-hover text-white text-xs font-medium rounded-wp-md disabled:opacity-50 transition-colors"
+                className="px-4 py-2 bg-green-600 text-white hover:bg-green-700 text-xs font-medium rounded-lg disabled:opacity-50 border border-green-600 transition-colors font-semibold"
               >
-                {savingModels ? 'Saving…' : 'Save restrictions'}
+                {savingModels ? 'Saving\u2026' : 'Save restrictions'}
               </button>
               {assignedModels.length > 0 && (
                 <button
@@ -635,7 +614,9 @@ function ModelsTab({ token }: { token: string }) {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName]   = useState('')
   const [newDisplay, setNewDisplay] = useState('')
+  const [newMultiplier, setNewMultiplier] = useState('1.0')
   const [error,   setError]   = useState('')
+  const [editingMultiplier, setEditingMultiplier] = useState<{ id: string; value: string } | null>(null)
 
   async function load() {
     setLoading(true)
@@ -649,14 +630,34 @@ function ModelsTab({ token }: { token: string }) {
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     try {
+      const multiplier = parseFloat(newMultiplier) || 1.0
       await api.adminCreateModel(token, newName.trim(), newDisplay.trim())
-      setNewName(''); setNewDisplay(''); setCreating(false); load()
+      // Set multiplier after model is created
+      await fetch(`/api/admin/models/${encodeURIComponent(newName.trim())}/multiplier`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ multiplier }),
+      })
+      setNewName(''); setNewDisplay(''); setNewMultiplier('1.0'); setCreating(false); load()
     } catch (e) { setError(e instanceof Error ? e.message : 'Create failed') }
   }
 
   async function handleToggleEnabled(m: Model) {
     try {
       await api.adminSetModelEnabled(token, m.id, m.enabled === 0)
+      load()
+    } catch (e) { setError(e instanceof Error ? e.message : 'Update failed') }
+  }
+
+  async function handleSetMultiplier(modelName: string, multiplier: number) {
+    try {
+      const response = await fetch(`/api/admin/models/${encodeURIComponent(modelName)}/multiplier`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ multiplier }),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      setEditingMultiplier(null)
       load()
     } catch (e) { setError(e instanceof Error ? e.message : 'Update failed') }
   }
@@ -681,20 +682,25 @@ function ModelsTab({ token }: { token: string }) {
       </div>
 
       {creating && (
-        <form onSubmit={handleCreate} className="bg-wp-surface border border-wp-border-soft rounded-wp-xl p-5 space-y-3 max-w-md">
+        <form onSubmit={handleCreate} className="bg-wp-surface border border-wp-border-mid rounded-wp-lg p-5 space-y-3 max-w-md shadow-sm">
           <div className="font-semibold text-wp-text-primary text-sm">Add model</div>
           <div>
-            <label className="block text-xs text-wp-text-secondary mb-1">Model name (exact API identifier)</label>
+            <label className="block text-xs font-medium text-wp-text-secondary mb-1.5">Model name (exact API identifier)</label>
             <input required value={newName} onChange={e => setNewName(e.target.value)}
-              placeholder="e.g. claude-opus-4-5" className={`${inputCls} w-full font-mono`} />
+              placeholder="e.g. claude-opus-4-5" className={`w-full px-3 py-2 rounded-wp-md border border-wp-border-mid bg-wp-page focus:outline-none focus:ring-2 focus:ring-wp-accent/30 focus:border-wp-accent text-wp-text-primary text-sm placeholder-wp-text-tertiary font-mono`} />
           </div>
           <div>
-            <label className="block text-xs text-wp-text-secondary mb-1">Display name (shown to students)</label>
+            <label className="block text-xs font-medium text-wp-text-secondary mb-1.5">Display name (shown to students)</label>
             <input required value={newDisplay} onChange={e => setNewDisplay(e.target.value)}
-              placeholder="e.g. Claude Opus 4.5" className={`${inputCls} w-full`} />
+              placeholder="e.g. Claude Opus 4.5" className={`w-full px-3 py-2 rounded-wp-md border border-wp-border-mid bg-wp-page focus:outline-none focus:ring-2 focus:ring-wp-accent/30 focus:border-wp-accent text-wp-text-primary text-sm placeholder-wp-text-tertiary`} />
           </div>
-          {error && <p className="text-wp-error text-sm font-medium">⚠ {error}</p>}
-          <button type="submit" className="w-full py-2.5 bg-wp-text-primary hover:bg-wp-text-secondary text-wp-on-accent text-sm font-semibold rounded-wp-md">Add model</button>
+          <div>
+            <label className="block text-xs font-medium text-wp-text-secondary mb-1.5">Token multiplier (1.0 = base rate)</label>
+            <input required type="number" min="0" step="0.1" value={newMultiplier} onChange={e => setNewMultiplier(e.target.value)}
+              placeholder="e.g. 1.0 or 3.33" className={`w-full px-3 py-2 rounded-wp-md border border-wp-border-mid bg-wp-page focus:outline-none focus:ring-2 focus:ring-wp-accent/30 focus:border-wp-accent text-wp-text-primary text-sm placeholder-wp-text-tertiary font-mono`} />
+          </div>
+          {error && <p className="text-wp-error text-xs font-medium">⚠ {error}</p>}
+          <button type="submit" className="w-full py-2.5 bg-wp-accent hover:bg-wp-accent-hover text-wp-on-accent text-sm font-semibold rounded-wp-md transition-colors">Add model</button>
         </form>
       )}
 
@@ -705,36 +711,72 @@ function ModelsTab({ token }: { token: string }) {
           <div className="animate-spin w-8 h-8 border-2 border-wp-accent border-t-transparent rounded-full" />
         </div>
       ) : (
-        <div className="bg-wp-surface border border-wp-border-soft rounded-wp-xl overflow-hidden">
+        <div className="bg-wp-surface border border-wp-border-mid rounded-wp-lg overflow-hidden shadow-sm">
           <table className="w-full text-sm">
-            <thead className="bg-wp-inset text-wp-text-secondary text-xs uppercase">
+            <thead className="bg-wp-inset border-b border-wp-border-soft text-wp-text-secondary text-xs uppercase tracking-wide">
               <tr>
-                {['Display name', 'Model ID', 'Status', 'Added', ''].map(h => (
+                {['Display name', 'Model ID', 'Multiplier', 'Status', 'Added', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-wp-border-ghost">
               {models.map(m => (
-                <tr key={m.id} className="hover:bg-wp-inset">
-                  <td className="px-4 py-3.5 text-wp-text-primary font-medium">{m.display_name}</td>
-                  <td className="px-4 py-3.5 font-mono text-xs text-wp-text-tertiary">{m.name}</td>
-                  <td className="px-4 py-3.5">
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${m.enabled ? 'bg-wp-success-bg text-wp-success border border-wp-success/20' : 'bg-wp-inset text-wp-text-tertiary border border-wp-border-soft'}`}>
+                <tr key={m.id} className="hover:bg-wp-inset/40 transition-colors">
+                  <td className="px-4 py-3 text-wp-text-primary font-medium">{m.display_name}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-wp-text-tertiary">{m.name}</td>
+                  <td className="px-4 py-3">
+                    {editingMultiplier?.id === m.id ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={editingMultiplier.value}
+                          onChange={e => setEditingMultiplier({ ...editingMultiplier, value: e.target.value })}
+                          className="w-16 px-2 py-1 rounded border border-wp-border-mid text-xs font-mono"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleSetMultiplier(m.name, parseFloat(editingMultiplier.value))}
+                          className="px-2 py-1 text-xs font-medium bg-wp-success text-white rounded hover:bg-wp-success/90 transition-colors"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingMultiplier(null)}
+                          className="px-2 py-1 text-xs font-medium bg-wp-border-soft text-wp-text-secondary rounded hover:bg-wp-border-mid transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setEditingMultiplier({ id: m.id, value: String((m.multiplier as number) || 1.0) })}
+                        className="px-2.5 py-1 rounded text-xs font-mono font-semibold bg-wp-accent-subtle text-wp-text-primary border border-wp-border-mid hover:bg-wp-accent-muted transition-colors"
+                      >
+                        {((m.multiplier as number) || 1.0).toFixed(2)}x
+                      </button>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${m.enabled ? 'bg-wp-success-bg text-wp-success border border-wp-success/20' : 'bg-wp-border-soft text-wp-text-tertiary border border-wp-border-ghost'}`}>
                       {m.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
-                  <td className="px-4 py-3.5 text-wp-text-tertiary text-xs">{new Date(m.created_at).toLocaleDateString()}</td>
-                  <td className="px-4 py-3.5 flex gap-1.5">
-                    <button onClick={() => handleToggleEnabled(m)} className={`${btnSm} ${m.enabled ? 'bg-wp-border-soft text-wp-text-secondary hover:bg-wp-border-mid' : 'bg-wp-success-bg text-wp-success hover:bg-wp-success/80'}`}>
+                  <td className="px-4 py-3 text-wp-text-tertiary text-xs">{new Date(m.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 flex gap-1">
+                    <button onClick={() => handleToggleEnabled(m)} className={`px-3 py-1.5 text-xs font-medium rounded-wp-md transition-colors ${m.enabled ? 'bg-wp-border-soft text-wp-text-secondary hover:bg-wp-border-mid' : 'bg-wp-success-bg text-wp-success hover:bg-wp-success/20 border border-wp-success/30'}`}>
                       {m.enabled ? 'Disable' : 'Enable'}
                     </button>
-                    <button onClick={() => handleDelete(m)} className={`${btnSm} bg-red-50 text-red-600 hover:bg-red-100`}>Del</button>
+                    <button onClick={() => handleDelete(m)} className="px-3 py-1.5 text-xs font-medium bg-wp-error-bg text-wp-error hover:bg-wp-error/10 rounded-wp-md transition-colors border border-wp-error/20">
+                      Del
+                    </button>
                   </td>
                 </tr>
               ))}
               {models.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-wp-text-tertiary text-sm">No models yet — the default (grok-3-fast) is seeded on server start.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-wp-text-tertiary text-sm">No models yet — the default (grok-3-fast) is seeded on server start.</td></tr>
               )}
             </tbody>
           </table>

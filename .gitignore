@@ -1,4 +1,6 @@
 target/
+educraw.db
+
 .claw/sessions/
 goose-workspace/bin/
 goose-workspace/crates/goose/docs
@@ -35,3 +37,5 @@ goose-home/state
 
 goose-source -codes
 sacp-source
+PLANS
+PROBLEMS

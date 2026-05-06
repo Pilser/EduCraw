@@ -246,6 +246,7 @@ async fn create_session(
         overlay_mount: dirs.merged.display().to_string(),
         model: effective_model.clone(),
         last_input_at: None,
+        last_token_checkpoint: 0,
         started_at: String::new(), // set by DB DEFAULT
         ended_at: None,
     };

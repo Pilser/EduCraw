@@ -22,6 +22,8 @@ pub struct Student {
     pub uid_slot: Option<i64>,
     /// Total token budget. NULL = unlimited.
     pub token_limit: Option<i64>,
+    /// Current token balance (can be negative until topped up).
+    pub token_balance: i64,
     /// Banner shown to the student when limit is reached. NULL = default message.
     pub token_block_banner: Option<String>,
     /// Timestamp when the student was first blocked; NULL = not blocked.
@@ -164,5 +166,50 @@ pub async fn clear_token_block(pool: &SqlitePool, id: &str) -> Result<(), sqlx::
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Get current token balance for a student.
+pub async fn get_token_balance(pool: &SqlitePool, id: &str) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as("SELECT token_balance FROM students WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+/// Deduct tokens from student balance (can go negative).
+/// Returns the new balance.
+pub async fn deduct_tokens(
+    pool: &SqlitePool,
+    id: &str,
+    amount: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE students SET token_balance = token_balance - ? WHERE id = ?",
+    )
+    .bind(amount)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    
+    get_token_balance(pool, id).await
+}
+
+/// Add tokens to student balance (topup; offsets negative balance first).
+/// Returns the new balance.
+pub async fn topup_tokens(
+    pool: &SqlitePool,
+    id: &str,
+    amount: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE students SET token_balance = token_balance + ? WHERE id = ?",
+    )
+    .bind(amount)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    
+    get_token_balance(pool, id).await
 }
 

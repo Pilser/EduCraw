@@ -25,8 +25,8 @@ interface Props {
   onModelChange?: (model: string) => void
   // token usage
   tokenUsage?: TokenUsage | null
-  currentCost?: { amount: number; currency: string } | null
-  totalTokensUsed?: number
+  tokenBalance?: number | null
+  sessionTokensUsed?: number
   // block state
   tokenBlocked?: boolean
   tokenBannerText?: string
@@ -179,7 +179,7 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
 export default function ChatPanel({
   messages, inputValue, onInputChange, onSend, onSendWithImage, onFilesForUpload, onCancel, disabled,
   availableModels, activeModel, onModelChange,
-  tokenUsage, currentCost, totalTokensUsed, tokenBlocked, tokenBannerText,
+  tokenUsage, tokenBalance, sessionTokensUsed, tokenBlocked, tokenBannerText,
   sessionId, token, onFileSelect,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -215,7 +215,7 @@ export default function ChatPanel({
   function doSend() {
     const text = inputValue.trim()
     if (!text && !attachedImage && filesToUpload.length === 0) return
-    if (disabled || tokenBlocked) return
+    if (disabled || tokenBlocked || (tokenBalance !== undefined && tokenBalance !== null && tokenBalance <= 0)) return
 
     // If there's an attached image and onSendWithImage is provided, use it
     if (attachedImage && onSendWithImage) {
@@ -270,17 +270,19 @@ export default function ChatPanel({
         <div className="flex-1" />
 
         {/* Token usage — bold, prominent */}
-        {((totalTokensUsed ?? 0) > 0 || tokenUsage) && (
+        {((sessionTokensUsed ?? 0) > 0 || tokenUsage) && (
           <div className="flex items-center gap-3 text-sm font-bold">
             <Zap className="w-4 h-4 text-wp-accent" />
             <div className="flex flex-col gap-1">
-              {/* Current token usage from goose */}
-              {(totalTokensUsed ?? 0) > 0 && (
-                <div className={`font-bold tabular-nums ${tokenBlocked ? 'text-wp-error' : 'text-wp-text-primary'}`}>
-                  {(totalTokensUsed ?? 0).toLocaleString()} tokens
-                  {currentCost && <span className="font-normal text-xs text-wp-text-tertiary ml-2">
-                    ({currentCost.amount.toFixed(4)} {currentCost.currency})
-                  </span>}
+              {/* Current token usage and balance */}
+              {(sessionTokensUsed ?? 0) > 0 && (
+                <div className={`font-bold tabular-nums text-wp-text-primary`}>
+                  {(sessionTokensUsed ?? 0).toLocaleString()} tokens used
+                </div>
+              )}
+              {tokenBalance !== undefined && tokenBalance !== null && (
+                <div className="text-xs text-wp-text-secondary font-normal">
+                  Balance: <span className={tokenBalance < 0 ? 'text-wp-error' : 'text-wp-success'}>{(tokenBalance ?? 0).toLocaleString()}</span>
                 </div>
               )}
             </div>

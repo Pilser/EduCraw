@@ -7,7 +7,7 @@ use sacp::schema::{ContentBlock, SessionNotification, SessionUpdate, ToolCallCon
 use sqlx::SqlitePool;
 use serde_json::json;
 
-use crate::db::{students as db_students, token_usage as db_tokens};
+use crate::db::{students as db_students, token_usage as db_tokens, sessions as db_sessions, models as db_models};
 
 // ---------------------------------------------------------------------------
 // Notification → frame conversion
@@ -243,8 +243,8 @@ pub fn notification_to_frames(
 // Token accounting
 // ---------------------------------------------------------------------------
 
-/// Fire-and-forget: records a token-usage turn and blocks the student if the
-/// cumulative total meets or exceeds their configured token limit.
+/// Fire-and-forget: records a token-usage turn, calculates delta-based
+/// deduction with model multiplier, and deducts from student's token_balance.
 pub fn spawn_token_accounting(
     pool: SqlitePool,
     session_id: String,
@@ -254,54 +254,143 @@ pub fn spawn_token_accounting(
 ) {
     tokio::spawn(async move {
         let tokens = db_tokens::TurnTokens {
-            model: model_name,
+            model: model_name.clone(),
             input_tokens: used,
             output_tokens: 0,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
         };
 
+        // Record the raw token usage
         if let Err(e) = db_tokens::record_turn(&pool, &session_id, &tokens).await {
             tracing::warn!(session_id = %session_id, error = %e, "failed to record token usage");
             return;
         }
 
-        let student = match db_students::get_student(&pool, &student_id).await {
+        // Get session to check current checkpoint
+        let session = match db_sessions::get_session(&pool, &session_id).await {
             Ok(Some(s)) => s,
-            _ => return,
-        };
-
-        let limit = match student.token_limit {
-            Some(l) if l > 0 => l,
-            _ => return,
-        };
-
-        if student.token_blocked_at.is_some() {
-            return;
-        }
-
-        let used_total = match db_tokens::student_total_tokens(&pool, &student_id).await {
-            Ok(n) => n,
             Err(e) => {
-                tracing::warn!(student_id = %student_id, error = %e, "failed to sum tokens");
+                tracing::warn!(session_id = %session_id, error = %e, "failed to fetch session");
+                return;
+            }
+            Ok(None) => {
+                tracing::warn!(session_id = %session_id, "session not found");
                 return;
             }
         };
 
-        if used_total >= limit {
-            if let Err(e) = db_students::mark_token_blocked(&pool, &student_id).await {
+        // Calculate delta: tokens_used (cumulative in Goose) - last_checkpoint
+        let last_checkpoint = session.last_token_checkpoint;
+        let delta = used - last_checkpoint;
+
+        // Only deduct if delta > 0 (sanity check)
+        if delta <= 0 {
+            tracing::debug!(
+                session_id = %session_id,
+                delta,
+                "non-positive delta, skipping deduction"
+            );
+            return;
+        }
+
+        // Get model multiplier
+        let multiplier = match db_models::get_model_multiplier(&pool, &model_name).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    model = %model_name,
+                    error = %e,
+                    "failed to get model multiplier, defaulting to 1.0"
+                );
+                1.0
+            }
+        };
+
+        // Calculate tokens to deduct (delta * multiplier, rounded up)
+        let tokens_deducted = (delta as f64 * multiplier).ceil() as i64;
+
+        // Get current balance before deduction
+        let balance_before = match db_students::get_token_balance(&pool, &student_id).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(student_id = %student_id, error = %e, "failed to fetch token balance");
+                return;
+            }
+        };
+
+        // Deduct tokens (can go negative)
+        let balance_after = match db_students::deduct_tokens(&pool, &student_id, tokens_deducted).await {
+            Ok(new_balance) => new_balance,
+            Err(e) => {
                 tracing::warn!(
                     student_id = %student_id,
                     error = %e,
-                    "failed to mark student as token-blocked"
+                    "failed to deduct tokens"
                 );
+                return;
             }
-            tracing::info!(
-                student_id = %student_id,
-                used = used_total,
-                limit,
-                "token limit reached — student blocked"
+        };
+
+        // Update session checkpoint to current cumulative count
+        if let Err(e) =
+            db_sessions::update_last_token_checkpoint(&pool, &session_id, used).await
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %e,
+                "failed to update token checkpoint"
             );
         }
+
+        // Record deduction in audit log
+        if let Err(e) = db_tokens::record_deduction(
+            &pool,
+            &student_id,
+            &session_id,
+            &model_name,
+            multiplier,
+            delta,
+            tokens_deducted,
+            balance_before,
+            balance_after,
+        )
+        .await
+        {
+            tracing::warn!(
+                student_id = %student_id,
+                session_id = %session_id,
+                error = %e,
+                "failed to record token deduction"
+            );
+        }
+
+        // Log the deduction (allow negative balance, just warn if it is)
+        tracing::info!(
+            student_id = %student_id,
+            model = %model_name,
+            multiplier,
+            delta,
+            tokens_deducted,
+            balance_before,
+            balance_after,
+            "token deduction recorded"
+        );
+
+        if balance_after < 0 {
+            tracing::warn!(
+                student_id = %student_id,
+                balance_after,
+                "student token balance is now negative"
+            );
+        }
+
+        // Token deduction complete — frontend will poll /api/me/token-balance to get updated balance
+        tracing::info!(
+            student_id = %student_id,
+            session_id = %session_id,
+            balance_after,
+            "token balance available for polling"
+        );
     });
 }

@@ -24,6 +24,8 @@ pub struct Session {
     pub model: Option<String>,
     /// Updated on every keypress; used by the idle watchdog.
     pub last_input_at: Option<String>,
+    /// Last known cumulative token count (to calculate delta for deduction).
+    pub last_token_checkpoint: i64,
     pub started_at: String,
     pub ended_at: Option<String>,
 }
@@ -103,6 +105,36 @@ pub async fn touch_last_input(pool: &SqlitePool, id: &str) -> Result<(), sqlx::E
     sqlx::query(
         "UPDATE sessions SET last_input_at = datetime('now') WHERE id = ?",
     )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the last recorded token checkpoint for a session.
+pub async fn get_last_token_checkpoint(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(last_token_checkpoint, 0) FROM sessions WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+/// Update the token checkpoint for a session (stores current cumulative tokens).
+pub async fn update_last_token_checkpoint(
+    pool: &SqlitePool,
+    id: &str,
+    checkpoint: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE sessions SET last_token_checkpoint = ? WHERE id = ?",
+    )
+    .bind(checkpoint)
     .bind(id)
     .execute(pool)
     .await?;

@@ -32,6 +32,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use sqlx;
 use uuid::Uuid;
 
 use crate::auth::{bearer_token, hash_password, Claims};
@@ -48,52 +49,74 @@ use super::AppState;
 // ── Router ────────────────────────────────────────────────────────────────
 
 pub fn routes() -> Router<AppState> {
+    tracing::debug!("[ADMIN-ROUTES] initializing admin routes");
     Router::new()
-        // Students
-        .route("/admin/students",          get(list_students).post(create_student))
-        .route("/admin/students/{id}",     put(update_student).delete(delete_student))
+        // Students - base
+        .route("/admin/students",                            get(list_students).post(create_student))
+        
+        // Students - specific sub-routes (MUST come before generic /:id)
+        .route("/admin/students/:id/token-limit",          put(set_token_limit).delete(clear_token_limit))
+        .route("/admin/students/:id/token-usage",          get(student_token_usage))
+        .route("/admin/students/:id/token-balance",        get(get_token_balance))
+        .route("/admin/students/:id/topup",                post(topup_tokens_handler))
+        .route("/admin/students/:id/deduct",               post(deduct_tokens_handler))
+        .route("/admin/students/:id/token-deductions",     get(get_token_deductions))
+        .route("/admin/students/:id/models",               get(get_student_models).put(set_student_models_handler))
+        .route("/admin/students/:id",                      put(update_student).delete(delete_student))
+        
         // Sessions
-        .route("/admin/sessions",          get(list_sessions))
-        .route("/admin/sessions/{id}",     delete(terminate_session))
+        .route("/admin/sessions",                           get(list_sessions))
+        .route("/admin/sessions/:id",                      delete(terminate_session))
+        
         // Cohorts
-        .route("/admin/cohorts",           get(list_cohorts).post(create_cohort))
-        .route("/admin/cohorts/{id}",      put(update_cohort).delete(delete_cohort))
+        .route("/admin/cohorts",                            get(list_cohorts).post(create_cohort))
+        .route("/admin/cohorts/:id",                       put(update_cohort).delete(delete_cohort))
+        
         // Subjects
-        .route("/admin/subjects",          get(list_subjects_handler).post(create_subject))
-        .route("/admin/subjects/{id}",     put(update_subject_handler).delete(delete_subject_handler))
+        .route("/admin/subjects",                           get(list_subjects_handler).post(create_subject))
+        .route("/admin/subjects/:id",                      put(update_subject_handler).delete(delete_subject_handler))
+        
         // Assignments
-        .route("/admin/assignments",       get(list_assignments).post(create_assignment))
+        .route("/admin/assignments",                        get(list_assignments).post(create_assignment))
+        
         // Models
-        .route("/admin/models",            get(list_models).post(create_model))
-        .route("/admin/models/{id}",       put(update_model).delete(delete_model_handler))
-        // Token limits
-        .route("/admin/students/{id}/token-limit",   put(set_token_limit))
-        .route("/admin/students/{id}/token-limit",   delete(clear_token_limit))
-        .route("/admin/students/{id}/token-usage",   get(student_token_usage))
-        // Per-student model assignments
-        .route("/admin/students/{id}/models",        get(get_student_models).put(set_student_models_handler))
+        .route("/admin/models",                             get(list_models).post(create_model))
+        .route("/admin/models/:name/multiplier",           put(set_model_multiplier))
+        .route("/admin/models/:id",                        put(update_model).delete(delete_model_handler))
 }
 
 // ── Auth guard ────────────────────────────────────────────────────────────
 
 fn claims(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
-    let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
-    state.auth.verify(token)
+    let token = bearer_token(headers).ok_or_else(|| {
+        tracing::warn!("[AUTH] no bearer token found in headers");
+        AppError::Unauthorized
+    })?;
+    tracing::debug!("[AUTH] extracting claims from bearer token");
+    let claims = state.auth.verify(token)?;
+    tracing::debug!("[AUTH] claims extracted: sub={}, role={}", claims.sub, claims.role);
+    Ok(claims)
 }
 
 fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
     let c = claims(state, headers)?;
+    tracing::debug!("[AUTH-ADMIN] checking role: {} == admin?", c.role);
     if c.role != "admin" {
+        tracing::warn!("[AUTH-ADMIN] forbidden: user role is {} not admin", c.role);
         return Err(AppError::Forbidden);
     }
+    tracing::debug!("[AUTH-ADMIN] admin check passed");
     Ok(c)
 }
 
 fn require_staff(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
     let c = claims(state, headers)?;
+    tracing::debug!("[AUTH-STAFF] checking role: {} in [admin, teacher]?", c.role);
     if c.role != "admin" && c.role != "teacher" {
+        tracing::warn!("[AUTH-STAFF] forbidden: user role is {} not admin/teacher", c.role);
         return Err(AppError::Forbidden);
     }
+    tracing::debug!("[AUTH-STAFF] staff check passed");
     Ok(c)
 }
 
@@ -109,6 +132,7 @@ struct StudentView {
     last_seen: Option<String>,
     has_active_session: bool,
     token_limit: Option<i64>,
+    token_balance: i64,
     token_blocked_at: Option<String>,
     token_block_banner: Option<String>,
 }
@@ -142,6 +166,7 @@ async fn list_students(
             cohort_id: s.cohort_id,
             last_seen: s.last_seen,
             token_limit: s.token_limit,
+            token_balance: s.token_balance,
             token_blocked_at: s.token_blocked_at.clone(),
             token_block_banner: s.token_block_banner.clone(),
         })
@@ -181,6 +206,7 @@ async fn create_student(
         created_at: String::new(),
         last_seen: None,
         token_limit: None,
+        token_balance: 0,
         token_block_banner: None,
         token_blocked_at: None,
     };
@@ -790,11 +816,13 @@ async fn get_student_models(
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
+    tracing::debug!("[GET-MODELS] received request for student_id={}", id);
     require_staff(&state, &headers)?;
     // Return the raw assignment (empty = no specific assignment → student sees all enabled).
     // Do NOT use models_for_student which applies the fallback — the admin panel
     // needs to know the real stored state so checkboxes are accurate.
     let models = db_models::raw_assignments_for_student(&state.pool, &id).await?;
+    tracing::debug!("[GET-MODELS] returning {} models for student_id={}", models.len(), id);
     Ok(Json(serde_json::json!({ "models": models })))
 }
 
@@ -835,5 +863,194 @@ async fn student_token_usage(
         "token_limit": student.token_limit,
         "token_blocked_at": student.token_blocked_at,
         "token_block_banner": student.token_block_banner,
+    })))
+}
+
+// ── PUT /admin/models/:name/multiplier ─────────────────────────────────
+
+#[derive(Deserialize)]
+struct SetMultiplierBody {
+    /// Token deduction multiplier (e.g., 1.0, 2.5, 3.33)
+    multiplier: f64,
+}
+
+async fn set_model_multiplier(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+    headers: HeaderMap,
+    Json(body): Json<SetMultiplierBody>,
+) -> Result<impl IntoResponse> {
+    require_admin(&state, &headers)?;
+
+    if body.multiplier < 0.0 {
+        return Err(AppError::BadRequest("multiplier must be non-negative".into()));
+    }
+
+    // Verify model exists
+    let _ = db_models::get_model_by_name(&state.pool, &name)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("model {name}")))?;
+
+    db_models::set_multiplier(&state.pool, &name, body.multiplier).await?;
+    tracing::info!(model = %name, multiplier = body.multiplier, "admin: model multiplier updated");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── GET /admin/students/:id/token-balance ──────────────────────────────
+
+#[derive(Serialize)]
+struct TokenBalanceResponse {
+    student_id: String,
+    token_balance: i64,
+    token_limit: Option<i64>,
+}
+
+async fn get_token_balance(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    require_staff(&state, &headers)?;
+
+    let student = students::get_student(&state.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
+
+    Ok(Json(TokenBalanceResponse {
+        student_id: id,
+        token_balance: student.token_balance,
+        token_limit: student.token_limit,
+    }))
+}
+
+// ── POST /admin/students/:id/topup ─────────────────────────────────────
+
+#[derive(Deserialize)]
+struct TopupTokensBody {
+    /// Number of tokens to add
+    amount: i64,
+}
+
+async fn topup_tokens_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(body): Json<TopupTokensBody>,
+) -> Result<impl IntoResponse> {
+    tracing::debug!("[TOPUP] received request for student_id={}, amount={}", id, body.amount);
+    
+    require_admin(&state, &headers)?;
+
+    if body.amount <= 0 {
+        return Err(AppError::BadRequest("amount must be positive".into()));
+    }
+
+    // Verify student exists
+    let _ = students::get_student(&state.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
+
+    let new_balance = students::topup_tokens(&state.pool, &id, body.amount).await?;
+
+    tracing::info!(
+        student_id = %id,
+        amount = body.amount,
+        new_balance,
+        "admin: tokens topped up"
+    );
+
+    Ok(Json(serde_json::json!({
+        "student_id": id,
+        "tokens_added": body.amount,
+        "new_balance": new_balance,
+    })))
+}
+
+// ── POST /admin/students/:id/deduct ────────────────────────────────────
+
+#[derive(Deserialize)]
+struct DeductTokensBody {
+    /// Number of tokens to remove
+    amount: i64,
+}
+
+async fn deduct_tokens_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(body): Json<DeductTokensBody>,
+) -> Result<impl IntoResponse> {
+    tracing::debug!("[DEDUCT] received request for student_id={}, amount={}", id, body.amount);
+    require_admin(&state, &headers)?;
+
+    if body.amount <= 0 {
+        return Err(AppError::BadRequest("amount must be positive".into()));
+    }
+
+    // Verify student exists
+    let _ = students::get_student(&state.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
+
+    let new_balance = students::deduct_tokens(&state.pool, &id, body.amount).await?;
+
+    tracing::info!(
+        student_id = %id,
+        amount = body.amount,
+        new_balance,
+        "admin: tokens deducted"
+    );
+
+    Ok(Json(serde_json::json!({
+        "student_id": id,
+        "tokens_deducted": body.amount,
+        "new_balance": new_balance,
+    })))
+} 
+
+// ── GET /admin/students/:id/token-deductions ───────────────────────────
+
+#[derive(Serialize, sqlx::FromRow)]
+struct TokenDeductionRecord {
+    id: String,
+    session_id: String,
+    model_name: String,
+    multiplier: f64,
+    tokens_used: i64,
+    tokens_deducted: i64,
+    balance_before: i64,
+    balance_after: i64,
+    recorded_at: String,
+}
+
+async fn get_token_deductions(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    require_staff(&state, &headers)?;
+
+    // Verify student exists
+    let _ = students::get_student(&state.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
+
+    // Query token_deductions table for this student
+    let rows: Vec<TokenDeductionRecord> = sqlx::query_as(
+        "SELECT id, session_id, model_name, multiplier, tokens_used, tokens_deducted,
+                balance_before, balance_after, recorded_at
+         FROM token_deductions
+         WHERE student_id = ?
+         ORDER BY recorded_at DESC
+         LIMIT 100",
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "student_id": id,
+        "deductions": rows,
+        "count": rows.len(),
     })))
 }

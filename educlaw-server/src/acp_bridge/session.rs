@@ -430,20 +430,15 @@ async fn handle_client_message(
                 tracing::info!(student_id = %student_id, count = goose_models.len(), "✓ [GET-MODELS] No restrictions - returning all goose models");
                 goose_models.clone()
             } else {
-                // Student has specific model restrictions - filter goose models by allowed list
+                // Student has specific model restrictions - return STUDENT'S ALLOWED MODELS from DB
+                // (don't filter by Goose models - Goose will validate at message send time)
                 match crate::db::models::models_for_student(pool, student_id).await {
                     Ok(allowed_models) => {
-                        let filtered: Vec<String> = goose_models
-                            .iter()
-                            .filter(|m| allowed_models.contains(m))
-                            .cloned()
-                            .collect();
                         tracing::debug!(
                             allowed_by_educlaw = ?allowed_models,
-                            after_filtering = ?filtered,
-                            "📋 [GET-MODELS] Filtered goose models by educlaw restrictions"
+                            "📋 [GET-MODELS] Returning student's allowed models from DB (not filtered by Goose)"
                         );
-                        filtered
+                        allowed_models
                     }
                     Err(e) => {
                         tracing::warn!(student_id = %student_id, error = %e, "✗ [GET-MODELS] Failed to check restrictions");

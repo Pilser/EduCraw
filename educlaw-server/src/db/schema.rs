@@ -13,6 +13,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             name         TEXT NOT NULL UNIQUE,
             display_name TEXT NOT NULL,
             enabled      INTEGER NOT NULL DEFAULT 1,
+            multiplier   REAL NOT NULL DEFAULT 1.0,
             created_at   TEXT NOT NULL DEFAULT (datetime('now'))
         )",
     )
@@ -81,6 +82,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             cohort_id        TEXT NOT NULL DEFAULT '',
             uid_slot         INTEGER,
             token_limit      INTEGER,
+            token_balance    INTEGER NOT NULL DEFAULT 0,
             token_block_banner TEXT,
             token_blocked_at TEXT,
             created_at       TEXT NOT NULL DEFAULT (datetime('now')),
@@ -93,8 +95,11 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     // Idempotent column additions for existing databases.
     for col in &[
         "ALTER TABLE students ADD COLUMN token_limit INTEGER",
+        "ALTER TABLE students ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE students ADD COLUMN token_block_banner TEXT",
         "ALTER TABLE students ADD COLUMN token_blocked_at TEXT",
+        "ALTER TABLE models ADD COLUMN multiplier REAL NOT NULL DEFAULT 1.0",
+        "ALTER TABLE sessions ADD COLUMN last_token_checkpoint INTEGER NOT NULL DEFAULT 0",
     ] {
         let _ = sqlx::query(col).execute(pool).await;
     }
@@ -102,15 +107,16 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     // ── sessions ──────────────────────────────────────────────────────────────
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS sessions (
-            id              TEXT PRIMARY KEY,
-            student_id      TEXT NOT NULL REFERENCES students(id),
-            state           TEXT NOT NULL DEFAULT 'active',
-            namespace_pid   INTEGER,
-            overlay_mount   TEXT NOT NULL,
-            model           TEXT,
-            last_input_at   TEXT,
-            started_at      TEXT NOT NULL DEFAULT (datetime('now')),
-            ended_at        TEXT
+            id                      TEXT PRIMARY KEY,
+            student_id              TEXT NOT NULL REFERENCES students(id),
+            state                   TEXT NOT NULL DEFAULT 'active',
+            namespace_pid           INTEGER,
+            overlay_mount           TEXT NOT NULL,
+            model                   TEXT,
+            last_input_at           TEXT,
+            last_token_checkpoint   INTEGER NOT NULL DEFAULT 0,
+            started_at              TEXT NOT NULL DEFAULT (datetime('now')),
+            ended_at                TEXT
         )",
     )
     .execute(pool)
@@ -160,6 +166,37 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
 
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    // ── token_deductions ──────────────────────────────────────────────────────
+    // Audit trail for token deductions with model multiplier applied
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS token_deductions (
+            id                TEXT PRIMARY KEY,
+            student_id        TEXT NOT NULL REFERENCES students(id),
+            session_id        TEXT NOT NULL REFERENCES sessions(id),
+            model_name        TEXT NOT NULL,
+            multiplier        REAL NOT NULL,
+            tokens_used       INTEGER NOT NULL,
+            tokens_deducted   INTEGER NOT NULL,
+            balance_before    INTEGER NOT NULL,
+            balance_after     INTEGER NOT NULL,
+            recorded_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_token_deductions_student ON token_deductions(student_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_token_deductions_session ON token_deductions(session_id)",
     )
     .execute(pool)
     .await?;

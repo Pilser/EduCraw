@@ -3,20 +3,21 @@
 // POST /students        — create student (admin)
 // GET  /students        — list all students (admin)
 // GET  /students/:id    — get one student by id (admin)
+// GET  /me/token-balance — get current student's token balance (auth required)
 
 use std::path::PathBuf;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::auth;
+use crate::auth::{self, bearer_token};
 use crate::db::students::{self, Student};
 use crate::error::{AppError, Result};
 
@@ -27,6 +28,7 @@ pub fn routes() -> Router<AppState> {
         .route("/students", post(create_student))
         .route("/students", get(list_students))
         .route("/students/:id", get(get_student))
+        .route("/me/token-balance", get(get_my_token_balance))
 }
 
 // Recursively copy directory and all contents
@@ -78,6 +80,7 @@ async fn create_student(
         created_at: String::new(), // set by DB DEFAULT
         last_seen: None,
         token_limit: None,
+        token_balance: 0,
         token_block_banner: None,
         token_blocked_at: None,
     };
@@ -139,4 +142,29 @@ async fn get_student(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id} not found")))?;
     Ok(Json(student))
+}
+
+// ── GET /me/token-balance ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct TokenBalanceResponse {
+    pub balance: i64,
+}
+
+async fn get_my_token_balance(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    // Extract student ID from JWT
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let claims = state.auth.verify(token)?;
+    
+    // Get current student's balance
+    let student = students::get_student(&state.pool, &claims.sub)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
+    
+    Ok(Json(TokenBalanceResponse {
+        balance: student.token_balance,
+    }))
 }
