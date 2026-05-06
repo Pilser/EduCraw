@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { Fragment, useState, useEffect, type FormEvent } from 'react'
 import { GraduationCap, LogOut, Users, BookOpen, FolderOpen, ClipboardList, Monitor, Cpu, Plus, X, Coins, Lock } from 'lucide-react'
 import { api, type AdminStudent, type AdminSession, type CreateStudentBody, type CreateAssignmentBody } from '../api/client'
 import type { Cohort, Subject, Assignment, Model } from '../api/types'
@@ -242,7 +242,7 @@ function StudentsTab({ token, role }: { token: string; role: string }) {
                   </td>
                 </tr>
               ) : (
-                <>
+                <Fragment key={s.id}>
                   <tr key={s.id} className={`hover:bg-wp-inset ${detailId === s.id ? 'bg-wp-accent-subtle/50' : ''}`}>
                     <td className="px-4 py-3.5 font-mono text-wp-text-secondary text-xs">{s.username}</td>
                     <td className="px-4 py-3.5 text-wp-text-primary font-medium">{s.display_name}</td>
@@ -293,7 +293,7 @@ function StudentsTab({ token, role }: { token: string; role: string }) {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
               {students.length === 0 && (
                 <tr><td colSpan={7} className="px-4 py-12 text-center text-wp-text-tertiary text-sm">No accounts yet.</td></tr>
@@ -375,13 +375,7 @@ function StudentDetail({
     if (isNaN(amt) || amt <= 0) { setBalanceMsg({ ok: false, text: 'Enter a positive amount' }); return }
     setSavingBalance(true); setBalanceMsg(null)
     try {
-      const resp = await fetch(`/api/admin/students/${student.id}/topup`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt }),
-      })
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data = await resp.json()
+      const data = await api.adminTopupTokens(token, student.id, amt)
       setTokenBalance(data.new_balance)
       setTopupAmount('')
       setBalanceMsg({ ok: true, text: `✓ Added ${amt} tokens. New balance: ${data.new_balance.toLocaleString()}` })
@@ -397,13 +391,7 @@ function StudentDetail({
     if (isNaN(amt) || amt <= 0) { setBalanceMsg({ ok: false, text: 'Enter a positive amount' }); return }
     setSavingBalance(true); setBalanceMsg(null)
     try {
-      const resp = await fetch(`/api/admin/students/${student.id}/deduct`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt }),
-      })
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data = await resp.json()
+      const data = await api.adminDeductTokens(token, student.id, amt)
       setTokenBalance(data.new_balance)
       setDeductAmount('')
       setBalanceMsg({ ok: true, text: `✓ Deducted ${amt} tokens. New balance: ${data.new_balance.toLocaleString()}` })
@@ -633,11 +621,7 @@ function ModelsTab({ token }: { token: string }) {
       const multiplier = parseFloat(newMultiplier) || 1.0
       await api.adminCreateModel(token, newName.trim(), newDisplay.trim())
       // Set multiplier after model is created
-      await fetch(`/api/admin/models/${encodeURIComponent(newName.trim())}/multiplier`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ multiplier }),
-      })
+      await api.adminSetModelMultiplier(token, newName.trim(), multiplier)
       setNewName(''); setNewDisplay(''); setNewMultiplier('1.0'); setCreating(false); load()
     } catch (e) { setError(e instanceof Error ? e.message : 'Create failed') }
   }
@@ -651,12 +635,7 @@ function ModelsTab({ token }: { token: string }) {
 
   async function handleSetMultiplier(modelName: string, multiplier: number) {
     try {
-      const response = await fetch(`/api/admin/models/${encodeURIComponent(modelName)}/multiplier`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ multiplier }),
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      await api.adminSetModelMultiplier(token, modelName, multiplier)
       setEditingMultiplier(null)
       load()
     } catch (e) { setError(e instanceof Error ? e.message : 'Update failed') }

@@ -285,6 +285,14 @@ export const api = {
     })
   },
 
+  async adminSetModelMultiplier(token: string, name: string, multiplier: number): Promise<void> {
+    await fetch(`${BASE}/admin/models/${encodeURIComponent(name)}/multiplier`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ multiplier }),
+    }).then(json)
+  },
+
   async adminDeleteModel(token: string, id: string): Promise<void> {
     await fetch(`${BASE}/admin/models/${id}`, {
       method: 'DELETE',

@@ -270,7 +270,7 @@ export default function ChatPanel({
         <div className="flex-1" />
 
         {/* Token usage — bold, prominent */}
-        {((sessionTokensUsed ?? 0) > 0 || tokenUsage) && (
+        {(((sessionTokensUsed ?? 0) > 0) || !!tokenUsage || (tokenBalance !== undefined && tokenBalance !== null)) && (
           <div className="flex items-center gap-3 text-sm font-bold">
             <Zap className="w-4 h-4 text-wp-accent" />
             <div className="flex flex-col gap-1">
