@@ -619,9 +619,7 @@ function ModelsTab({ token }: { token: string }) {
     e.preventDefault()
     try {
       const multiplier = parseFloat(newMultiplier) || 1.0
-      await api.adminCreateModel(token, newName.trim(), newDisplay.trim())
-      // Set multiplier after model is created
-      await api.adminSetModelMultiplier(token, newName.trim(), multiplier)
+      await api.adminCreateModel(token, newName.trim(), newDisplay.trim(), multiplier)
       setNewName(''); setNewDisplay(''); setNewMultiplier('1.0'); setCreating(false); load()
     } catch (e) { setError(e instanceof Error ? e.message : 'Create failed') }
   }

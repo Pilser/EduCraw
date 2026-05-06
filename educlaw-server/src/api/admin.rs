@@ -715,7 +715,12 @@ struct CreateModelBody {
     name: String,
     /// Human-readable label shown in the UI, e.g. "Claude Opus 4.6".
     display_name: String,
+    /// Token deduction multiplier (e.g., 1.0, 2.5, 3.33). Defaults to 1.0 if absent.
+    #[serde(default = "default_multiplier")]
+    multiplier: f64,
 }
+
+fn default_multiplier() -> f64 { 1.0 }
 
 async fn create_model(
     State(state): State<AppState>,
@@ -726,9 +731,18 @@ async fn create_model(
     if body.name.is_empty() {
         return Err(AppError::BadRequest("model name must not be empty".into()));
     }
-    let id = db_models::insert_model(&state.pool, &body.name, &body.display_name).await?;
-    tracing::info!(model_name = %body.name, "admin: model created");
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": id, "name": body.name }))))
+    if body.multiplier < 0.0 {
+        return Err(AppError::BadRequest("multiplier must be non-negative".into()));
+    }
+    let id = db_models::insert_model(&state.pool, &body.name, &body.display_name, body.multiplier).await?;
+    tracing::info!(model_name = %body.name, multiplier = body.multiplier, "admin: model created");
+    Ok((StatusCode::CREATED, Json(serde_json::json!({
+        "id": id,
+        "name": body.name,
+        "display_name": body.display_name,
+        "multiplier": body.multiplier,
+        "enabled": 1,
+    }))))
 }
 
 // ── PUT /admin/models/:id ─────────────────────────────────────────────────
@@ -893,7 +907,7 @@ async fn set_model_multiplier(
 
     db_models::set_multiplier(&state.pool, &name, body.multiplier).await?;
     tracing::info!(model = %name, multiplier = body.multiplier, "admin: model multiplier updated");
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(serde_json::json!({ "name": name, "multiplier": body.multiplier })))
 }
 
 // ── GET /admin/students/:id/token-balance ──────────────────────────────

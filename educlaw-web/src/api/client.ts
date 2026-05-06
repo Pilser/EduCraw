@@ -269,11 +269,11 @@ export const api = {
     }).then(json)
   },
 
-  async adminCreateModel(token: string, name: string, display_name: string): Promise<{ id: string }> {
+  async adminCreateModel(token: string, name: string, display_name: string, multiplier = 1.0): Promise<{ id: string; name: string; display_name: string; multiplier: number; enabled: number }> {
     return fetch(`${BASE}/admin/models`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ name, display_name }),
+      body: JSON.stringify({ name, display_name, multiplier }),
     }).then(json)
   },
 

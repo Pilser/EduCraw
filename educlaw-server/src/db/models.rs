@@ -21,14 +21,16 @@ pub async fn insert_model(
     pool: &SqlitePool,
     name: &str,
     display_name: &str,
+    multiplier: f64,
 ) -> Result<String, sqlx::Error> {
     let id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO models (id, name, display_name) VALUES (?, ?, ?)",
+        "INSERT INTO models (id, name, display_name, multiplier) VALUES (?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(name)
     .bind(display_name)
+    .bind(multiplier)
     .execute(pool)
     .await?;
     Ok(id)
