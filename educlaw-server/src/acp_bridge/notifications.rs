@@ -284,15 +284,25 @@ pub fn spawn_token_accounting(
         let last_checkpoint = session.last_token_checkpoint;
         let delta = used - last_checkpoint;
 
-        // Only deduct if delta > 0 (sanity check)
+        // Always update checkpoint to current cumulative count
+        if let Err(e) =
+            db_sessions::update_last_token_checkpoint(&pool, &session_id, used).await
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %e,
+                "failed to update token checkpoint"
+            );
+        }
+
+        // Only deduct if delta > 0
         if delta <= 0 {
             tracing::debug!(
                 session_id = %session_id,
                 delta,
                 "non-positive delta, skipping deduction"
             );
-            return;
-        }
+        } else {
 
         // Get model multiplier
         let multiplier = match db_models::get_model_multiplier(&pool, &model_name).await {
@@ -331,17 +341,6 @@ pub fn spawn_token_accounting(
                 return;
             }
         };
-
-        // Update session checkpoint to current cumulative count
-        if let Err(e) =
-            db_sessions::update_last_token_checkpoint(&pool, &session_id, used).await
-        {
-            tracing::warn!(
-                session_id = %session_id,
-                error = %e,
-                "failed to update token checkpoint"
-            );
-        }
 
         // Record deduction in audit log
         if let Err(e) = db_tokens::record_deduction(
@@ -392,5 +391,6 @@ pub fn spawn_token_accounting(
             balance_after,
             "token balance available for polling"
         );
+        } // Close else block
     });
 }

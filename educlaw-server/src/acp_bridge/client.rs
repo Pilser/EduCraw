@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sacp::schema::{
     ClientCapabilities, InitializeRequest, NewSessionRequest, ProtocolVersion,
@@ -35,6 +36,9 @@ pub async fn spawn_sacp_client(
     notif_tx: mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>,
     pool: SqlitePool,
     student_id: String,
+    session_id: String,
+    loading_flag: Arc<AtomicBool>,
+    model_arc: Arc<tokio::sync::Mutex<Option<String>>>,
 ) -> Result<(ConnectionTo<SacpAgent>, Arc<tokio::sync::Mutex<Option<SessionId>>>, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
@@ -63,6 +67,11 @@ pub async fn spawn_sacp_client(
 
     let model_for_init = model.clone();
 
+    // Clone values needed for the notification closure
+    let educlaw_session_id = session_id.clone();
+    let loading_flag_clone = loading_flag.clone();
+    let model_arc_clone = model_arc.clone();
+
     tokio::spawn(async move {
         let result = Client
             .builder()
@@ -71,8 +80,10 @@ pub async fn spawn_sacp_client(
                     let pool = pool.clone();
                     let student_id = student_id.clone();
                     let tx = notif_tx;
+                    let educlaw_session_id = educlaw_session_id.clone();
+                    let loading_flag = loading_flag_clone.clone();
                     async move |notif: SessionNotification, _cx| {
-                        let session_id = notif.session_id.0.to_string();
+                        let _session_id = notif.session_id.0.to_string(); // ACP session ID (not used for DB)
 
                         // Forward all notifications to the WS writer.
                         let frames = notification_to_frames(&notif);
@@ -81,20 +92,34 @@ pub async fn spawn_sacp_client(
                         // Persist statistics to backend based on notification type.
                         match &notif.update {
                             SessionUpdate::UsageUpdate(usage) => {
-                                tracing::debug!(
-                                    session_id = %session_id,
-                                    student_id = %student_id,
-                                    tokens_used = usage.used,
-                                    cost = ?usage.cost,
-                                    "💰 [TOKEN] Usage update from goose"
-                                );
-                                spawn_token_accounting(
-                                    pool.clone(),
-                                    session_id.clone(),
-                                    student_id.clone(),
-                                    "gpt-4".to_string(),  // TODO: extract actual model name from session state
-                                    usage.used as i64,
-                                );
+                                // Skip token accounting if we're loading a session
+                                if loading_flag.load(Ordering::Relaxed) {
+                                    tracing::debug!(
+                                        session_id = %educlaw_session_id,
+                                        "💰 [TOKEN] Skipping token accounting during session load"
+                                    );
+                                } else {
+                                    // Get actual model name from model_arc (updated by model_poller)
+                                    let model_name = model_arc_clone.lock().await
+                                        .clone()
+                                        .unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string());
+
+                                    tracing::debug!(
+                                        session_id = %educlaw_session_id,
+                                        student_id = %student_id,
+                                        tokens_used = usage.used,
+                                        cost = ?usage.cost,
+                                        model = %model_name,
+                                        "💰 [TOKEN] Usage update from goose"
+                                    );
+                                    spawn_token_accounting(
+                                        pool.clone(),
+                                        educlaw_session_id.clone(),
+                                        student_id.clone(),
+                                        model_name,
+                                        usage.used as i64,
+                                    );
+                                }
                             }
                             SessionUpdate::Plan(plan) => {
                                 let completed = plan.entries.iter()

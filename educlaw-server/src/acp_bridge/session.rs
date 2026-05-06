@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
@@ -128,6 +128,9 @@ pub async fn run_acp_session(
     // Shared current-model tracker updated by model_poller and read by notifications.
     let model_arc = Arc::new(tokio::sync::Mutex::new(model.clone()));
 
+    // Shared flag to track if we're loading a session (to skip token accounting during replay)
+    let loading_flag = Arc::new(AtomicBool::new(false));
+
     // Bootstrap SACP client and create ACP session
     tracing::info!(session_id = %session_id, "🔗 [GOOSE-ACP] Initializing ACP handshake...");
     let (cx, acp_session_id_holder, available_models_from_goose) = spawn_sacp_client(
@@ -138,6 +141,9 @@ pub async fn run_acp_session(
         notif_tx,
         pool.clone(),
         student_id.clone(),
+        session_id.clone(),
+        loading_flag.clone(),
+        model_arc.clone(),
     )
     .await?;
 
@@ -232,6 +238,7 @@ pub async fn run_acp_session(
                     &turn_tx,
                     &last_input_at,
                     &available_models_arc,
+                    &loading_flag,
                 )
                 .await;
             }
@@ -258,6 +265,7 @@ async fn handle_client_message(
     turn_tx: &mpsc::Sender<String>,
     last_input_at: &Arc<AtomicU64>,
     available_models_arc: &Arc<tokio::sync::Mutex<Vec<String>>>,
+    loading_flag: &Arc<AtomicBool>,
 ) {
     match msg {
         ClientMessage::Input { data, image, mime_type } => {
@@ -521,19 +529,25 @@ async fn handle_client_message(
         }
 
         ClientMessage::LoadSession { thread_id } => {
+            // Set loading flag to skip token accounting during session replay
+            loading_flag.store(true, Ordering::Relaxed);
+
             match super::handle_load_session(&cx, thread_id.clone()).await {
                 Ok(()) => {
                     // LoadSession succeeded - the thread_id is now our active ACP session_id
                     let loaded_sid = SessionId::new(thread_id.clone());
                     *acp_session_id_holder.lock().await = Some(loaded_sid.clone());
-                    
+
                     // CRITICAL: Wait for notification queue to drain
                     // LoadSessionResponse arrives synchronously, but historical SessionNotifications
                     // are still being forwarded asynchronously via notif_rx channel.
                     // Without this delay, frontend receives load_session_complete before all
                     // assistant_text frames arrive, causing text segments to not render.
                     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-                    
+
+                    // Clear loading flag AFTER notifications are replayed
+                    loading_flag.store(false, Ordering::Relaxed);
+
                     // Send completion frame so frontend can flush replay buffer
                     let frame = serde_json::json!({
                         "type": "load_session_complete",
@@ -543,6 +557,9 @@ async fn handle_client_message(
                     let _ = ctrl_tx.send(frame).await;
                 }
                 Err(e) => {
+                    // Clear loading flag on error too
+                    loading_flag.store(false, Ordering::Relaxed);
+
                     tracing::error!(session_id = %session_id, thread_id = %thread_id, error = %e, "✗ [SESSION] Failed to load session");
                     let frame = serde_json::json!({
                         "type": "error",
