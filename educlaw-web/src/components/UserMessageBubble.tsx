@@ -22,13 +22,13 @@ export default function UserMessageBubble({ msg }: UserMessageBubbleProps) {
 
   return (
     <div className="flex gap-3 flex-row-reverse items-start mb-3">
-      {/* Avatar */}
-      <div className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-wp-accent text-wp-text-on-accent shadow-sm">
+       {/* Avatar */}
+      <div className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-wp-success text-wp-text-on-accent shadow-sm">
         <User className="w-5 h-5" />
       </div>
 
       {/* Message Bubble */}
-      <div className="max-w-xs sm:max-w-sm md:max-w-xl lg:max-w-2xl rounded-2xl rounded-tr-sm px-5 py-4 bg-wp-accent text-wp-text-on-accent border-2 border-wp-accent-muted shadow-md font-medium">
+      <div className="max-w-xs sm:max-w-sm md:max-w-xl lg:max-w-2xl rounded-2xl rounded-tr-sm px-5 py-4 bg-wp-success-bg text-wp-text-primary border-2 border-wp-success shadow-md font-medium">
         {/* Text content */}
         {textContent && (
           <p className="whitespace-pre-wrap break-words text-base leading-relaxed mb-3">
@@ -48,7 +48,7 @@ export default function UserMessageBubble({ msg }: UserMessageBubbleProps) {
                   key={idx}
                   src={seg.dataUrl}
                   alt={`Image ${idx + 1}`}
-                  className="rounded-wp-md max-w-full h-auto border border-wp-text-on-accent/30 shadow-sm"
+                  className="rounded-wp-md max-w-full h-auto border border-wp-success/30 shadow-sm"
                   style={{ maxHeight: '300px', objectFit: 'contain' }}
                 />
               )

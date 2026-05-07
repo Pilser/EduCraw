@@ -197,29 +197,23 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
     <div className="flex flex-col gap-2">
       {/* File input button + Clear all button */}
       <div className="flex gap-2 items-center">
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          className="flex items-center gap-2 px-3 py-2 rounded-wp-lg bg-wp-accent-subtle hover:bg-wp-accent-subtle/80 
-            text-wp-accent font-semibold text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed
-            border border-wp-accent/30 hover:border-wp-accent/50"
-          title="Select image or files"
-        >
-          <Paperclip className="w-4 h-4" />
-          <span>Attach</span>
-        </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
+            className="flex items-center gap-2 px-2 py-2 rounded-wp-md"
+            title="Select image or files"
+          >
+            <Paperclip className="w-4 h-4 text-wp-accent" />
+          </button>
 
         {totalFiles > 0 && (
           <button
             onClick={handleClearAllFiles}
             disabled={disabled}
-            className="flex items-center gap-1 px-2.5 py-2 rounded-wp-lg bg-wp-error-bg hover:bg-wp-error-bg/80 
-              text-wp-error font-semibold text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed
-              border border-wp-error/30"
+            className="flex items-center gap-1 px-2 py-1 rounded-wp-md"
             title="Clear all files"
           >
-            <X className="w-4 h-4" />
-            <span className="hidden sm:inline">Clear</span>
+            <X className="w-4 h-4 text-wp-accent" />
           </button>
         )}
 
@@ -239,12 +233,12 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
 
       {/* Image section */}
       {attachedImage && (
-        <div className="bg-wp-page border border-wp-border-soft rounded-wp-lg p-3">
+        <div className="border border-wp-border-soft rounded-wp-lg p-3">
           <div className="text-xs font-semibold text-wp-text-secondary mb-2 flex items-center gap-1">
-            <ImageIcon className="w-3 h-3" />
+            <ImageIcon className="w-3 h-3 text-wp-accent" />
             Image for chat
           </div>
-          <div className="flex items-center gap-2 p-2 rounded-wp-md bg-wp-surface border border-wp-border-mid hover:border-wp-accent hover:bg-wp-accent-subtle/30 transition-all group">
+          <div className="flex items-center gap-2 p-2 rounded-wp-md border border-wp-border-mid hover:border-wp-accent transition-all group">
             <div className="shrink-0">
               <ImageIcon className="w-4 h-4 text-wp-accent" />
             </div>
@@ -257,16 +251,15 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
               </p>
             </div>
             <div className="shrink-0 flex items-center gap-2">
-              <Check className="w-4 h-4 text-wp-success" />
+<Check className="w-4 h-4 text-wp-accent" />
             </div>
             <button
               onClick={handleClearImage}
               disabled={disabled}
-              className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 
-                hover:bg-wp-error-bg rounded-wp-sm disabled:opacity-30"
+              className="shrink-0 p-1 rounded-wp-sm"
               title="Remove image"
             >
-              <Trash2 className="w-4 h-4 text-wp-error" />
+              <Trash2 className="w-4 h-4 text-wp-accent" />
             </button>
           </div>
         </div>
@@ -274,17 +267,17 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
 
       {/* Other files section */}
       {otherFiles.length > 0 && (
-        <div className="bg-wp-page border border-wp-border-soft rounded-wp-lg p-3">
+        <div className="border border-wp-border-soft rounded-wp-lg p-3">
           <div className="text-xs font-semibold text-wp-text-secondary mb-2 flex items-center gap-1">
-            <FileIcon className="w-3 h-3" />
+            <FileIcon className="w-3 h-3 text-wp-accent" />
             Files to upload to workspace
           </div>
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {otherFiles.map((file, index) => (
               <div
                 key={`${file.name}-${index}`}
-                className="flex items-center gap-2 p-2 rounded-wp-md bg-wp-surface border border-wp-border-mid 
-                  hover:border-wp-accent hover:bg-wp-accent-subtle/30 transition-all group"
+className="flex items-center gap-2 p-2 rounded-wp-md border border-wp-border-mid 
+                   hover:border-wp-accent transition-all group"
               >
                 <div className="shrink-0">
                   {getFileTypeIcon(file.mimeType)}
@@ -306,11 +299,10 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
                 <button
                   onClick={() => handleRemoveOtherFile(index)}
                   disabled={disabled || file.uploadStatus === 'uploading'}
-                  className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 
-                    hover:bg-wp-error-bg rounded-wp-sm disabled:opacity-30"
+                  className="shrink-0 p-1 rounded-wp-sm"
                   title="Remove file"
                 >
-                  <Trash2 className="w-4 h-4 text-wp-error" />
+                  <Trash2 className="w-4 h-4 text-wp-accent" />
                 </button>
               </div>
             ))}
