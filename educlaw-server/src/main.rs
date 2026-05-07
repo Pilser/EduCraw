@@ -11,18 +11,17 @@ mod security;
 mod session;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
-use axum::http::header;
-use axum::middleware::Next;
-use axum::body::Body;
-use axum::response::Response;
 use sqlx::sqlite::SqlitePoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::auth::AuthConfig;
 use crate::db::schema::init_db;
 use crate::session::broker::SessionBroker;
+use crate::session::registry::SessionRegistry;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -87,10 +86,23 @@ async fn main() -> anyhow::Result<()> {
 
     let broker = SessionBroker::new();
 
+    let registry = Arc::new(SessionRegistry::new(Duration::from_secs(300))); // 5 min grace period
+
+    // Periodic cleanup: remove registry entries whose grace period has expired.
+    // Per-session timeout tasks handle the actual child kill; this is just housekeeping.
+    let registry_cleanup = Arc::clone(&registry);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            registry_cleanup.cleanup_expired().await;
+        }
+    });
+
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(pool, auth_config, workspace_root, goose_bin, broker, subjects_root, students_root);
+    let state = api::AppState::new(pool, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root);
 
     let app = Router::new()
         .merge(api::routes())

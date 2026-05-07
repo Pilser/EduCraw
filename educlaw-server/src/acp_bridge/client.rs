@@ -17,7 +17,7 @@ use sacp::schema::{
 use sacp::{Agent as SacpAgent, ByteStreams, Client, ConnectionTo};
 use sqlx::SqlitePool;
 use tokio::process::{ChildStdin, ChildStdout};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::error::{AppError, Result};
@@ -33,7 +33,7 @@ pub async fn spawn_sacp_client(
     child_stdout: ChildStdout,
     workspace: PathBuf,
     model: Option<String>,
-    notif_tx: mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>,
+    notif_tx: Arc<Mutex<mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,
     pool: SqlitePool,
     student_id: String,
     session_id: String,
@@ -87,7 +87,8 @@ pub async fn spawn_sacp_client(
 
                         // Forward all notifications to the WS writer.
                         let frames = notification_to_frames(&notif);
-                        let _ = tx.send(frames).await;
+                            let sender = tx.lock().await.clone();
+                            let _ = sender.send(frames).await;
 
                         // Persist statistics to backend based on notification type.
                         match &notif.update {

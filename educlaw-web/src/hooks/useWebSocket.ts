@@ -31,7 +31,13 @@ export function useWebSocket({
 }: Options) {
   const [status, setStatus] = useState<WsStatus>('connecting')
   const wsRef = useRef<WebSocket | null>(null)
-  const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Reconnection state
+  const reconnectAttemptsRef = useRef(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const maxReconnectTime = 5 * 60 * 1000 // 5 minutes
+  const isMountedRef = useRef(true)
+  // Trigger to force effect re-run on reconnect
+  const [reconnectKey, setReconnectKey] = useState(0)
 
   const send = useCallback((msg: object) => {
     wsRef.current?.readyState === WebSocket.OPEN &&
@@ -101,9 +107,8 @@ export function useWebSocket({
 
     ws.onopen = () => {
       setStatus('connected')
-      keepaliveRef.current = setInterval(() => {
-        ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'ping' }))
-      }, 30_000)
+      reconnectAttemptsRef.current = 0 // Reset on successful connection
+      console.log('WebSocket connected')
     }
 
     ws.onmessage = (e) => {
@@ -216,19 +221,45 @@ export function useWebSocket({
     }
 
     ws.onclose = () => {
+      if (!isMountedRef.current) return
+
       setStatus('disconnected')
-      if (keepaliveRef.current) clearInterval(keepaliveRef.current)
+      console.log('WebSocket disconnected')
+
+      // Attempt reconnection with exponential backoff
+      const elapsed = reconnectAttemptsRef.current * 1000
+      if (elapsed < maxReconnectTime) {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000)
+        console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`)
+        reconnectTimerRef.current = setTimeout(() => {
+          if (isMountedRef.current) {
+            reconnectAttemptsRef.current += 1
+            // Force effect re-run by updating reconnectKey
+            setReconnectKey(prev => prev + 1)
+          }
+        }, delay)
+      } else {
+        console.log('Max reconnection time exceeded')
+        setStatus('error')
+      }
     }
 
-    ws.onerror = () => {
-      setStatus('error')
+    ws.onerror = (e) => {
+      console.error('WebSocket error:', e)
+      // Don't set status to error here - onclose will be called after
     }
 
     return () => {
+      isMountedRef.current = false
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       ws.close()
-      if (keepaliveRef.current) clearInterval(keepaliveRef.current)
     }
-  }, [sessionId, token]) // Only reconnect when sessionId or token changes!
+  }, [sessionId, token, reconnectKey]) // reconnectKey triggers re-run for reconnection
+
+  // Reset reconnect attempts when sessionId or token changes
+  useEffect(() => {
+    reconnectAttemptsRef.current = 0
+  }, [sessionId, token])
 
   return { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels, sendListSessions, sendLoadSession, sendForkSession }
 }

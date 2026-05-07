@@ -12,12 +12,14 @@ mod ws;
 use axum::{routing::get, Json, Router};
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::auth::AuthConfig;
 use crate::db::models as db_models;
 use crate::session::broker::SessionBroker;
+use crate::session::registry::SessionRegistry;
 
-// ── Shared application state ──────────────────────────────────────────────
+// ── Shared application state ──────────────────────────────────────
 
 #[derive(Clone)]
 pub struct AppState {
@@ -26,6 +28,7 @@ pub struct AppState {
     pub workspace_root: String,
     pub goose_bin: String,
     pub broker: Arc<SessionBroker>,
+    pub registry: Arc<SessionRegistry>,
     /// Root dir containing subject dirs: `{subjects_root}/{cohort_id}/{slug}/`
     /// This is the OverlayFS lower layer — cohort course materials, read-only.
     /// Matches the disk layout defined in the `subjects` DB table.
@@ -42,14 +45,15 @@ impl AppState {
         workspace_root: String,
         goose_bin: String,
         broker: Arc<SessionBroker>,
+        registry: Arc<SessionRegistry>,
         subjects_root: String,
         students_root: String,
     ) -> Self {
-        Self { pool, auth, workspace_root, goose_bin, broker, subjects_root, students_root }
+        Self { pool, auth, workspace_root, goose_bin, broker, registry, subjects_root, students_root }
     }
 }
 
-// ── Router assembly ───────────────────────────────────────────────────────
+// ── Router assembly ───────────────────────────────────────────────
 
 pub fn routes() -> Router<AppState> {
     Router::new()

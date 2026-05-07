@@ -18,6 +18,7 @@ use crate::acp_bridge::run_acp_session;
 use crate::db::sessions as db_sess;
 use crate::error::{AppError, Result};
 use crate::session::{broker::now_secs, dirs::SessionDirs};
+use crate::session::registry::SessionRegistry;
 
 use super::AppState;
 
@@ -67,6 +68,8 @@ async fn session_ws(
     let student_json_blob =
         std::fs::read_to_string(dirs.config.join("student.json")).ok();
 
+    let registry = Arc::clone(&state.registry);
+
     Ok(ws.on_upgrade(move |socket| async move {
         let last_input_at = broker
             .get_last_input_arc(&sid)
@@ -74,7 +77,6 @@ async fn session_ws(
             .unwrap_or_else(|| Arc::new(AtomicU64::new(now_secs())));
 
         // No broker PTY sender needed for ACP (goose is not a PTY).
-        // We register None so the watchdog knows there is no PTY channel.
         broker.set_pty_sender(&sid, None).await;
 
         // Extract system prompt (base64-encoded) from student.json.
@@ -113,8 +115,6 @@ async fn session_ws(
             .join(".goose/logs");
 
         // GOOSE_PATH_ROOT = student's persistent upper layer (OverlayFS upper).
-        // This is derived from students_root + student_id.
-        // dirs.upper is not populated in for_existing_session; reconstruct it.
         let goose_path_root = std::path::PathBuf::from(&state.students_root)
             .join(&student_id);
 
@@ -129,7 +129,23 @@ async fn session_ws(
             "ACP spawn: credentials check"
         );
 
-        if let Err(e) = run_acp_session(
+        // ── Check registry for a surviving session (reconnect path) ────────
+        let existing_session = registry.get(&sid).await;
+        let existing_session = if let Some(ref managed) = existing_session {
+            if managed.is_in_grace_period().await {
+                tracing::info!(session_id = %sid, "🔄 [WS] Reconnecting to session in grace period");
+                Some(managed.clone())
+            } else {
+                // Grace period already expired — remove stale entry, start fresh
+                tracing::info!(session_id = %sid, "⚠️ [WS] Stale session in registry (grace period expired), starting fresh");
+                registry.remove(&sid).await;
+                None
+            }
+        } else {
+            None
+        };
+
+        let result = run_acp_session(
             socket,
             goose_bin.into(),
             dirs.merged.clone(),
@@ -143,13 +159,16 @@ async fn session_ws(
             student_id,
             logs_dir,
             system_prompt,
+            Some(registry.clone()),
+            existing_session,
         )
-        .await
-        {
+        .await;
+
+        if let Err(e) = result {
             tracing::error!(session_id = %sid, error = %e, "ACP session error");
         }
 
         broker.set_pty_sender(&sid, None).await;
-        tracing::info!(session_id = %sid, "WebSocket disconnected");
+        tracing::info!(session_id = %sid, "WebSocket handler exited");
     }))
 }
