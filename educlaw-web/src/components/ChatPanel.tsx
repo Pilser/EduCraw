@@ -135,14 +135,14 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
   return (
     <div className="flex gap-3 flex-row items-start">
       {/* Avatar - animate when AI is responding */}
-      <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shadow-sm transition-all
-        bg-gradient-to-br from-violet-500 to-indigo-600 text-white ${msg.pending ? 'animate-pulse scale-110' : ''}`}>
+       <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold transition-all
+        bg-wp-accent text-wp-text-on-accent ${msg.pending ? 'animate-pulse scale-110' : ''}`}>
         <Bot className={`w-5 h-5 ${msg.pending ? 'animate-spin' : ''}`} />
       </div>
 
       {/* Bubble */}
-      <div className={`max-w-xs sm:max-w-sm md:max-w-xl lg:max-w-2xl rounded-2xl px-5 py-4 shadow-sm leading-relaxed transition-all
-        bg-wp-surface border border-wp-border-mid text-wp-text-primary rounded-tl-sm text-base ${msg.pending ? 'ring-2 ring-violet-300 ring-opacity-50' : ''}`}>
+       <div className={`max-w-xs sm:max-w-sm md:max-w-xl lg:max-w-2xl rounded-wp-xl px-5 py-4 leading-relaxed transition-all
+        bg-wp-surface border border-wp-border-mid text-wp-text-primary rounded-tl-wp-sm text-base ${msg.pending ? 'ring-2 ring-wp-accent ring-opacity-50' : ''}`}>
         <div className="prose max-w-none
           prose-headings:font-bold prose-headings:text-wp-text-primary
           prose-h1:text-lg prose-h2:text-base prose-h3:text-[15px]
@@ -161,7 +161,7 @@ function MessageBubble({ msg, sessionId, token, onFileSelect }: MessageBubblePro
           prose-thead:bg-wp-accent-subtle
           prose-th:border prose-th:border-wp-border-mid prose-th:px-3 prose-th:py-2 prose-th:font-semibold prose-th:text-left prose-th:text-base
           prose-td:border prose-td:border-wp-border-soft prose-td:px-3 prose-td:py-2 prose-td:text-base
-          prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:my-3 prose-pre:p-4 prose-pre:text-sm
+           prose-pre:bg-wp-inset prose-pre:text-wp-text-primary prose-pre:overflow-x-auto prose-pre:rounded-wp-lg prose-pre:my-3 prose-pre:p-4 prose-pre:text-sm
           prose-hr:border-wp-border-mid prose-hr:my-4
           prose-code:font-mono prose-code:text-wp-accent prose-code:bg-wp-accent-subtle prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm">
           {msg.segments.length === 0 && msg.pending && (

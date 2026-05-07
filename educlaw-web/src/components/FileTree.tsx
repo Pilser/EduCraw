@@ -33,7 +33,7 @@ function FileRow({
     return (
       <div>
         <button
-          className="flex items-center gap-1 w-full px-1.5 md:px-2 py-0.5 md:py-1 text-xs md:text-sm text-slate-600 hover:bg-slate-100 rounded text-left"
+          className="flex items-center gap-1 w-full px-1.5 md:px-2 py-0.5 md:py-1 text-xs md:text-sm text-wp-text-secondary hover:bg-wp-accent-subtle rounded text-left"
           style={{ paddingLeft: pad + 4 }}
           onClick={() => setOpen(o => !o)}
         >
@@ -50,24 +50,24 @@ function FileRow({
 
   // Get appropriate icon based on file type
   const getFileIcon = () => {
-    if (node.name.endsWith('.pdf')) return <FileText className="w-4 h-4 text-red-600" />
-    if (node.name.endsWith('.md')) return <FileText className="w-4 h-4 text-blue-600" />
-    if (node.name.match(/\.(png|jpg|jpeg|svg|gif|webp)$/)) return <Image className="w-4 h-4 text-green-600" />
-    if (node.name.match(/\.(py|rs|js|ts|tsx|jsx)$/)) return <FileCode className="w-4 h-4 text-purple-600" />
-    if (node.name.endsWith('.json') || node.name.endsWith('.yaml') || node.name.endsWith('.yml')) return <FileJson className="w-4 h-4 text-orange-600" />
-    return <File className="w-4 h-4 text-slate-600" />
+    if (node.name.endsWith('.pdf')) return <FileText className="w-4 h-4 text-wp-accent" />
+    if (node.name.endsWith('.md')) return <FileText className="w-4 h-4 text-wp-accent" />
+    if (node.name.match(/\.(png|jpg|jpeg|svg|gif|webp)$/)) return <Image className="w-4 h-4 text-wp-accent" />
+    if (node.name.match(/\.(py|rs|js|ts|tsx|jsx)$/)) return <FileCode className="w-4 h-4 text-wp-accent" />
+    if (node.name.endsWith('.json') || node.name.endsWith('.yaml') || node.name.endsWith('.yml')) return <FileJson className="w-4 h-4 text-wp-accent" />
+    return <File className="w-4 h-4 text-wp-accent" />
   }
 
   return (
     <button
-      className="flex items-center gap-1 md:gap-1.5 w-full px-1.5 md:px-2 py-1 md:py-1.5 text-xs md:text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 rounded text-left transition-colors"
+      className="flex items-center gap-1 md:gap-1.5 w-full px-1.5 md:px-2 py-1 md:py-1.5 text-xs md:text-sm text-wp-text-primary hover:bg-wp-accent-subtle hover:text-wp-accent rounded text-left transition-colors"
       style={{ paddingLeft: pad + 4 }}
       onClick={() => onSelect(node.path, node.name, tab, tab === 'subject' ? subjectId : undefined)}
     >
       {getFileIcon()}
       <span className="truncate font-medium text-xs md:text-sm">{node.name}</span>
       {node.size !== undefined && (
-        <span className="ml-auto text-[10px] md:text-xs text-slate-400 shrink-0">
+          <span className="ml-auto text-[10px] md:text-xs text-wp-text-tertiary shrink-0">
           {node.size < 1024 ? `${node.size}B` : `${(node.size / 1024).toFixed(1)}K`}
         </span>
       )}
@@ -128,6 +128,7 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
   }, [tab, token, subjectIds, sessionId])
 
   // Handle file upload directly to workspace
+  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.currentTarget.files
     if (!files || files.length === 0) return
@@ -138,6 +139,12 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
+
+        // Check file size
+        if (file.size > MAX_FILE_SIZE) {
+          setUploadError(`File "${file.name}" exceeds 10MB limit`)
+          continue
+        }
         
         // Read file content - use text with latin1 encoding to preserve binary
         const content = await new Promise<string>((resolve, reject) => {
@@ -175,15 +182,15 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
     <div className="flex flex-col h-full">
       {/* Tabs */}
       {/* Tabs - Make prominent with better styling */}
-      <div className="border-b-2 border-slate-300 shrink-0 bg-gradient-to-r from-blue-50 to-blue-100">
+       <div className="border-b-2 border-wp-border-mid shrink-0 bg-wp-surface-alt">
         {(['subject', 'mine'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`flex items-center justify-center gap-1 flex-1 py-2 md:py-3 text-xs md:text-sm font-bold transition-all ${
               tab === t
-                ? 'text-blue-700 border-b-4 border-blue-600 -mb-0.5 bg-white shadow-md'
-                : 'text-slate-600 hover:text-slate-800 hover:bg-blue-50'
+                ? 'text-wp-accent border-b-4 border-wp-accent -mb-0.5 bg-wp-surface shadow-wp-edge'
+                : 'text-wp-text-secondary hover:text-wp-text-primary hover:bg-wp-accent-subtle'
             }`}
           >
             {t === 'subject' ? (
@@ -205,7 +212,7 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
 
       {/* Upload button - show only on "My Files" tab */}
       {tab === 'mine' && (
-        <div className="shrink-0 px-2 md:px-3 py-2 border-b border-slate-200 bg-blue-50">
+        <div className="shrink-0 px-2 md:px-3 py-2 border-b border-wp-border-mid bg-wp-accent-subtle">
           <input
             ref={fileInputRef}
             type="file"
@@ -217,13 +224,13 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-400 text-white rounded-wp-md text-xs md:text-sm font-semibold transition-all shadow-sm hover:shadow-md disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-wp-accent hover:bg-wp-accent-hover active:bg-wp-accent/70 disabled:bg-wp-border-mid text-wp-text-on-accent rounded-wp-md text-xs md:text-sm font-semibold transition-all disabled:cursor-not-allowed"
           >
             <Upload className="w-4 h-4" />
             <span>{uploading ? 'Uploading...' : 'Add File'}</span>
           </button>
           {uploadError && (
-            <div className="flex items-center gap-1.5 mt-2 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-xs">
+            <div className="flex items-center gap-1.5 mt-2 p-2 bg-wp-error-bg border border-wp-error rounded-wp-sm text-wp-error text-xs">
               <AlertCircle className="w-3 h-3 shrink-0" />
               <span>{uploadError}</span>
             </div>
@@ -236,19 +243,19 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
         {loading && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="w-5 h-5 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-2" />
-              <p className="text-[10px] md:text-xs text-slate-500">Loading files…</p>
+              <div className="w-5 h-5 border-2 border-wp-border-mid border-t-wp-accent rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-[10px] md:text-xs text-wp-text-tertiary">Loading files…</p>
             </div>
           </div>
         )}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-2 md:p-3 text-[10px] md:text-xs text-red-700">
-            <p className="font-semibold mb-1">⚠️ Error loading files</p>
+          <div className="bg-wp-error-bg border border-wp-error rounded-wp-sm p-2 md:p-3 text-[10px] md:text-xs text-wp-error">
+            <p className="font-semibold mb-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Error loading files</p>
             <p>{error}</p>
           </div>
         )}
         {!loading && !error && files.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center text-slate-500 p-2 md:p-4">
+            <div className="flex flex-col items-center justify-center h-full text-center text-wp-text-tertiary p-2 md:p-4">
             <Folder className="w-8 h-8 md:w-12 md:h-12 mb-2 opacity-30" />
             <p className="text-xs md:text-sm font-medium">No files yet</p>
             <p className="text-[10px] md:text-xs mt-1">Files you create or upload will appear here</p>

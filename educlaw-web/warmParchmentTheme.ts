@@ -46,7 +46,7 @@ const warmParchment = {
 
   // ── Typography ────────────────────────────────────────────
   typography: {
-    fontFamily:     "'Inter', 'Geist', system-ui, sans-serif",
+    fontFamily:     "'Inter', 'Geist', system-ui, sans-serif",           // Body text
     fontFamilyMono: "'JetBrains Mono', 'Fira Code', monospace",
     fontSizeXs:     "11px",
     fontSizeSm:     "13px",

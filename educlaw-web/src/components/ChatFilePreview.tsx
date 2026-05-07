@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Maximize2, AlertCircle, Loader } from 'lucide-react'
+import { Maximize2, AlertCircle, Loader, FileText, FileEdit, Image, Code, Settings, Paperclip } from 'lucide-react'
 import { api } from '../api/client'
 import type { FileNode } from '../api/types'
 
@@ -11,12 +11,12 @@ interface Props {
 }
 
 function getFileIcon(name: string) {
-  if (name.endsWith('.pdf')) return '📄'
-  if (name.endsWith('.md')) return '📝'
-  if (name.match(/\.(png|jpg|jpeg|svg|gif|webp)$/)) return '🖼️'
-  if (name.match(/\.(py|rs|js|ts|tsx|jsx)$/)) return '💻'
-  if (name.endsWith('.json') || name.endsWith('.yaml') || name.endsWith('.yml')) return '⚙️'
-  return '📎'
+  if (name.endsWith('.pdf')) return <FileText className="w-5 h-5 text-wp-accent" />
+  if (name.endsWith('.md')) return <FileEdit className="w-5 h-5 text-wp-accent" />
+  if (name.match(/\.(png|jpg|jpeg|svg|gif|webp)$/)) return <Image className="w-5 h-5 text-wp-accent" />
+  if (name.match(/\.(py|rs|js|ts|tsx|jsx)$/)) return <Code className="w-5 h-5 text-wp-accent" />
+  if (name.endsWith('.json') || name.endsWith('.yaml') || name.endsWith('.yml')) return <Settings className="w-5 h-5 text-wp-accent" />
+  return <Paperclip className="w-5 h-5 text-wp-accent" />
 }
 
 function findFileInTree(tree: FileNode[], targetName: string, parentPath = ''): { path: string; found: boolean } | null {
@@ -110,7 +110,7 @@ export default function ChatFilePreview({
       className="inline-flex items-center gap-3 px-4 py-2.5 rounded-wp-md bg-wp-inset border-2 border-wp-border-mid hover:border-wp-accent hover:bg-wp-accent-subtle transition-all group"
       title={`Click to preview ${fileName}`}
     >
-      <span className="text-2xl">{getFileIcon(fileName)}</span>
+        <div className="w-6 h-6 flex items-center justify-center">{getFileIcon(fileName)}</div>
       <div className="text-left">
         <p className="font-semibold text-wp-text-primary text-sm group-hover:text-wp-accent transition-colors">
           {fileName}

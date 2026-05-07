@@ -71,7 +71,7 @@ export default function SessionSelector({
               <button
                 onClick={onNewSession}
                 disabled={isLoading}
-                className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 group"
+                className="w-full px-4 py-3 bg-wp-accent hover:bg-wp-accent-hover disabled:bg-wp-border-mid text-wp-text-on-accent rounded-wp-lg font-medium transition-colors flex items-center justify-center gap-2 group"
               >
                 <Sparkles className="w-4 h-4" />
                 <span>Start New Session</span>

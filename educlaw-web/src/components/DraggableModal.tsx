@@ -172,13 +172,13 @@ export default function DraggableModal({
 
   return (
     <>
-      {/* Backdrop with low opacity */}
-      <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
+       {/* Backdrop with low opacity */}
+      <div className="fixed inset-0 bg-wp-text-primary/20 z-40" onClick={onClose} />
 
       {/* Draggable Modal */}
-      <div
+       <div
         ref={modalRef}
-        className="fixed bg-wp-surface rounded-wp-lg shadow-2xl flex flex-col border border-wp-border-mid z-50"
+        className="fixed bg-wp-surface rounded-wp-lg flex flex-col border border-wp-border-mid z-50"
         style={{
           left: `${position.x}px`,
           top: `${position.y}px`,
@@ -193,16 +193,16 @@ export default function DraggableModal({
         <div
           ref={headerRef}
           onMouseDown={handleMouseDown}
-          className="shrink-0 flex items-center justify-between px-3 md:px-5 py-3 md:py-4 border-b-2 border-wp-accent/30 bg-gradient-to-r from-wp-accent via-wp-accent to-wp-accent-hover cursor-grab active:cursor-grabbing rounded-t-lg shadow-md"
+          className="shrink-0 flex items-center justify-between px-3 md:px-5 py-3 md:py-4 border-b-2 border-wp-accent/30 bg-gradient-to-r from-wp-accent via-wp-accent to-wp-accent-hover cursor-grab active:cursor-grabbing rounded-t-lg"
         >
           <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
-            <h2 className="text-sm md:text-lg font-bold text-white truncate">{title}</h2>
+            <h2 className="text-sm md:text-lg font-bold text-wp-text-on-accent truncate">{title}</h2>
           </div>
 
           {/* Close Button - Responsive */}
-          <button
+           <button
             onClick={onClose}
-            className="shrink-0 px-3 md:px-5 py-2 md:py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-wp-md shadow-lg hover:shadow-xl transition-all text-xs md:text-base flex items-center gap-1 md:gap-2 border-2 border-red-700 whitespace-nowrap"
+            className="shrink-0 px-3 md:px-5 py-2 md:py-2.5 bg-wp-error hover:bg-wp-error/80 active:bg-wp-error/70 text-wp-text-on-accent font-bold rounded-wp-md transition-all text-xs md:text-base flex items-center gap-1 md:gap-2 border-2 border-wp-error whitespace-nowrap"
             title="Close (Esc)"
           >
             <X className="w-4 h-4 md:w-5 md:h-5" />
@@ -219,7 +219,7 @@ export default function DraggableModal({
         {/* Bottom-right corner */}
         <div
           onMouseDown={e => handleResizeStart(e, 'se')}
-          className="absolute bottom-0 right-0 w-6 h-6 bg-blue-400/0 hover:bg-blue-400/30 cursor-se-resize rounded-tl transition-colors"
+          className="absolute bottom-0 right-0 w-6 h-6 bg-wp-accent/0 hover:bg-wp-accent/30 cursor-se-resize rounded-tl transition-colors"
           style={{ cursor: 'nwse-resize' }}
           title="Drag to resize"
         />
@@ -227,7 +227,7 @@ export default function DraggableModal({
         {/* Bottom edge */}
         <div
           onMouseDown={e => handleResizeStart(e, 's')}
-          className="absolute bottom-0 left-6 right-6 h-1 bg-slate-300/0 hover:bg-slate-400/50 cursor-n-resize transition-colors"
+          className="absolute bottom-0 left-6 right-6 h-1 bg-wp-border-mid/0 hover:bg-wp-border-mid/50 cursor-n-resize transition-colors"
           style={{ cursor: 'ns-resize' }}
           title="Drag to resize height"
         />
@@ -235,13 +235,13 @@ export default function DraggableModal({
         {/* Right edge */}
         <div
           onMouseDown={e => handleResizeStart(e, 'e')}
-          className="absolute top-6 right-0 bottom-6 w-1 bg-slate-300/0 hover:bg-slate-400/50 cursor-e-resize transition-colors"
+          className="absolute top-6 right-0 bottom-6 w-1 bg-wp-border-mid/0 hover:bg-wp-border-mid/50 cursor-e-resize transition-colors"
           style={{ cursor: 'ew-resize' }}
           title="Drag to resize width"
         />
 
         {/* Corner indicator */}
-        <div className="absolute bottom-1 right-1 text-slate-400 text-xs pointer-events-none select-none">
+        <div className="absolute bottom-1 right-1 text-wp-text-tertiary text-xs pointer-events-none select-none">
           {size.width} × {size.height}
         </div>
       </div>

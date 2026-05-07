@@ -1,79 +1,216 @@
 @import "tailwindcss";
 
-/* ══════════════════════════════════════════════════════════════════ */
+/* ═════════════════════════════════════════════════════════════════ */
+/*  Tailwind v4 Theme Configuration                                 */
+/* ═════════════════════════════════════════════════════════════════ */
+@theme {
+    /* Warm Parchment Color Palette */
+    --color-wp-page: #fffdf6;
+    --color-wp-surface: #fff8ee;
+    --color-wp-surface-alt: #fff3e0;
+    --color-wp-inset: #fdebd0;
+
+    --color-wp-accent: #d97c2a;
+    --color-wp-accent-hover: #c06a1a;
+    --color-wp-accent-subtle: #fde8c8;
+    --color-wp-accent-muted: #f0c88a;
+
+    --color-wp-text-primary: #3d1f00;
+    --color-wp-text-secondary: #7a4a18;
+    --color-wp-text-tertiary: #b07840;
+    --color-wp-text-on-accent: #fff8ee;
+
+    --color-wp-border-hard: #d97c2a;
+    --color-wp-border-mid: #e8b87a;
+    --color-wp-border-soft: #f0d4a8;
+    --color-wp-border-ghost: #faf0dc;
+
+    --color-wp-success: #4a7c59;
+    --color-wp-success-bg: #eaf4ee;
+    --color-wp-warning: #c47a00;
+    --color-wp-warning-bg: #fef6dc;
+    --color-wp-error: #b94040;
+    --color-wp-error-bg: #fceaea;
+    --color-wp-info: #3a6fa8;
+    --color-wp-info-bg: #eaf1fb;
+
+    /* Border Radius */
+    --radius-wp-sm: 6px;
+    --radius-wp-md: 10px;
+    --radius-wp-lg: 14px;
+    --radius-wp-xl: 20px;
+
+    /* Spacing */
+    --spacing-wp-xs: 4px;
+    --spacing-wp-sm: 8px;
+    --spacing-wp-md: 12px;
+    --spacing-wp-lg: 16px;
+    --spacing-wp-xl: 24px;
+    --spacing-wp-2xl: 32px;
+    --spacing-wp-3xl: 48px;
+
+    /* Box Shadows (Edge Borders) */
+    --shadow-wp-edge:
+        inset 1px 0 0 0 #e8b87a, inset -1px 0 0 0 #e8b87a,
+        inset 0 1px 0 0 #d97c2a, inset 0 -1px 0 0 #e8b87a;
+    --shadow-wp-edge-focus:
+        inset 1px 0 0 0 #d97c2a, inset -1px 0 0 0 #d97c2a,
+        inset 0 1px 0 0 #d97c2a, inset 0 -1px 0 0 #d97c2a,
+        0 0 0 3px rgba(217, 124, 42, 0.18);
+    --shadow-wp-edge-top: inset 0 1px 0 0 #d97c2a;
+    --shadow-wp-card:
+        inset 1px 0 0 0 #e8b87a, inset -1px 0 0 0 #e8b87a,
+        inset 0 1px 0 0 #d97c2a, inset 0 -1px 0 0 #e8b87a;
+
+    /* Font Families */
+    /* Original fonts (kept for reference) */
+    /*
+    --font-family-sans: "Inter", "Geist", system-ui, sans-serif;
+    --font-family-mono: "JetBrains Mono", "Fira Code", monospace;
+    */
+
+    /* New cool fonts from skills/.github */
+    --font-family-sans: "Inter", "Geist", system-ui, sans-serif;  /* Body text */
+    --font-family-mono: "JetBrains Mono", "Fira Code", monospace;  /* Code/monospace */
+    --font-family-serif: "Georgia", "Playfair Display", serif;  /* Editorial/serif - from design-brief skill */
+    --font-family-display: "Space Grotesk", "Inter", sans-serif;  /* Display headings - from design-brief skill */
+    --font-family-heading: "DM Sans", "Inter", sans-serif;  /* Alternative heading - from design-brief skill */
+}
+
+/* ═════════════════════════════════════════════════════════════════ */
 /*  Global Styles — NO color duplication (use Tailwind classes)      */
-/* ══════════════════════════════════════════════════════════════════ */
+/* ═════════════════════════════════════════════════════════════════ */
+
+:root {
+    /* Warm Parchment Theme — Core Colors */
+    --wp-bg-page: #fffdf6;
+    --wp-bg-surface: #fff8ee;
+    --wp-bg-surface-alt: #fff3e0;
+    --wp-bg-inset: #fdebd0;
+
+    --wp-accent: #d97c2a;
+    --wp-accent-hover: #c06a1a;
+    --wp-accent-subtle: #fde8c8;
+    --wp-accent-muted: #f0c88a;
+
+    --wp-text-primary: #3d1f00;
+    --wp-text-secondary: #7a4a18;
+    --wp-text-tertiary: #b07840;
+    --wp-text-on-accent: #fff8ee;
+
+    --wp-border-hard: #d97c2a;
+    --wp-border-mid: #e8b87a;
+    --wp-border-soft: #f0d4a8;
+    --wp-border-ghost: #faf0dc;
+
+    --wp-radius-sm: 6px;
+    --wp-radius-md: 10px;
+    --wp-radius-lg: 14px;
+    --wp-radius-xl: 20px;
+
+    --wp-edge-all:
+        inset 1px 0 0 0 #e8b87a, inset -1px 0 0 0 #e8b87a,
+        inset 0 1px 0 0 #d97c2a, inset 0 -1px 0 0 #e8b87a;
+
+    --wp-edge-focus:
+        inset 1px 0 0 0 #d97c2a, inset -1px 0 0 0 #d97c2a,
+        inset 0 1px 0 0 #d97c2a, inset 0 -1px 0 0 #d97c2a,
+        0 0 0 3px rgba(217, 124, 42, 0.18);
+
+    --wp-edge-top: inset 0 1px 0 0 #d97c2a;
+    --wp-edge-left: inset 1px 0 0 0 #d97c2a;
+
+    /* Semantic colors */
+    --wp-success: #4a7c59;
+    --wp-success-bg: #eaf4ee;
+    --wp-warning: #c47a00;
+    --wp-warning-bg: #fef6dc;
+    --wp-error: #b94040;
+    --wp-error-bg: #fceaea;
+    --wp-info: #3a6fa8;
+    --wp-info-bg: #eaf1fb;
+}
 
 @layer base {
-  html, body {
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    background: var(--wp-bg-page);
-    color: var(--wp-text-primary);
-    font-family: 'Inter', 'Geist', system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
+    html,
+    body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: var(--wp-bg-page);
+        color: var(--wp-text-primary);
+        font-family: "Inter", "Geist", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
 
-  #root {
-    width: 100%;
-    height: 100%;
-  }
+    #root {
+        width: 100%;
+        height: 100%;
+    }
 
-  /* Typography defaults */
-  h1, h2, h3, h4, h5, h6 {
-    color: var(--wp-text-primary);
-    font-weight: 600;
-    line-height: 1.3;
-  }
+    /* Typography defaults */
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        color: var(--wp-text-primary);
+        font-weight: 600;
+        line-height: 1.3;
+        font-family: var(--font-family-display); /* Space Grotesk from skills */
+    }
 
-  a {
-    color: var(--wp-accent);
-    text-decoration: underline;
-    transition: color 0.2s ease;
-  }
+    a {
+        color: var(--wp-accent);
+        text-decoration: underline;
+        transition: color 0.2s ease;
+    }
 
-  a:hover {
-    color: var(--wp-accent-hover);
-  }
+    a:hover {
+        color: var(--wp-accent-hover);
+    }
 
-  /* Input & textarea focus state */
-  input:focus, textarea:focus, select:focus {
-    outline: none;
-    border-color: var(--wp-accent);
-    box-shadow: inset 1px 0 0 0 var(--wp-accent), 
-                inset -1px 0 0 0 var(--wp-accent), 
-                inset 0 1px 0 0 var(--wp-accent), 
-                inset 0 -1px 0 0 var(--wp-accent), 
-                0 0 0 3px rgba(217, 124, 42, 0.18);
-  }
+    /* Input & textarea focus state */
+    input:focus,
+    textarea:focus,
+    select:focus {
+        outline: none;
+        border-color: var(--wp-accent);
+        box-shadow:
+            inset 1px 0 0 0 var(--wp-accent),
+            inset -1px 0 0 0 var(--wp-accent),
+            inset 0 1px 0 0 var(--wp-accent),
+            inset 0 -1px 0 0 var(--wp-accent),
+            0 0 0 3px rgba(217, 124, 42, 0.18);
+    }
 
-  /* Scrollbar styling */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
 
-  ::-webkit-scrollbar-track {
-    background: var(--wp-bg-surface-alt);
-  }
+    ::-webkit-scrollbar-track {
+        background: var(--wp-bg-surface-alt);
+    }
 
-  ::-webkit-scrollbar-thumb {
-    background: var(--wp-border-mid);
-    border-radius: 9999px;
-    transition: background 0.2s ease;
-  }
+    ::-webkit-scrollbar-thumb {
+        background: var(--wp-border-mid);
+        border-radius: 9999px;
+        transition: background 0.2s ease;
+    }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--wp-accent);
-  }
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--wp-accent);
+    }
 
-  /* Selection styling */
-  ::selection {
-    background-color: var(--wp-accent-subtle);
-    color: var(--wp-text-primary);
-  }
+    /* Selection styling */
+    ::selection {
+        background-color: var(--wp-accent-subtle);
+        color: var(--wp-text-primary);
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════ */
@@ -81,14 +218,14 @@
 /* ══════════════════════════════════════════════════════════════════ */
 
 .xterm-container {
-  width: 100%;
-  height: 100%;
+    width: 100%;
+    height: 100%;
 }
 
 .xterm-container .xterm {
-  height: 100%;
-  background: var(--wp-bg-inset);
-  color: var(--wp-text-primary);
+    height: 100%;
+    background: var(--wp-bg-inset);
+    color: var(--wp-text-primary);
 }
 
 /* ══════════════════════════════════════════════════════════════════ */
@@ -96,22 +233,24 @@
 /* ══════════════════════════════════════════════════════════════════ */
 
 @media (max-width: 768px) {
-  .hide-md {
-    display: none;
-  }
+    .hide-md {
+        display: none;
+    }
 }
 
 @media (max-width: 640px) {
-  .hide-sm {
-    display: none;
-  }
+    .hide-sm {
+        display: none;
+    }
 }
 
 /* Ensure full height on all devices */
 @supports (height: 100dvh) {
-  html, body, #root {
-    height: 100dvh;
-  }
+    html,
+    body,
+    #root {
+        height: 100dvh;
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════ */
@@ -119,44 +258,43 @@
 /* ══════════════════════════════════════════════════════════════════ */
 
 .markdown-body input[type="checkbox"] {
-  margin: 0 0.5em 0 0;
-  vertical-align: middle;
+    margin: 0 0.5em 0 0;
+    vertical-align: middle;
 }
 
 /* Style for task list items */
 li.task-list-item,
 li:has(> input[type="checkbox"]) {
-  list-style-type: none;
-  margin-left: 0;
-  padding-left: 0;
+    list-style-type: none;
+    margin-left: 0;
+    padding-left: 0;
 }
 
 /* Nested task lists */
 ul.contains-task-list,
 ul:has(> li > input[type="checkbox"]) {
-  list-style-type: none;
-  padding-left: 1.5em;
+    list-style-type: none;
+    padding-left: 1.5em;
 }
 
 /* Code blocks inside markdown */
 .markdown-body pre {
-  background: var(--wp-bg-inset);
-  border: 1px solid var(--wp-border-mid);
-  border-radius: 0.5rem;
-  padding: 1rem;
-  overflow-x: auto;
+    background: var(--wp-bg-inset);
+    border: 1px solid var(--wp-border-mid);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    overflow-x: auto;
 }
 
 .markdown-body code {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.9em;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 0.9em;
 }
 
 /* Inline code */
 .markdown-body :not(pre) > code {
-  background: var(--wp-bg-inset);
-  padding: 0.2em 0.4em;
-  border-radius: 0.25rem;
-  border: 1px solid var(--wp-border-soft);
+    background: var(--wp-bg-inset);
+    padding: 0.2em 0.4em;
+    border-radius: 0.25rem;
+    border: 1px solid var(--wp-border-soft);
 }
-

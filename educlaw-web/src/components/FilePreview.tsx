@@ -30,7 +30,7 @@ const mdCode = ({ className, children, ...props }: React.ComponentPropsWithoutRe
       </SyntaxHighlighter>
     )
   }
-  return <code className={`bg-slate-100 text-slate-900 px-2 py-1 rounded text-sm font-mono`} {...props}>{children}</code>
+  return <code className={`bg-wp-inset text-wp-text-primary px-2 py-1 rounded text-sm font-mono`} {...props}>{children}</code>
 }
 
 export default function FilePreview({ fileName, filePath, sessionId, token, isSubjectFile, subjectId }: Props) {
@@ -94,14 +94,14 @@ export default function FilePreview({ fileName, filePath, sessionId, token, isSu
   const fileType = fileTypeRef.current
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-wp-surface">
       {/* Content - No header since DraggableModal provides it */}
-      <div className="flex-1 overflow-auto bg-white">
+      <div className="flex-1 overflow-auto bg-wp-surface">
         {loading && (
-          <div className="flex items-center justify-center h-full text-slate-500">
+          <div className="flex items-center justify-center h-full text-wp-text-tertiary">
             <div className="text-center">
               <p className="mb-2">Loading file...</p>
-              <div className="w-8 h-8 border-4 border-slate-200 border-t-violet-500 rounded-full animate-spin mx-auto" />
+              <div className="w-8 h-8 border-4 border-wp-border-mid border-t-wp-accent rounded-full animate-spin mx-auto" />
             </div>
           </div>
         )}
@@ -109,15 +109,15 @@ export default function FilePreview({ fileName, filePath, sessionId, token, isSu
         {error && (
           <div className="flex items-center justify-center h-full">
             <div className="max-w-md text-center px-4">
-              <p className="text-red-600 font-semibold mb-2">Failed to load file</p>
-              <p className="text-sm text-slate-600">{error}</p>
+              <p className="text-wp-error font-semibold mb-2">Failed to load file</p>
+              <p className="text-sm text-wp-text-secondary">{error}</p>
             </div>
           </div>
         )}
 
         {!loading && !error && imageUrl && (
-          <div className="flex items-center justify-center h-full p-4 bg-slate-50">
-            <img src={imageUrl} alt={fileName} className="max-w-full max-h-full rounded-lg shadow-sm object-contain" />
+          <div className="flex items-center justify-center h-full p-4 bg-wp-surface-alt">
+            <img src={imageUrl} alt={fileName} className="max-w-full max-h-full rounded-wp-lg object-contain" />
           </div>
         )}
 
@@ -133,7 +133,7 @@ export default function FilePreview({ fileName, filePath, sessionId, token, isSu
         )}
 
         {!loading && !error && fileType === 'markdown' && content && (
-          <div className="prose prose-sm max-w-none px-4 py-3 prose-headings:text-slate-900 prose-headings:font-bold prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-p:text-slate-700 prose-p:mb-2 prose-ul:text-slate-700 prose-ol:text-slate-700 prose-li:mb-1 prose-code:text-violet-700 prose-code:bg-violet-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-a:text-violet-600 prose-a:underline prose-blockquote:border-l-violet-300 prose-blockquote:bg-violet-50 prose-blockquote:px-3 prose-blockquote:py-2 prose-blockquote:rounded-r prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:p-3 prose-table:border-collapse prose-td:border prose-td:border-slate-300 prose-td:px-3 prose-td:py-2 prose-th:border prose-th:border-slate-300 prose-th:px-3 prose-th:py-2 prose-th:bg-slate-100 prose-th:font-semibold">
+          <div className="prose prose-sm max-w-none px-4 py-3 prose-headings:text-wp-text-primary prose-headings:font-bold prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-p:text-wp-text-secondary prose-p:mb-2 prose-ul:text-wp-text-secondary prose-ol:text-wp-text-secondary prose-li:mb-1 prose-code:text-wp-accent prose-code:bg-wp-accent-subtle prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-a:text-wp-accent prose-a:underline prose-blockquote:border-l-wp-accent prose-blockquote:bg-wp-accent-subtle prose-blockquote:px-3 prose-blockquote:py-2 prose-blockquote:rounded-r prose-pre:bg-wp-inset prose-pre:text-wp-text-primary prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:p-3 prose-table:border-collapse prose-td:border prose-td:border-wp-border-mid prose-td:px-3 prose-td:py-2 prose-th:border prose-th:border-wp-border-mid prose-th:px-3 prose-th:py-2 prose-th:bg-wp-surface-alt prose-th:font-semibold">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: mdCode }}>
               {content}
             </ReactMarkdown>
@@ -155,7 +155,7 @@ export default function FilePreview({ fileName, filePath, sessionId, token, isSu
         )}
 
         {!loading && !error && (fileType === 'text' || fileType === 'unknown') && content && (
-          <pre className="p-4 text-xs text-slate-700 font-mono whitespace-pre-wrap break-words bg-slate-50 border-l-4 border-slate-300">
+          <pre className="p-4 text-xs text-wp-text-secondary font-mono whitespace-pre-wrap break-words bg-wp-surface-alt border-l-4 border-wp-border-mid">
             {content}
           </pre>
         )}
@@ -163,7 +163,7 @@ export default function FilePreview({ fileName, filePath, sessionId, token, isSu
 
       {/* Info footer */}
       {!loading && content && (
-        <div className="shrink-0 px-4 py-2 border-t border-slate-200 bg-slate-50 text-xs text-slate-600 flex justify-between">
+        <div className="shrink-0 px-4 py-2 border-t border-wp-border-mid bg-wp-surface-alt text-xs text-wp-text-secondary flex justify-between">
           <span>{fileType === 'unknown' ? 'Unknown file type' : `${fileType.charAt(0).toUpperCase() + fileType.slice(1)} file`}</span>
           <span>{content.length.toLocaleString()} bytes</span>
         </div>

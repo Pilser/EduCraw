@@ -73,11 +73,11 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
       case 'uploading':
         return <div className="w-4 h-4 border-2 border-wp-accent border-t-transparent rounded-full animate-spin" />
       case 'success':
-        return <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+        return <CheckCircle2 className="w-4 h-4 text-wp-success" />
       case 'error':
         return <AlertCircle className="w-4 h-4 text-wp-error" />
       default:
-        return <Check className="w-4 h-4 text-emerald-500" />
+        return <Check className="w-4 h-4 text-wp-success" />
     }
   }
 
@@ -89,6 +89,8 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
   }
 
+  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+
   const handleFileInputChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || [])
@@ -99,6 +101,21 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
 
       for (const file of files) {
         try {
+          // Check file size
+          if (file.size > MAX_FILE_SIZE) {
+            const errorFile: AttachedFile = {
+              name: file.name,
+              file,
+              dataUrl: '',
+              mimeType: file.type,
+              fileType: 'other',
+              uploadStatus: 'error',
+              uploadError: 'File exceeds 10MB limit'
+            }
+            otherFilesList.push(errorFile)
+            continue
+          }
+
           // Only encode images to base64; other files are handled separately
           let dataUrl = ''
           if (isImageFile(file.type)) {
@@ -240,7 +257,7 @@ const FileInputAttachment = forwardRef<FileInputAttachmentHandle, Props>(
               </p>
             </div>
             <div className="shrink-0 flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-500" />
+              <Check className="w-4 h-4 text-wp-success" />
             </div>
             <button
               onClick={handleClearImage}

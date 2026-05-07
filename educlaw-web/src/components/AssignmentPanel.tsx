@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { CheckCircle, XCircle, Circle } from 'lucide-react'
 import { api } from '../api/client'
 import type { AssignmentProgress } from '../api/types'
 
@@ -10,9 +11,9 @@ interface Props {
 function ProgressBar({ value, max }: { value: number; max: number }) {
   const pct = max === 0 ? 0 : Math.round((value / max) * 100)
   return (
-    <div className="w-full bg-slate-200 rounded-full h-2">
+    <div className="w-full bg-wp-border-mid rounded-full h-2">
       <div
-        className="bg-blue-500 h-2 rounded-full transition-all"
+        className="bg-wp-accent h-2 rounded-full transition-all"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -37,11 +38,11 @@ export default function AssignmentPanel({ sessionId, token }: Props) {
   }, [sessionId, token])
 
   if (loading) return (
-    <div className="p-4 text-xs text-slate-400 text-center">Loading progress…</div>
+    <div className="p-4 text-xs text-wp-text-tertiary text-center">Loading progress…</div>
   )
 
   if (!progress) return (
-    <div className="p-4 text-xs text-slate-400 text-center">No active assignment</div>
+    <div className="p-4 text-xs text-wp-text-tertiary text-center">No active assignment</div>
   )
 
   const pct = progress.max_score === 0
@@ -52,17 +53,17 @@ export default function AssignmentPanel({ sessionId, token }: Props) {
     <div className="p-4 flex flex-col gap-4">
       {/* Header */}
       <div>
-        <h3 className="font-semibold text-slate-800 text-sm truncate">{progress.title}</h3>
-        <p className="text-xs text-slate-500 mt-0.5">
+        <h3 className="font-semibold text-wp-text-primary text-sm truncate">{progress.title}</h3>
+        <p className="text-xs text-wp-text-tertiary mt-0.5">
           {progress.submitted
-            ? '✅ Submitted'
+            ? <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-wp-success" /> Submitted</span>
             : `${progress.questions.filter(q => q.answered).length} / ${progress.questions.length} questions answered`}
         </p>
       </div>
 
       {/* Score bar */}
       <div>
-        <div className="flex justify-between text-xs text-slate-600 mb-1">
+        <div className="flex justify-between text-xs text-wp-text-secondary mb-1">
           <span>Score</span>
           <span className="font-medium">{progress.total_score} / {progress.max_score} pts ({pct}%)</span>
         </div>
@@ -74,11 +75,11 @@ export default function AssignmentPanel({ sessionId, token }: Props) {
         {progress.questions.map(q => (
           <div key={q.question_id} className="flex items-start gap-2">
             <span className="mt-0.5 text-sm shrink-0">
-              {!q.answered ? '○' : q.correct ? '✅' : '❌'}
+              {!q.answered ? <Circle className="w-4 h-4 text-wp-text-tertiary" /> : q.correct ? <CheckCircle className="w-4 h-4 text-wp-success" /> : <XCircle className="w-4 h-4 text-wp-error" />}
             </span>
             <div className="min-w-0">
-              <p className="text-xs text-slate-700 truncate">{q.prompt}</p>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-wp-text-primary truncate">{q.prompt}</p>
+              <p className="text-xs text-wp-text-tertiary">
                 {q.answered
                   ? `${q.score}/${q.max_points} pts · ${q.attempts} attempt${q.attempts !== 1 ? 's' : ''}`
                   : 'Not answered'}
