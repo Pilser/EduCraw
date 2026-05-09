@@ -10,6 +10,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  Download,
+  Upload,
 } from "lucide-react";
 import TutorTerminal from "../components/TutorTerminal";
 import FileTree from "../components/FileTree";
@@ -604,6 +606,20 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setIsLoadingSession(false);
   }, []);
 
+  const handleExportSessionResult = useCallback((data: string) => {
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `session-${session.session_id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [session.session_id]);
+
+  const handleImportSessionResult = useCallback((result: { session_id: string; title?: string; updated_at?: string; message_count: number }) => {
+    console.log('Imported session:', result.session_id, 'with', result.message_count, 'messages');
+  }, []);
+
   // Safety net: if replay takes too long, exit loading mode
   useEffect(() => {
     if (!isLoadingSession) return;
@@ -630,6 +646,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     sendListSessions,
     sendLoadSession,
     sendForkSession,
+    sendExportSession,
+    sendImportSession,
   } = useWebSocket({
     sessionId: session.session_id,
     token: session.token,
@@ -649,6 +667,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     onSessionsListReceived: handleSessionsListReceived,
     onForkSessionComplete: handleForkSessionComplete,
     onLoadSessionComplete: handleLoadSessionComplete,
+    onExportSessionResult: handleExportSessionResult,
+    onImportSessionResult: handleImportSessionResult,
   });
 
   // Auto-load the last session on first connection
@@ -958,6 +978,36 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         >
           <span className="hidden sm:inline">End session</span>
           <span className="sm:hidden">End</span>
+        </button>
+
+        {/* Export session */}
+        <button
+          onClick={() => sendExportSession(session.session_id)}
+          title="Export session as JSON"
+          className="p-1.5 md:p-2 rounded-wp-md text-wp-text-secondary hover:text-wp-accent hover:bg-wp-accent/10 transition-all"
+        >
+          <Download className="w-5 h-5" />
+        </button>
+
+        {/* Import session */}
+        <button
+          onClick={() => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+              const file = (e.target as HTMLInputElement).files?.[0];
+              if (file) {
+                const text = await file.text();
+                sendImportSession(text);
+              }
+            };
+            input.click();
+          }}
+          title="Import session from JSON"
+          className="p-1.5 md:p-2 rounded-wp-md text-wp-text-secondary hover:text-wp-accent hover:bg-wp-accent/10 transition-all"
+        >
+          <Upload className="w-5 h-5" />
         </button>
       </header>
 

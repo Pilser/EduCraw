@@ -22,12 +22,14 @@ interface Options {
   onSessionsListReceived?: (sessions: any[]) => void
   onForkSessionComplete?: (newSessionId: string) => void
   onLoadSessionComplete?: (threadId: string) => void
+  onExportSessionResult?: (data: string) => void
+  onImportSessionResult?: (result: { session_id: string; title?: string; updated_at?: string; message_count: number }) => void
 }
 
 export function useWebSocket({
   sessionId, token, onPtyData, onImage,
   onChatStart, onUserText, onToolStart, onToolEnd, onAssistantText, onChatEnd,
-  onTokenUsage, onTokenUsageUpdate, onTokenLimitReached, onModelChanged, onModelsReceived, onSessionsListReceived, onForkSessionComplete, onLoadSessionComplete,
+  onTokenUsage, onTokenUsageUpdate, onTokenLimitReached, onModelChanged, onModelsReceived, onSessionsListReceived, onForkSessionComplete, onLoadSessionComplete, onExportSessionResult, onImportSessionResult,
 }: Options) {
   const [status, setStatus] = useState<WsStatus>('connecting')
   const wsRef = useRef<WebSocket | null>(null)
@@ -89,6 +91,14 @@ export function useWebSocket({
     send({ type: 'list_sessions' })
   }, [send])
 
+  const sendExportSession = useCallback((sessionId: string) => {
+    send({ type: 'export_session', session_id: sessionId })
+  }, [send])
+
+  const sendImportSession = useCallback((data: string) => {
+    send({ type: 'import_session', data })
+  }, [send])
+
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${proto}//${location.host}/sessions/${sessionId}/ws?token=${encodeURIComponent(token)}`
@@ -102,7 +112,7 @@ export function useWebSocket({
       onPtyData, onImage, onChatStart, onUserText, onToolStart, onToolEnd,
       onAssistantText, onChatEnd, onTokenUsage, onTokenUsageUpdate, onTokenLimitReached,
       onModelChanged, onModelsReceived, onSessionsListReceived,
-      onForkSessionComplete, onLoadSessionComplete
+onForkSessionComplete, onLoadSessionComplete, onExportSessionResult, onImportSessionResult
     }
 
     ws.onopen = () => {
@@ -213,6 +223,17 @@ export function useWebSocket({
               }
               break
             }
+            case 'export_session_result':
+              callbacksRef.onExportSessionResult?.((frame as any).data)
+              break
+            case 'import_session_result':
+              callbacksRef.onImportSessionResult?.({
+                session_id: (frame as any).session_id,
+                title: (frame as any).title,
+                updated_at: (frame as any).updated_at,
+                message_count: (frame as any).message_count,
+              })
+              break
             default:
               break
           }
@@ -261,5 +282,5 @@ export function useWebSocket({
     reconnectAttemptsRef.current = 0
   }, [sessionId, token])
 
-  return { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels, sendListSessions, sendLoadSession, sendForkSession }
+  return { status, sendInput, sendInputWithImage, sendResize, sendCancel, sendGetModels, sendListSessions, sendLoadSession, sendForkSession, sendExportSession, sendImportSession }
 }
