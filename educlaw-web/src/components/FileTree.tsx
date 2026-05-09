@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight, Folder, FileText, File, FileJson, FileCode, Image, FileStack, Upload, AlertCircle } from 'lucide-react'
-import { api } from '../api/client'
+import { useState, useRef } from 'react'
+import { ChevronDown, ChevronRight, Folder, FileText, File, FileJson, FileCode, Image, FileStack, Upload, AlertCircle, Paperclip } from 'lucide-react'
+import { useStudentFileTree, useSubjectFileTree, useUploadStudentFile, useDeleteStudentFile } from '../hooks/useFileSystem'
 import type { FileNode } from '../api/types'
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   /** All subject slugs for the student's cohort */
   subjectIds: string[]
   onFileSelect: (path: string, name: string, tab: 'subject' | 'mine', subjectId?: string) => void
+  onAttachToChat?: (path: string, name: string, isSubject: boolean, subjectId?: string) => void
 }
 
 type Tab = 'subject' | 'mine'
@@ -19,15 +20,44 @@ function FileRow({
   onSelect,
   tab,
   subjectId,
+  onAttachToChat,
+  sessionId,
+  token,
 }: {
   node: FileNode
   depth: number
   onSelect: (path: string, name: string, tab: 'subject' | 'mine', subjectId?: string) => void
   tab: 'subject' | 'mine'
   subjectId?: string
+  onAttachToChat?: (path: string, name: string, isSubject: boolean, subjectId?: string) => void
+  sessionId?: string
+  token?: string
 }) {
   const [open, setOpen] = useState(depth === 0)
   const pad = depth * 12
+  const deleteMutation = useDeleteStudentFile(sessionId || '', token || '')
+
+  const handleAttach = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onAttachToChat?.(node.path, node.name, tab === 'subject', subjectId)
+  }
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (confirm(`Delete ${node.name}?`)) {
+      deleteMutation.mutate({ path: node.path })
+    }
+  }
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('application/educlaw-file', JSON.stringify({
+      path: node.path,
+      name: node.name,
+      isSubject: tab === 'subject',
+      subjectId,
+    }))
+    e.dataTransfer.effectAllowed = 'copy'
+  }
 
   if (node.kind === 'dir') {
     return (
@@ -42,7 +72,7 @@ function FileRow({
           <span className="truncate">{node.name}</span>
         </button>
         {open && node.children?.map(child => (
-          <FileRow key={child.path} node={child} depth={depth + 1} onSelect={onSelect} tab={tab} subjectId={subjectId} />
+          <FileRow key={child.path} node={child} depth={depth + 1} onSelect={onSelect} tab={tab} subjectId={subjectId} onAttachToChat={onAttachToChat} sessionId={sessionId} token={token} />
         ))}
       </div>
     )
@@ -59,76 +89,57 @@ function FileRow({
   }
 
   return (
-    <button
-      className="flex items-center gap-1 md:gap-1.5 w-full px-1.5 md:px-2 py-1 md:py-1.5 text-xs md:text-sm text-wp-text-primary hover:bg-wp-accent-subtle hover:text-wp-accent rounded text-left transition-colors"
+    <div className="group flex items-center gap-1 md:gap-1.5 w-full px-1.5 md:px-2 py-1 md:py-1.5 text-xs md:text-sm text-wp-text-primary hover:bg-wp-accent-subtle hover:text-wp-accent rounded transition-colors cursor-pointer"
       style={{ paddingLeft: pad + 4 }}
       onClick={() => onSelect(node.path, node.name, tab, tab === 'subject' ? subjectId : undefined)}
+      draggable
+      onDragStart={handleDragStart}
     >
       {getFileIcon()}
-      <span className="truncate font-medium text-xs md:text-sm">{node.name}</span>
+      <span className="truncate font-medium text-xs md:text-sm flex-1">{node.name}</span>
       {node.size !== undefined && (
-          <span className="ml-auto text-[10px] md:text-xs text-wp-text-tertiary shrink-0">
+        <span className="text-[10px] md:text-xs text-wp-text-tertiary shrink-0">
           {node.size < 1024 ? `${node.size}B` : `${(node.size / 1024).toFixed(1)}K`}
         </span>
       )}
-    </button>
+      {/* Attach to Chat button - visible on hover */}
+      <button
+        onClick={handleAttach}
+        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-wp-accent/20 rounded transition-opacity shrink-0"
+        title="Attach to chat"
+      >
+        <Paperclip className="w-3 h-3 text-wp-accent" />
+      </button>
+      {/* Delete button - only for student files */}
+      {tab === 'mine' && (
+        <button
+          onClick={handleDelete}
+          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-wp-error/20 rounded transition-opacity shrink-0"
+          title="Delete file"
+        >
+          <AlertCircle className="w-3 h-3 text-wp-error" />
+        </button>
+      )}
+    </div>
   )
 }
 
-export default function FileTree({ token, sessionId, subjectIds, onFileSelect }: Props) {
-  const [tab, setTab]       = useState<Tab>('mine')
-  const [files, setFiles]   = useState<FileNode[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError]   = useState('')
+export default function FileTree({ token, sessionId, subjectIds, onFileSelect, onAttachToChat }: Props) {
+  const [tab, setTab] = useState<Tab>('mine')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    const fetchFiles = () => {
-      setError('')
-      setLoading(true)
+  const studentQuery = useStudentFileTree(sessionId, token)
+  const subjectQuery = useSubjectFileTree(subjectIds, token)
+  const uploadMutation = useUploadStudentFile(sessionId, token)
 
-      if (tab === 'subject') {
-        // Fetch each subject in parallel, then wrap each result as a
-        // top-level folder node named after the subject slug.
-        if (subjectIds.length === 0) {
-          setFiles([])
-          setLoading(false)
-          return
-        }
-        Promise.all(
-          subjectIds.map(slug =>
-            api.listSubjectFiles(slug, token).then(children => ({
-              name: slug,
-              path: slug,
-              kind: 'dir' as const,
-              children,
-            } satisfies FileNode))
-          )
-        )
-          .then(setFiles)
-          .catch(e => setError(e instanceof Error ? e.message : 'Failed to load subjects'))
-          .finally(() => setLoading(false))
-      } else {
-        // My Files — student's persistent upper layer (hidden dirs already excluded server-side)
-        api.listStudentFiles(sessionId, token)
-          .then(setFiles)
-          .catch(e => setError(e instanceof Error ? e.message : 'Failed to load files'))
-          .finally(() => setLoading(false))
-      }
-    }
-
-    fetchFiles()
-
-    // Auto-refresh files every 5 seconds to detect new files created by the backend
-    const interval = setInterval(fetchFiles, 5000)
-
-    return () => clearInterval(interval)
-  }, [tab, token, subjectIds, sessionId])
+  const files = tab === 'subject' ? subjectQuery.data || [] : studentQuery.data || []
+  const isLoading = tab === 'subject' ? subjectQuery.isLoading : studentQuery.isLoading
+  const error = tab === 'subject' ? subjectQuery.error : studentQuery.error
 
   // Handle file upload directly to workspace
-  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+  const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.currentTarget.files
     if (!files || files.length === 0) return
@@ -140,37 +151,17 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
 
-        // Check file size
         if (file.size > MAX_FILE_SIZE) {
-          setUploadError(`File "${file.name}" exceeds 10MB limit`)
+          setUploadError(`File "${file.name}" exceeds 50MB limit`)
           continue
         }
-        
-        // Read file content - use text with latin1 encoding to preserve binary
-        const content = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
-          reader.readAsText(file, 'latin1')
-        })
 
-        // Upload to workspace under /uploads directory
+        const content = await file.arrayBuffer()
         const relativePath = `uploads/${file.name}`
-        await api.uploadStudentFile(sessionId, relativePath, content, token)
+        await uploadMutation.mutateAsync({ path: relativePath, content })
       }
 
-      // Reset input and refresh file list
       if (fileInputRef.current) fileInputRef.current.value = ''
-      
-      // Trigger immediate refresh
-      setTimeout(() => {
-        setTab('mine')
-        setLoading(true)
-        api.listStudentFiles(sessionId, token)
-          .then(setFiles)
-          .catch(e => setError(e instanceof Error ? e.message : 'Failed to load files'))
-          .finally(() => setLoading(false))
-      }, 100)
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -181,8 +172,7 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
   return (
     <div className="flex flex-col h-full">
       {/* Tabs */}
-      {/* Tabs - Make prominent with better styling */}
-       <div className="border-b-2 border-wp-border-mid shrink-0 bg-wp-surface-alt">
+      <div className="border-b-2 border-wp-border-mid shrink-0 bg-wp-surface-alt">
         {(['subject', 'mine'] as Tab[]).map(t => (
           <button
             key={t}
@@ -240,7 +230,7 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
 
       {/* File list */}
       <div className="flex-1 overflow-y-auto py-1 md:py-2 px-0.5 md:px-1">
-        {loading && (
+        {isLoading && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-5 h-5 border-2 border-wp-border-mid border-t-wp-accent rounded-full animate-spin mx-auto mb-2" />
@@ -251,11 +241,11 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
         {error && (
           <div className="bg-wp-error-bg border border-wp-error rounded-wp-sm p-2 md:p-3 text-[10px] md:text-xs text-wp-error">
             <p className="font-semibold mb-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Error loading files</p>
-            <p>{error}</p>
+            <p>{String(error)}</p>
           </div>
         )}
-        {!loading && !error && files.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center text-wp-text-tertiary p-2 md:p-4">
+        {!isLoading && !error && files.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center text-wp-text-tertiary p-2 md:p-4">
             <Folder className="w-8 h-8 md:w-12 md:h-12 mb-2 opacity-30" />
             <p className="text-xs md:text-sm font-medium">No files yet</p>
             <p className="text-[10px] md:text-xs mt-1">Files you create or upload will appear here</p>
@@ -264,10 +254,19 @@ export default function FileTree({ token, sessionId, subjectIds, onFileSelect }:
         {files.length > 0 && (
           <div className="space-y-0.5">
             {files.map(node => {
-              // For subject tab, extract subject ID from the root node (which is named after the subject slug)
               const subId = tab === 'subject' ? node.name : undefined
               return (
-                <FileRow key={node.path} node={node} depth={0} onSelect={onFileSelect} tab={tab} subjectId={subId} />
+                <FileRow
+                  key={node.path}
+                  node={node}
+                  depth={0}
+                  onSelect={onFileSelect}
+                  tab={tab}
+                  subjectId={subId}
+                  onAttachToChat={onAttachToChat}
+                  sessionId={sessionId}
+                  token={token}
+                />
               )
             })}
           </div>

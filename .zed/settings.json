@@ -1,0 +1,18 @@
+// .zed/settings.json
+{
+  "file_scan_exclusions": [
+    "**/local_temporary_files",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/target",
+    "**/.git",
+    "**/your_large_folder_name_here",
+    "**/goose-source-code",
+    "**/goose-source -codes",
+    "**/open-design",
+    "**/PROBLEM",
+    "**/PLAN",
+    "**/open-design",
+  ],
+}

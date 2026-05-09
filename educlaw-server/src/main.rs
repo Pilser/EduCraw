@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
+use axum::{Router, extract::DefaultBodyLimit};
 use sqlx::sqlite::SqlitePoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -107,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(api::routes())
         .with_state(state)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB limit for file uploads
         .layer(tower_http::cors::CorsLayer::permissive())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .fallback_service(tower_http::services::ServeDir::new(&web_root));

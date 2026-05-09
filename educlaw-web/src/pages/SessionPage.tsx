@@ -30,6 +30,11 @@ import type {
   TurnTokenUsage,
 } from "../api/types";
 
+export interface AttachedFileRef {
+  path: string;
+  name: string;
+}
+
 interface Props {
   auth: LoginResponse;
   session: Session;
@@ -114,6 +119,67 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [chatInput, setChatInput] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
   const pendingMsgIdRef = useRef<string | null>(null);
+
+  // Files attached from FileTree (dragged or clicked "Attach to Chat")
+  const [attachedFileRefs, setAttachedFileRefs] = useState<AttachedFileRef[]>([]);
+  // Images attached from FileTree (sent as base64 like Paperclip)
+  const [attachedImageFromTree, setAttachedImageFromTree] = useState<{
+    dataUrl: string;
+    mimeType: string;
+    name: string;
+  } | null>(null);
+
+  const handleAttachToChat = useCallback(async (path: string, name: string, isSubject?: boolean, subjectId?: string) => {
+    // Check if it's an image
+    const isImage = /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(name);
+
+    if (isImage) {
+      // Fetch image from backend and convert to base64
+      try {
+        let blob: Blob;
+        if (isSubject && subjectId) {
+          // Subject file: use readSubjectFile API
+          // Strip subject slug prefix from path to get relative path within subject
+          const relativePath = path.startsWith(subjectId + '/') ? path.substring(subjectId.length + 1) : path;
+          blob = await api.readSubjectFile(subjectId, relativePath, session.token);
+        } else {
+          // Student file: use readStudentFile API
+          blob = await api.readStudentFile(session.session_id, path, session.token);
+        }
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+        setAttachedImageFromTree({
+          dataUrl,
+          mimeType: blob.type || 'image/png',
+          name,
+        });
+      } catch (err) {
+        console.error('Failed to load image for attach:', err);
+        // Fallback to path reference
+        setAttachedFileRefs(prev => {
+          if (prev.some(f => f.path === path)) return prev;
+          return [...prev, { path, name }];
+        });
+      }
+    } else {
+      // Non-image: attach as path reference
+      setAttachedFileRefs(prev => {
+        if (prev.some(f => f.path === path)) return prev;
+        return [...prev, { path, name }];
+      });
+    }
+  }, [session.session_id, session.token]);
+
+  const handleRemoveAttachedFile = useCallback((path: string) => {
+    setAttachedFileRefs(prev => prev.filter(f => f.path !== path));
+  }, []);
+
+  const handleRemoveAttachedImage = useCallback(() => {
+    setAttachedImageFromTree(null);
+  }, []);
 
   // Replay buffering (to avoid O(N²) re-renders during session load)
   const [isLoadingSession, setIsLoadingSession] = useState(false);
@@ -897,6 +963,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
                     subjectId,
                   });
                 }}
+                onAttachToChat={handleAttachToChat}
               />
             </div>
           </aside>
@@ -906,30 +973,35 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {/* Chat panel — primary, fills available space */}
           <div className="flex-1 overflow-hidden bg-wp-page">
-            <ChatPanel
-              messages={messages}
-              inputValue={chatInput}
-              onInputChange={setChatInput}
-              onSend={handleSendWithWs}
-              onSendWithImage={handleSendWithImage}
-              onFilesForUpload={handleFilesForUpload}
-              onCancel={sendCancel}
-              disabled={status !== "connected" || aiTyping}
-              availableModels={availableModels}
-              activeModel={activeModel}
-              onModelChange={handleModelChange}
-              tokenUsage={tokenUsage}
-              sessionTokensUsed={sessionTokensUsed}
-              tokenContextSize={tokenContextSize}
-              tokenBalance={tokenBalance}
-              tokenBlocked={tokenBlocked}
-              tokenBannerText={tokenBannerText}
-              sessionId={session.session_id}
-              token={session.token}
-              onFileSelect={(path, name) =>
-                setSelectedFile({ path, name, isSubject: false })
-              }
-            />
+              <ChatPanel
+                messages={messages}
+                inputValue={chatInput}
+                onInputChange={setChatInput}
+                onSend={handleSendWithWs}
+                onSendWithImage={handleSendWithImage}
+                onFilesForUpload={handleFilesForUpload}
+                onCancel={sendCancel}
+                disabled={status !== "connected" || aiTyping}
+                availableModels={availableModels}
+                activeModel={activeModel}
+                onModelChange={handleModelChange}
+                tokenUsage={tokenUsage}
+                sessionTokensUsed={sessionTokensUsed}
+                tokenContextSize={tokenContextSize}
+                tokenBalance={tokenBalance}
+                tokenBlocked={tokenBlocked}
+                tokenBannerText={tokenBannerText}
+                sessionId={session.session_id}
+                token={session.token}
+                onFileSelect={(path, name) =>
+                  setSelectedFile({ path, name, isSubject: false })
+                }
+                attachedFileRefs={attachedFileRefs}
+                onRemoveAttachedFile={handleRemoveAttachedFile}
+                attachedImageFromTree={attachedImageFromTree}
+                onRemoveAttachedImage={handleRemoveAttachedImage}
+                onAttachToChat={handleAttachToChat}
+              />
           </div>
 
           {/* Terminal — collapsed by default, toggled open */}

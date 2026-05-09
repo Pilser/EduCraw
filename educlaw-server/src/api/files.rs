@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -293,17 +293,12 @@ async fn read_student_file(
     file_response(&path)
 }
 
-#[derive(Deserialize)]
-struct WriteBody {
-    content: String,
-}
-
 async fn write_student_file(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     AxumPath(session_id): AxumPath<String>,
     Query(q): Query<PathQuery>,
-    Json(body): Json<WriteBody>,
+    body: Bytes,
 ) -> Result<impl IntoResponse> {
     let rel_path = q.path.ok_or_else(|| AppError::BadRequest("missing ?path= query param".into()))?;
     let claims = require_claims(&state, &headers)?;
@@ -316,7 +311,7 @@ async fn write_student_file(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, body.content.as_bytes())?;
+    std::fs::write(&path, &body)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

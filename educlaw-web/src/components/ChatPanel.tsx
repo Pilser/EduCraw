@@ -3,8 +3,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Send, Square, Zap, AlertCircle, Bot } from "lucide-react";
+import { Send, Square, Zap, AlertCircle, Bot, Paperclip, X } from "lucide-react";
 import type { ChatMessage, MessageSegment, TokenUsage } from "../api/types";
+import type { AttachedFileRef } from "../pages/SessionPage";
 import ToolCallCard from "./ToolCallCard";
 import ChatFilePreview from "./ChatFilePreview";
 import FileInputAttachment, {
@@ -47,6 +48,18 @@ interface Props {
     isSubject?: boolean,
     subjectId?: string,
   ) => void;
+  // Files attached from FileTree (non-image)
+  attachedFileRefs?: AttachedFileRef[];
+  onRemoveAttachedFile?: (path: string) => void;
+  // Image attached from FileTree (sent as base64)
+  attachedImageFromTree?: {
+    dataUrl: string;
+    mimeType: string;
+    name: string;
+  } | null;
+  onRemoveAttachedImage?: () => void;
+  // Callback to attach file from drop (SessionPage handles image vs non-image)
+  onAttachToChat?: (path: string, name: string, isSubject?: boolean, subjectId?: string) => void;
 }
 
 // Shared code-block renderer for ReactMarkdown.
@@ -272,6 +285,11 @@ export default function ChatPanel({
   sessionId,
   token,
   onFileSelect,
+  attachedFileRefs,
+  onRemoveAttachedFile,
+  attachedImageFromTree,
+  onRemoveAttachedImage,
+  onAttachToChat,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -281,9 +299,42 @@ export default function ChatPanel({
   const [attachedImage, setAttachedImage] = useState<AttachedFile | null>(null);
   const [filesToUpload, setFilesToUpload] = useState<AttachedFile[]>([]);
 
+  // Drag-over state for attaching files from FileTree
+  const [isDragOver, setIsDragOver] = useState(false);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Drag-over handlers for files from FileTree
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only set false if leaving the container, not entering a child
+    const relatedTarget = e.relatedTarget as Node | null;
+    if (relatedTarget && e.currentTarget.contains(relatedTarget)) return;
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+
+    const fileData = e.dataTransfer.getData('application/educlaw-file');
+    if (fileData) {
+      try {
+        const { path, name, isSubject, subjectId } = JSON.parse(fileData);
+        // Use onAttachToChat to properly handle image vs non-image
+        onAttachToChat?.(path, name, isSubject, subjectId);
+      } catch (err) {
+        console.error('Failed to parse dropped file data:', err);
+      }
+    }
+  }, [onAttachToChat]);
 
   const handleImageSelected = useCallback((file: AttachedFile | null) => {
     setAttachedImage(file);
@@ -301,7 +352,30 @@ export default function ChatPanel({
   }
 
   function doSend() {
-    const text = inputValue.trim();
+    let text = inputValue.trim();
+
+    // Include attached file references from FileTree in the message
+    if (attachedFileRefs && attachedFileRefs.length > 0) {
+      const fileRefsText = attachedFileRefs.map(f => `\`${f.path}\``).join(", ");
+      text = text ? `${text}\n\nFile Attached: ${fileRefsText}` : `File Attached: ${fileRefsText}`;
+    }
+
+    // Handle image from FileTree (sent as base64)
+    if (attachedImageFromTree && onSendWithImage) {
+      onSendWithImage(text, attachedImageFromTree.dataUrl, attachedImageFromTree.mimeType);
+      onInputChange("");
+      setAttachedImage(null);
+      setFilesToUpload([]);
+      fileInputAttachmentRef.current?.clearAll();
+      onRemoveAttachedImage?.();
+      // Clear attached file refs after sending
+      if (attachedFileRefs && attachedFileRefs.length > 0) {
+        attachedFileRefs.forEach(f => onRemoveAttachedFile?.(f.path));
+      }
+      setTimeout(() => textareaRef.current?.focus(), 0);
+      return;
+    }
+
     if (!text && !attachedImage && filesToUpload.length === 0) return;
     if (
       disabled ||
@@ -310,7 +384,7 @@ export default function ChatPanel({
     )
       return;
 
-    // If there's an attached image and onSendWithImage is provided, use it
+    // If there's an attached image (Paperclip) and onSendWithImage is provided, use it
     if (attachedImage && onSendWithImage) {
       onSendWithImage(text, attachedImage.dataUrl, attachedImage.mimeType);
     } else {
@@ -327,6 +401,10 @@ export default function ChatPanel({
     setAttachedImage(null);
     setFilesToUpload([]);
     fileInputAttachmentRef.current?.clearAll();
+    // Clear attached file refs after sending
+    if (attachedFileRefs && attachedFileRefs.length > 0) {
+      attachedFileRefs.forEach(f => onRemoveAttachedFile?.(f.path));
+    }
     setTimeout(() => textareaRef.current?.focus(), 0);
   }
 
@@ -438,13 +516,57 @@ export default function ChatPanel({
       </div>
 
       {/* Input bar: ChatGPT-style with icon buttons on far sides */}
-      <div className="shrink-0 border-t-2 border-wp-border-mid bg-wp-surface px-3 md:px-5 py-3 md:py-4">
+      <div
+        className={`shrink-0 border-t-2 border-wp-border-mid bg-wp-surface px-3 md:px-5 py-3 md:py-4 transition-colors ${isDragOver ? 'bg-wp-accent-subtle border-wp-accent' : ''}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         {tokenBlocked ? (
           <p className="text-center text-sm md:text-base text-wp-error font-bold py-2 md:py-3 bg-wp-error-bg px-3 md:px-4 rounded-wp-lg border border-wp-error">
             Messaging is disabled — token limit reached.
           </p>
         ) : (
-          <div className="relative flex items-end gap-2 md:gap-3">
+          <div className="relative flex flex-col gap-2">
+            {/* Attached image from FileTree */}
+            {attachedImageFromTree && (
+              <div className="flex items-center gap-2 mb-1 px-2 py-1.5 bg-wp-accent-subtle rounded-wp-md">
+                <img src={attachedImageFromTree.dataUrl} alt={attachedImageFromTree.name} className="w-8 h-8 object-cover rounded" />
+                <span className="text-xs text-wp-accent font-medium truncate flex-1">{attachedImageFromTree.name}</span>
+                <button
+                  onClick={() => {
+                    onRemoveAttachedImage?.();
+                  }}
+                  className="hover:text-wp-error transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            {/* Attached files from FileTree (non-image) */}
+            {attachedFileRefs && attachedFileRefs.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-1">
+                <span className="text-[10px] text-wp-text-tertiary self-center">Files:</span>
+                {attachedFileRefs.map(f => (
+                  <span
+                    key={f.path}
+                    className="flex items-center gap-1 px-2 py-1 bg-wp-accent-subtle text-wp-accent rounded-wp-sm text-xs font-medium"
+                  >
+                    <Paperclip className="w-3 h-3" />
+                    <span className="truncate max-w-[120px]">{f.name}</span>
+                    <button
+                      onClick={() => onRemoveAttachedFile?.(f.path)}
+                      className="hover:text-wp-error transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="relative flex items-end gap-2 md:gap-3">
             {/* Attach icon button - far left side */}
             <div className="shrink-0 absolute left-2 md:left-3 bottom-2 md:bottom-3 z-10">
               <FileInputAttachment
@@ -492,7 +614,8 @@ export default function ChatPanel({
                   disabled ||
                   (!inputValue.trim() &&
                     !attachedImage &&
-                    filesToUpload.length === 0)
+                    filesToUpload.length === 0 &&
+                    (!attachedFileRefs || attachedFileRefs.length === 0))
                 }
                 className="p-2 rounded-wp-md bg-wp-accent hover:bg-wp-accent-hover active:bg-wp-accent/70 disabled:bg-wp-border-soft
                   disabled:cursor-not-allowed text-wp-text-on-accent font-bold flex items-center justify-center transition-all shadow-sm disabled:shadow border border-wp-accent-hover disabled:border-wp-border-soft"
@@ -506,6 +629,7 @@ export default function ChatPanel({
               </button>
             </div>
           </div>
+        </div>
         )}
       </div>
     </div>

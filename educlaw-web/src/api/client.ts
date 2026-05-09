@@ -78,13 +78,15 @@ export const api = {
   },
 
   async uploadStudentFile(sessionId: string, filePath: string, content: string | ArrayBuffer, token: string): Promise<void> {
+    const isText = typeof content === 'string'
+    const body = isText ? content : content
     const res = await fetch(`${BASE}/files/student/${sessionId}/write?path=${encodeURIComponent(filePath)}`, {
       method: 'PUT',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': isText ? 'text/plain' : 'application/octet-stream',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ content: typeof content === 'string' ? content : new TextDecoder().decode(content) }),
+      body: body,
     })
     if (!res.ok) {
       const error = await res.text()
