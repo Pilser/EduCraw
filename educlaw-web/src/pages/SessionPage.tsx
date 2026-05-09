@@ -28,6 +28,7 @@ import type {
   MessageSegment,
   TokenUsage,
   TurnTokenUsage,
+  Model,
 } from "../api/types";
 
 export interface AttachedFileRef {
@@ -121,7 +122,9 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const pendingMsgIdRef = useRef<string | null>(null);
 
   // Files attached from FileTree (dragged or clicked "Attach to Chat")
-  const [attachedFileRefs, setAttachedFileRefs] = useState<AttachedFileRef[]>([]);
+  const [attachedFileRefs, setAttachedFileRefs] = useState<AttachedFileRef[]>(
+    [],
+  );
   // Images attached from FileTree (sent as base64 like Paperclip)
   const [attachedImageFromTree, setAttachedImageFromTree] = useState<{
     dataUrl: string;
@@ -129,52 +132,70 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     name: string;
   } | null>(null);
 
-  const handleAttachToChat = useCallback(async (path: string, name: string, isSubject?: boolean, subjectId?: string) => {
-    // Check if it's an image
-    const isImage = /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(name);
+  const handleAttachToChat = useCallback(
+    async (
+      path: string,
+      name: string,
+      isSubject?: boolean,
+      subjectId?: string,
+    ) => {
+      // Check if it's an image
+      const isImage = /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(name);
 
-    if (isImage) {
-      // Fetch image from backend and convert to base64
-      try {
-        let blob: Blob;
-        if (isSubject && subjectId) {
-          // Subject file: use readSubjectFile API
-          // Strip subject slug prefix from path to get relative path within subject
-          const relativePath = path.startsWith(subjectId + '/') ? path.substring(subjectId.length + 1) : path;
-          blob = await api.readSubjectFile(subjectId, relativePath, session.token);
-        } else {
-          // Student file: use readStudentFile API
-          blob = await api.readStudentFile(session.session_id, path, session.token);
+      if (isImage) {
+        // Fetch image from backend and convert to base64
+        try {
+          let blob: Blob;
+          if (isSubject && subjectId) {
+            // Subject file: use readSubjectFile API
+            // Strip subject slug prefix from path to get relative path within subject
+            const relativePath = path.startsWith(subjectId + "/")
+              ? path.substring(subjectId.length + 1)
+              : path;
+            blob = await api.readSubjectFile(
+              subjectId,
+              relativePath,
+              session.token,
+            );
+          } else {
+            // Student file: use readStudentFile API
+            blob = await api.readStudentFile(
+              session.session_id,
+              path,
+              session.token,
+            );
+          }
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+          setAttachedImageFromTree({
+            dataUrl,
+            mimeType: blob.type || "image/png",
+            name,
+          });
+        } catch (err) {
+          console.error("Failed to load image for attach:", err);
+          // Fallback to path reference
+          setAttachedFileRefs((prev) => {
+            if (prev.some((f) => f.path === path)) return prev;
+            return [...prev, { path, name }];
+          });
         }
-        const dataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-        setAttachedImageFromTree({
-          dataUrl,
-          mimeType: blob.type || 'image/png',
-          name,
-        });
-      } catch (err) {
-        console.error('Failed to load image for attach:', err);
-        // Fallback to path reference
-        setAttachedFileRefs(prev => {
-          if (prev.some(f => f.path === path)) return prev;
+      } else {
+        // Non-image: attach as path reference
+        setAttachedFileRefs((prev) => {
+          if (prev.some((f) => f.path === path)) return prev;
           return [...prev, { path, name }];
         });
       }
-    } else {
-      // Non-image: attach as path reference
-      setAttachedFileRefs(prev => {
-        if (prev.some(f => f.path === path)) return prev;
-        return [...prev, { path, name }];
-      });
-    }
-  }, [session.session_id, session.token]);
+    },
+    [session.session_id, session.token],
+  );
 
   const handleRemoveAttachedFile = useCallback((path: string) => {
-    setAttachedFileRefs(prev => prev.filter(f => f.path !== path));
+    setAttachedFileRefs((prev) => prev.filter((f) => f.path !== path));
   }, []);
 
   const handleRemoveAttachedImage = useCallback(() => {
@@ -190,9 +211,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
   // Model + token state (models come from backend via WebSocket)
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<Model[]>([]);
   const [activeModel, setActiveModel] = useState<string | undefined>(undefined);
-  const [modelsLoadedFromBackend, setModelsLoadedFromBackend] = useState(false);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
   const [sessionTokensUsed, setSessionTokensUsed] = useState(0);
   const [tokenContextSize, setTokenContextSize] = useState<number | null>(null);
@@ -206,8 +226,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     Promise.all([
       api.getSessionModels(session.session_id, session.token).then((r) => {
         setAvailableModels(r.models || []);
-        setActiveModel(r.active || r.models?.[0] || undefined);
-        setModelsLoadedFromBackend(true);
+        setActiveModel(r.active || r.models?.[0]?.name || undefined);
       }),
       api.getSessionTokenUsage(session.session_id, session.token).then((r) => {
         setTokenUsage(r);
@@ -545,16 +564,16 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   }, []);
 
   const handleModelsReceived = useCallback(
-    (models: string[], active: string) => {
-      // Only update models from WebSocket if we haven't loaded them from the backend.
-      // This ensures student-specific model restrictions from DB take priority over Goose defaults.
-      if (!modelsLoadedFromBackend) {
-        setAvailableModels(models);
-        // Use backend's active model if provided; otherwise first available (or undefined if empty)
-        setActiveModel(active || models[0] || undefined);
+    (_models: string[], active: string) => {
+      // Models are now loaded from backend as full Model objects with specs.
+      // WebSocket still sends model names as strings, but we ignore them since
+      // we already have the full model data from the REST API.
+      // We only update the active model if it changed.
+      if (active && active !== activeModel) {
+        setActiveModel(active);
       }
     },
-    [modelsLoadedFromBackend],
+    [activeModel],
   );
 
   const handleForkSessionComplete = useCallback((newSessionId: string) => {
@@ -973,35 +992,35 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {/* Chat panel — primary, fills available space */}
           <div className="flex-1 overflow-hidden bg-wp-page">
-              <ChatPanel
-                messages={messages}
-                inputValue={chatInput}
-                onInputChange={setChatInput}
-                onSend={handleSendWithWs}
-                onSendWithImage={handleSendWithImage}
-                onFilesForUpload={handleFilesForUpload}
-                onCancel={sendCancel}
-                disabled={status !== "connected" || aiTyping}
-                availableModels={availableModels}
-                activeModel={activeModel}
-                onModelChange={handleModelChange}
-                tokenUsage={tokenUsage}
-                sessionTokensUsed={sessionTokensUsed}
-                tokenContextSize={tokenContextSize}
-                tokenBalance={tokenBalance}
-                tokenBlocked={tokenBlocked}
-                tokenBannerText={tokenBannerText}
-                sessionId={session.session_id}
-                token={session.token}
-                onFileSelect={(path, name) =>
-                  setSelectedFile({ path, name, isSubject: false })
-                }
-                attachedFileRefs={attachedFileRefs}
-                onRemoveAttachedFile={handleRemoveAttachedFile}
-                attachedImageFromTree={attachedImageFromTree}
-                onRemoveAttachedImage={handleRemoveAttachedImage}
-                onAttachToChat={handleAttachToChat}
-              />
+            <ChatPanel
+              messages={messages}
+              inputValue={chatInput}
+              onInputChange={setChatInput}
+              onSend={handleSendWithWs}
+              onSendWithImage={handleSendWithImage}
+              onFilesForUpload={handleFilesForUpload}
+              onCancel={sendCancel}
+              disabled={status !== "connected" || aiTyping}
+              availableModels={availableModels}
+              activeModel={activeModel}
+              onModelChange={handleModelChange}
+              tokenUsage={tokenUsage}
+              sessionTokensUsed={sessionTokensUsed}
+              tokenContextSize={tokenContextSize}
+              tokenBalance={tokenBalance}
+              tokenBlocked={tokenBlocked}
+              tokenBannerText={tokenBannerText}
+              sessionId={session.session_id}
+              token={session.token}
+              onFileSelect={(path, name) =>
+                setSelectedFile({ path, name, isSubject: false })
+              }
+              attachedFileRefs={attachedFileRefs}
+              onRemoveAttachedFile={handleRemoveAttachedFile}
+              attachedImageFromTree={attachedImageFromTree}
+              onRemoveAttachedImage={handleRemoveAttachedImage}
+              onAttachToChat={handleAttachToChat}
+            />
           </div>
 
           {/* Terminal — collapsed by default, toggled open */}

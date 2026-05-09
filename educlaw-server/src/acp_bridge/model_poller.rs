@@ -8,12 +8,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sacp::schema::{SessionId, SetSessionModelRequest};
+use sacp::schema::{
+    SessionConfigId, SessionConfigOptionValue, SessionId, SetSessionConfigOptionRequest,
+    SetSessionModelRequest,
+};
 use sacp::{Agent as SacpAgent, ConnectionTo};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
-use crate::db::{sessions as db_sess, students as db_students};
+use crate::db::{models as db_models, sessions as db_sess, students as db_students};
 
 /// Spawns the model-switch poller as a fire-and-forget tokio task.
 ///
@@ -108,6 +111,66 @@ pub fn spawn_model_poller(
                 continue;
             }
 
+            // Look up provider for this model from database
+            let provider_id = match db_models::get_model_by_name(&pool, &model_name).await {
+                Ok(Some(model)) => model.provider,
+                Ok(None) => {
+                    tracing::warn!(
+                        model = %model_name,
+                        "[MODEL-POLLER] Model not found in database - cannot determine provider"
+                    );
+                    None
+                }
+                Err(e) => {
+                    tracing::error!(
+                        model = %model_name,
+                        error = %e,
+                        "[MODEL-POLLER] Failed to look up model in database"
+                    );
+                    None
+                }
+            };
+
+            // If we have a provider, switch to it first
+            if let Some(provider) = &provider_id {
+                tracing::info!(
+                    provider = %provider,
+                    model = %model_name,
+                    "[MODEL-POLLER] Switching provider before model"
+                );
+
+                match cx
+                    .send_request(SetSessionConfigOptionRequest::new(
+                        acp_session_id.clone(),
+                        SessionConfigId::new("provider"),
+                        SessionConfigOptionValue::value_id(provider.clone()),
+                    ))
+                    .block_task()
+                    .await
+                {
+                    Ok(_) => {
+                        tracing::info!(
+                            provider = %provider,
+                            session_id = %session_id,
+                            "[MODEL-POLLER] Provider switched successfully"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            provider = %provider,
+                            error = %e,
+                            "[MODEL-POLLER] Provider switch failed - continuing with model switch anyway"
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    model = %model_name,
+                    "[MODEL-POLLER] No provider configured for model - using current provider"
+                );
+            }
+
+            // Now switch the model
             match cx
                 .send_request(SetSessionModelRequest::new(
                     acp_session_id.clone(),
@@ -131,7 +194,9 @@ pub fn spawn_model_poller(
 
                     // Save to student record for persistence across logins
                     if let Ok(Some(sess)) = db_sess::get_session(&pool, &session_id).await {
-                        if let Err(e) = db_students::set_last_model(&pool, &sess.student_id, &model_name).await {
+                        if let Err(e) =
+                            db_students::set_last_model(&pool, &sess.student_id, &model_name).await
+                        {
                             tracing::warn!(
                                 student_id = %sess.student_id,
                                 error = %e,
@@ -140,9 +205,8 @@ pub fn spawn_model_poller(
                         }
                     }
 
-                    let frame =
-                        serde_json::json!({"type": "model_changed", "model": model_name})
-                            .to_string();
+                    let frame = serde_json::json!({"type": "model_changed", "model": model_name})
+                        .to_string();
                     let _ = ctrl_tx.send(frame).await;
 
                     tracing::info!(

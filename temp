@@ -1,0 +1,3 @@
+in my educraw I want to investigate  how I caliculate token usage because current one is misleading on usage so read this doc # File outline for
+/home/pilser/AA-Projects/EduCraw/docs/GOOSE-ACP-TOKEN-TRUTH.md
+ to understand how we truelly can caliculate usage well , dnt fistmind about goose code change but lets forcus on educlaw to see how to modify codes that curently caliculate and decide which db table to use between token_usage ( and token_deductions ( but I think you will make this table token_usage ( to record token usage across user/students and it will be for admin  for analisiy , so lets see possible plan

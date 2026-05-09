@@ -37,9 +37,8 @@ use uuid::Uuid;
 
 use crate::auth::{bearer_token, hash_password, Claims};
 use crate::db::{
-    assignments as db_assign, cohorts as db_cohorts, models as db_models,
-    sessions as db_sess, students, subjects as db_subjects,
-    token_usage as db_tokens,
+    assignments as db_assign, cohorts as db_cohorts, models as db_models, sessions as db_sess,
+    students, subjects as db_subjects, token_usage as db_tokens,
 };
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
@@ -52,37 +51,59 @@ pub fn routes() -> Router<AppState> {
     tracing::debug!("[ADMIN-ROUTES] initializing admin routes");
     Router::new()
         // Students - base
-        .route("/admin/students",                            get(list_students).post(create_student))
-        
+        .route("/admin/students", get(list_students).post(create_student))
         // Students - specific sub-routes (MUST come before generic /:id)
-        .route("/admin/students/:id/token-limit",          put(set_token_limit).delete(clear_token_limit))
-        .route("/admin/students/:id/token-usage",          get(student_token_usage))
-        .route("/admin/students/:id/token-balance",        get(get_token_balance))
-        .route("/admin/students/:id/topup",                post(topup_tokens_handler))
-        .route("/admin/students/:id/deduct",               post(deduct_tokens_handler))
-        .route("/admin/students/:id/token-deductions",     get(get_token_deductions))
-        .route("/admin/students/:id/models",               get(get_student_models).put(set_student_models_handler))
-        .route("/admin/students/:id",                      put(update_student).delete(delete_student))
-        
+        .route(
+            "/admin/students/:id/token-limit",
+            put(set_token_limit).delete(clear_token_limit),
+        )
+        .route("/admin/students/:id/token-usage", get(student_token_usage))
+        .route("/admin/students/:id/token-balance", get(get_token_balance))
+        .route("/admin/students/:id/topup", post(topup_tokens_handler))
+        .route("/admin/students/:id/deduct", post(deduct_tokens_handler))
+        .route(
+            "/admin/students/:id/token-deductions",
+            get(get_token_deductions),
+        )
+        .route(
+            "/admin/students/:id/models",
+            get(get_student_models).put(set_student_models_handler),
+        )
+        .route(
+            "/admin/students/:id",
+            put(update_student).delete(delete_student),
+        )
         // Sessions
-        .route("/admin/sessions",                           get(list_sessions))
-        .route("/admin/sessions/:id",                      delete(terminate_session))
-        
+        .route("/admin/sessions", get(list_sessions))
+        .route("/admin/sessions/:id", delete(terminate_session))
         // Cohorts
-        .route("/admin/cohorts",                            get(list_cohorts).post(create_cohort))
-        .route("/admin/cohorts/:id",                       put(update_cohort).delete(delete_cohort))
-        
+        .route("/admin/cohorts", get(list_cohorts).post(create_cohort))
+        .route(
+            "/admin/cohorts/:id",
+            put(update_cohort).delete(delete_cohort),
+        )
         // Subjects
-        .route("/admin/subjects",                           get(list_subjects_handler).post(create_subject))
-        .route("/admin/subjects/:id",                      put(update_subject_handler).delete(delete_subject_handler))
-        
+        .route(
+            "/admin/subjects",
+            get(list_subjects_handler).post(create_subject),
+        )
+        .route(
+            "/admin/subjects/:id",
+            put(update_subject_handler).delete(delete_subject_handler),
+        )
         // Assignments
-        .route("/admin/assignments",                        get(list_assignments).post(create_assignment))
-        
+        .route(
+            "/admin/assignments",
+            get(list_assignments).post(create_assignment),
+        )
         // Models
-        .route("/admin/models",                             get(list_models).post(create_model))
-        .route("/admin/models/:name/multiplier",           put(set_model_multiplier))
-        .route("/admin/models/:id",                        put(update_model).delete(delete_model_handler))
+        .route("/admin/models", get(list_models).post(create_model))
+        .route("/admin/models/:name/multiplier", put(set_model_multiplier))
+        .route("/admin/models/:id/specs", put(update_model_specs_handler))
+        .route(
+            "/admin/models/:id",
+            put(update_model).delete(delete_model_handler),
+        )
 }
 
 // ── Auth guard ────────────────────────────────────────────────────────────
@@ -94,7 +115,11 @@ fn claims(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
     })?;
     tracing::debug!("[AUTH] extracting claims from bearer token");
     let claims = state.auth.verify(token)?;
-    tracing::debug!("[AUTH] claims extracted: sub={}, role={}", claims.sub, claims.role);
+    tracing::debug!(
+        "[AUTH] claims extracted: sub={}, role={}",
+        claims.sub,
+        claims.role
+    );
     Ok(claims)
 }
 
@@ -111,9 +136,15 @@ fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
 
 fn require_staff(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
     let c = claims(state, headers)?;
-    tracing::debug!("[AUTH-STAFF] checking role: {} in [admin, teacher]?", c.role);
+    tracing::debug!(
+        "[AUTH-STAFF] checking role: {} in [admin, teacher]?",
+        c.role
+    );
     if c.role != "admin" && c.role != "teacher" {
-        tracing::warn!("[AUTH-STAFF] forbidden: user role is {} not admin/teacher", c.role);
+        tracing::warn!(
+            "[AUTH-STAFF] forbidden: user role is {} not admin/teacher",
+            c.role
+        );
         return Err(AppError::Forbidden);
     }
     tracing::debug!("[AUTH-STAFF] staff check passed");
@@ -146,7 +177,12 @@ async fn list_students(
     let rows = students::list_students(&state.pool).await?;
 
     let live: std::collections::HashSet<String> = state
-        .broker.list_entries().await.into_iter().map(|(sid, _)| sid).collect();
+        .broker
+        .list_entries()
+        .await
+        .into_iter()
+        .map(|(sid, _)| sid)
+        .collect();
 
     let active_sessions = db_sess::list_active_sessions(&state.pool).await?;
     let active_student_ids: std::collections::HashSet<String> = active_sessions
@@ -215,7 +251,10 @@ async fn create_student(
     students::insert_student(&state.pool, &student).await?;
 
     tracing::info!(student_id = %student.id, username = %student.username, "admin: student created");
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": student.id }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": student.id })),
+    ))
 }
 
 // ── PUT /admin/students/:id ───────────────────────────────────────────────
@@ -239,7 +278,11 @@ async fn update_student(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
-    let new_hash = body.new_password.as_deref().map(hash_password).transpose()?;
+    let new_hash = body
+        .new_password
+        .as_deref()
+        .map(hash_password)
+        .transpose()?;
 
     students::update_student(
         &state.pool,
@@ -369,7 +412,10 @@ async fn create_cohort(
     require_admin(&state, &headers)?;
 
     if body.slug.is_empty()
-        || !body.slug.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        || !body
+            .slug
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
         return Err(AppError::BadRequest(
             "cohort slug must be non-empty alphanumeric/dash/underscore".into(),
@@ -384,7 +430,10 @@ async fn create_cohort(
     db_cohorts::insert_cohort(&state.pool, &cohort).await?;
 
     tracing::info!(cohort_id = %cohort.id, "admin: cohort created");
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": cohort.id }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": cohort.id })),
+    ))
 }
 
 // ── PUT /admin/cohorts/:id ────────────────────────────────────────────────
@@ -411,9 +460,13 @@ async fn update_cohort(
     let new_slug = body.new_slug.as_deref().unwrap_or(&id);
 
     if new_slug.is_empty()
-        || !new_slug.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        || !new_slug
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(AppError::BadRequest("slug must be alphanumeric/dash/underscore".into()));
+        return Err(AppError::BadRequest(
+            "slug must be alphanumeric/dash/underscore".into(),
+        ));
     }
 
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
@@ -501,7 +554,10 @@ async fn create_subject(
 
     // Validate slug: alphanumeric, dash, underscore only.
     if body.slug.is_empty()
-        || !body.slug.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        || !body
+            .slug
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
         return Err(AppError::BadRequest(
             "slug must be non-empty alphanumeric/dash/underscore".into(),
@@ -545,7 +601,10 @@ async fn create_subject(
         title = %subject.title,
         "admin: subject created"
     );
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": subject.id, "slug": subject.slug }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": subject.id, "slug": subject.slug })),
+    ))
 }
 
 // ── PUT /admin/subjects/:id ───────────────────────────────────────────────
@@ -572,9 +631,13 @@ async fn update_subject_handler(
     let new_slug = body.new_slug.as_deref().unwrap_or(&subject.slug);
 
     if new_slug.is_empty()
-        || !new_slug.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        || !new_slug
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(AppError::BadRequest("slug must be alphanumeric/dash/underscore".into()));
+        return Err(AppError::BadRequest(
+            "slug must be alphanumeric/dash/underscore".into(),
+        ));
     }
 
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
@@ -582,8 +645,12 @@ async fn update_subject_handler(
 
     // Rename disk directory if slug changed.
     if new_slug != subject.slug {
-        let old_dir = Path::new(&subjects_root).join(&subject.cohort_id).join(&subject.slug);
-        let new_dir = Path::new(&subjects_root).join(&subject.cohort_id).join(new_slug);
+        let old_dir = Path::new(&subjects_root)
+            .join(&subject.cohort_id)
+            .join(&subject.slug);
+        let new_dir = Path::new(&subjects_root)
+            .join(&subject.cohort_id)
+            .join(new_slug);
         if old_dir.exists() {
             tokio::fs::rename(&old_dir, &new_dir)
                 .await
@@ -592,7 +659,9 @@ async fn update_subject_handler(
     }
 
     // Update subject.json in the (possibly new) directory.
-    let subject_dir = Path::new(&subjects_root).join(&subject.cohort_id).join(new_slug);
+    let subject_dir = Path::new(&subjects_root)
+        .join(&subject.cohort_id)
+        .join(new_slug);
     if subject_dir.exists() {
         let meta = serde_json::json!({
             "id": id,
@@ -624,7 +693,9 @@ async fn delete_subject_handler(
 
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
-    let subject_dir = Path::new(&subjects_root).join(&subject.cohort_id).join(&subject.slug);
+    let subject_dir = Path::new(&subjects_root)
+        .join(&subject.cohort_id)
+        .join(&subject.slug);
     if subject_dir.exists() {
         tokio::fs::remove_dir_all(&subject_dir)
             .await
@@ -694,7 +765,10 @@ async fn create_assignment(
     db_assign::insert_assignment(&state.pool, &assignment).await?;
 
     tracing::info!(assignment_id = %assignment.id, "admin: assignment created");
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": assignment.id }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": assignment.id })),
+    ))
 }
 
 // ── GET /admin/models ─────────────────────────────────────────────────────
@@ -721,7 +795,9 @@ struct CreateModelBody {
     multiplier: f64,
 }
 
-fn default_multiplier() -> f64 { 1.0 }
+fn default_multiplier() -> f64 {
+    1.0
+}
 
 async fn create_model(
     State(state): State<AppState>,
@@ -733,17 +809,23 @@ async fn create_model(
         return Err(AppError::BadRequest("model name must not be empty".into()));
     }
     if body.multiplier < 0.0 {
-        return Err(AppError::BadRequest("multiplier must be non-negative".into()));
+        return Err(AppError::BadRequest(
+            "multiplier must be non-negative".into(),
+        ));
     }
-    let id = db_models::insert_model(&state.pool, &body.name, &body.display_name, body.multiplier).await?;
+    let id = db_models::insert_model(&state.pool, &body.name, &body.display_name, body.multiplier)
+        .await?;
     tracing::info!(model_name = %body.name, multiplier = body.multiplier, "admin: model created");
-    Ok((StatusCode::CREATED, Json(serde_json::json!({
-        "id": id,
-        "name": body.name,
-        "display_name": body.display_name,
-        "multiplier": body.multiplier,
-        "enabled": 1,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": id,
+            "name": body.name,
+            "display_name": body.display_name,
+            "multiplier": body.multiplier,
+            "enabled": 1,
+        })),
+    ))
 }
 
 // ── PUT /admin/models/:id ─────────────────────────────────────────────────
@@ -761,6 +843,34 @@ async fn update_model(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
     db_models::set_enabled(&state.pool, &id, body.enabled).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── PUT /admin/models/:id/specs ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct UpdateModelSpecsBody {
+    provider: Option<String>,
+    think_mode: Option<i64>,
+    visual_support: i64,
+}
+
+async fn update_model_specs_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateModelSpecsBody>,
+) -> Result<impl IntoResponse> {
+    require_admin(&state, &headers)?;
+    db_models::update_model_specs(
+        &state.pool,
+        &id,
+        body.provider.as_deref(),
+        body.think_mode,
+        body.visual_support,
+    )
+    .await?;
+    tracing::info!(model_id = %id, provider = ?body.provider, "admin: model specs updated");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -796,15 +906,8 @@ async fn set_token_limit(
     require_admin(&state, &headers)?;
     students::get_student(&state.pool, &id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?
-        ;
-    students::set_token_limit(
-        &state.pool,
-        &id,
-        body.limit,
-        body.banner.as_deref(),
-    )
-    .await?;
+        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
+    students::set_token_limit(&state.pool, &id, body.limit, body.banner.as_deref()).await?;
     // Also clear any existing block so the new limit takes effect from zero.
     students::clear_token_block(&state.pool, &id).await?;
     tracing::info!(student_id = %id, limit = ?body.limit, "admin: token limit updated");
@@ -837,7 +940,11 @@ async fn get_student_models(
     // Do NOT use models_for_student which applies the fallback — the admin panel
     // needs to know the real stored state so checkboxes are accurate.
     let models = db_models::raw_assignments_for_student(&state.pool, &id).await?;
-    tracing::debug!("[GET-MODELS] returning {} models for student_id={}", models.len(), id);
+    tracing::debug!(
+        "[GET-MODELS] returning {} models for student_id={}",
+        models.len(),
+        id
+    );
     Ok(Json(serde_json::json!({ "models": models })))
 }
 
@@ -869,8 +976,7 @@ async fn student_token_usage(
     require_staff(&state, &headers)?;
     let student = students::get_student(&state.pool, &id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?
-        ;
+        .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
     let total = db_tokens::student_total_tokens(&state.pool, &id).await?;
     Ok(Json(serde_json::json!({
         "student_id": id,
@@ -898,7 +1004,9 @@ async fn set_model_multiplier(
     require_admin(&state, &headers)?;
 
     if body.multiplier < 0.0 {
-        return Err(AppError::BadRequest("multiplier must be non-negative".into()));
+        return Err(AppError::BadRequest(
+            "multiplier must be non-negative".into(),
+        ));
     }
 
     // Verify model exists
@@ -908,7 +1016,9 @@ async fn set_model_multiplier(
 
     db_models::set_multiplier(&state.pool, &name, body.multiplier).await?;
     tracing::info!(model = %name, multiplier = body.multiplier, "admin: model multiplier updated");
-    Ok(Json(serde_json::json!({ "name": name, "multiplier": body.multiplier })))
+    Ok(Json(
+        serde_json::json!({ "name": name, "multiplier": body.multiplier }),
+    ))
 }
 
 // ── GET /admin/students/:id/token-balance ──────────────────────────────
@@ -952,8 +1062,12 @@ async fn topup_tokens_handler(
     headers: HeaderMap,
     Json(body): Json<TopupTokensBody>,
 ) -> Result<impl IntoResponse> {
-    tracing::debug!("[TOPUP] received request for student_id={}, amount={}", id, body.amount);
-    
+    tracing::debug!(
+        "[TOPUP] received request for student_id={}, amount={}",
+        id,
+        body.amount
+    );
+
     require_admin(&state, &headers)?;
 
     if body.amount <= 0 {
@@ -995,7 +1109,11 @@ async fn deduct_tokens_handler(
     headers: HeaderMap,
     Json(body): Json<DeductTokensBody>,
 ) -> Result<impl IntoResponse> {
-    tracing::debug!("[DEDUCT] received request for student_id={}, amount={}", id, body.amount);
+    tracing::debug!(
+        "[DEDUCT] received request for student_id={}, amount={}",
+        id,
+        body.amount
+    );
     require_admin(&state, &headers)?;
 
     if body.amount <= 0 {
@@ -1021,7 +1139,7 @@ async fn deduct_tokens_handler(
         "tokens_deducted": body.amount,
         "new_balance": new_balance,
     })))
-} 
+}
 
 // ── GET /admin/students/:id/token-deductions ───────────────────────────
 

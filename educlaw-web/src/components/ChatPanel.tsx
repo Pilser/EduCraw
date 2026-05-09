@@ -3,8 +3,23 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Send, Square, Zap, AlertCircle, Bot, Paperclip, X } from "lucide-react";
-import type { ChatMessage, MessageSegment, TokenUsage } from "../api/types";
+import {
+  Send,
+  Square,
+  Zap,
+  AlertCircle,
+  Bot,
+  Paperclip,
+  X,
+  Brain,
+  Eye,
+} from "lucide-react";
+import type {
+  ChatMessage,
+  MessageSegment,
+  TokenUsage,
+  Model,
+} from "../api/types";
 import type { AttachedFileRef } from "../pages/SessionPage";
 import ToolCallCard from "./ToolCallCard";
 import ChatFilePreview from "./ChatFilePreview";
@@ -28,7 +43,7 @@ interface Props {
   onCancel?: () => void;
   disabled: boolean;
   // model selector
-  availableModels?: string[];
+  availableModels?: Model[];
   activeModel?: string;
   onModelChange?: (model: string) => void;
   // token usage
@@ -59,7 +74,12 @@ interface Props {
   } | null;
   onRemoveAttachedImage?: () => void;
   // Callback to attach file from drop (SessionPage handles image vs non-image)
-  onAttachToChat?: (path: string, name: string, isSubject?: boolean, subjectId?: string) => void;
+  onAttachToChat?: (
+    path: string,
+    name: string,
+    isSubject?: boolean,
+    subjectId?: string,
+  ) => void;
 }
 
 // Shared code-block renderer for ReactMarkdown.
@@ -309,7 +329,7 @@ export default function ChatPanel({
   // Drag-over handlers for files from FileTree
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
+    e.dataTransfer.dropEffect = "copy";
     setIsDragOver(true);
   }, []);
 
@@ -320,21 +340,24 @@ export default function ChatPanel({
     setIsDragOver(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(false);
 
-    const fileData = e.dataTransfer.getData('application/educlaw-file');
-    if (fileData) {
-      try {
-        const { path, name, isSubject, subjectId } = JSON.parse(fileData);
-        // Use onAttachToChat to properly handle image vs non-image
-        onAttachToChat?.(path, name, isSubject, subjectId);
-      } catch (err) {
-        console.error('Failed to parse dropped file data:', err);
+      const fileData = e.dataTransfer.getData("application/educlaw-file");
+      if (fileData) {
+        try {
+          const { path, name, isSubject, subjectId } = JSON.parse(fileData);
+          // Use onAttachToChat to properly handle image vs non-image
+          onAttachToChat?.(path, name, isSubject, subjectId);
+        } catch (err) {
+          console.error("Failed to parse dropped file data:", err);
+        }
       }
-    }
-  }, [onAttachToChat]);
+    },
+    [onAttachToChat],
+  );
 
   const handleImageSelected = useCallback((file: AttachedFile | null) => {
     setAttachedImage(file);
@@ -356,13 +379,21 @@ export default function ChatPanel({
 
     // Include attached file references from FileTree in the message
     if (attachedFileRefs && attachedFileRefs.length > 0) {
-      const fileRefsText = attachedFileRefs.map(f => `\`${f.path}\``).join(", ");
-      text = text ? `${text}\n\nFile Attached: ${fileRefsText}` : `File Attached: ${fileRefsText}`;
+      const fileRefsText = attachedFileRefs
+        .map((f) => `\`${f.path}\``)
+        .join(", ");
+      text = text
+        ? `${text}\n\nFile Attached: ${fileRefsText}`
+        : `File Attached: ${fileRefsText}`;
     }
 
     // Handle image from FileTree (sent as base64)
     if (attachedImageFromTree && onSendWithImage) {
-      onSendWithImage(text, attachedImageFromTree.dataUrl, attachedImageFromTree.mimeType);
+      onSendWithImage(
+        text,
+        attachedImageFromTree.dataUrl,
+        attachedImageFromTree.mimeType,
+      );
       onInputChange("");
       setAttachedImage(null);
       setFilesToUpload([]);
@@ -370,7 +401,7 @@ export default function ChatPanel({
       onRemoveAttachedImage?.();
       // Clear attached file refs after sending
       if (attachedFileRefs && attachedFileRefs.length > 0) {
-        attachedFileRefs.forEach(f => onRemoveAttachedFile?.(f.path));
+        attachedFileRefs.forEach((f) => onRemoveAttachedFile?.(f.path));
       }
       setTimeout(() => textareaRef.current?.focus(), 0);
       return;
@@ -403,7 +434,7 @@ export default function ChatPanel({
     fileInputAttachmentRef.current?.clearAll();
     // Clear attached file refs after sending
     if (attachedFileRefs && attachedFileRefs.length > 0) {
-      attachedFileRefs.forEach(f => onRemoveAttachedFile?.(f.path));
+      attachedFileRefs.forEach((f) => onRemoveAttachedFile?.(f.path));
     }
     setTimeout(() => textareaRef.current?.focus(), 0);
   }
@@ -418,20 +449,33 @@ export default function ChatPanel({
             <span className="text-[10px] md:text-xs font-semibold text-wp-text-secondary uppercase tracking-wide">
               Model
             </span>
-            <select
-              value={activeModel ?? availableModels[0]}
-              onChange={(e) => onModelChange?.(e.target.value)}
-              disabled={disabled}
-              className="text-[10px] md:text-xs font-semibold text-wp-accent bg-wp-accent-subtle border border-wp-border-mid
-                rounded-wp-md px-2 py-0.5 md:py-1 focus:outline-none focus:ring-2 focus:ring-wp-accent
-                disabled:opacity-60 cursor-pointer transition-all"
-            >
-              {availableModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1">
+              <select
+                value={activeModel ?? availableModels[0].name}
+                onChange={(e) => onModelChange?.(e.target.value)}
+                disabled={disabled}
+                className="text-[10px] md:text-xs font-semibold text-wp-accent bg-wp-accent-subtle border border-wp-border-mid
+                  rounded-wp-md px-2 py-0.5 md:py-1 focus:outline-none focus:ring-2 focus:ring-wp-accent
+                  disabled:opacity-60 cursor-pointer transition-all"
+              >
+                {availableModels.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.display_name}
+                  </option>
+                ))}
+              </select>
+              {/* Show capability icons for active model */}
+              {availableModels.find(
+                (m) => m.name === (activeModel ?? availableModels[0].name),
+              )?.think_mode === 1 && (
+                <Brain className="w-3 h-3 md:w-3.5 md:h-3.5 text-wp-info shrink-0" />
+              )}
+              {availableModels.find(
+                (m) => m.name === (activeModel ?? availableModels[0].name),
+              )?.visual_support === 1 && (
+                <Eye className="w-3 h-3 md:w-3.5 md:h-3.5 text-wp-accent shrink-0" />
+              )}
+            </div>
           </div>
         ) : (
           <div className="flex items-center gap-2">
@@ -517,7 +561,7 @@ export default function ChatPanel({
 
       {/* Input bar: ChatGPT-style with icon buttons on far sides */}
       <div
-        className={`shrink-0 border-t-2 border-wp-border-mid bg-wp-surface px-3 md:px-5 py-3 md:py-4 transition-colors ${isDragOver ? 'bg-wp-accent-subtle border-wp-accent' : ''}`}
+        className={`shrink-0 border-t-2 border-wp-border-mid bg-wp-surface px-3 md:px-5 py-3 md:py-4 transition-colors ${isDragOver ? "bg-wp-accent-subtle border-wp-accent" : ""}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -531,8 +575,14 @@ export default function ChatPanel({
             {/* Attached image from FileTree */}
             {attachedImageFromTree && (
               <div className="flex items-center gap-2 mb-1 px-2 py-1.5 bg-wp-accent-subtle rounded-wp-md">
-                <img src={attachedImageFromTree.dataUrl} alt={attachedImageFromTree.name} className="w-8 h-8 object-cover rounded" />
-                <span className="text-xs text-wp-accent font-medium truncate flex-1">{attachedImageFromTree.name}</span>
+                <img
+                  src={attachedImageFromTree.dataUrl}
+                  alt={attachedImageFromTree.name}
+                  className="w-8 h-8 object-cover rounded"
+                />
+                <span className="text-xs text-wp-accent font-medium truncate flex-1">
+                  {attachedImageFromTree.name}
+                </span>
                 <button
                   onClick={() => {
                     onRemoveAttachedImage?.();
@@ -547,8 +597,10 @@ export default function ChatPanel({
             {/* Attached files from FileTree (non-image) */}
             {attachedFileRefs && attachedFileRefs.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-1">
-                <span className="text-[10px] text-wp-text-tertiary self-center">Files:</span>
-                {attachedFileRefs.map(f => (
+                <span className="text-[10px] text-wp-text-tertiary self-center">
+                  Files:
+                </span>
+                {attachedFileRefs.map((f) => (
                   <span
                     key={f.path}
                     className="flex items-center gap-1 px-2 py-1 bg-wp-accent-subtle text-wp-accent rounded-wp-sm text-xs font-medium"
@@ -567,69 +619,69 @@ export default function ChatPanel({
             )}
 
             <div className="relative flex items-end gap-2 md:gap-3">
-            {/* Attach icon button - far left side */}
-            <div className="shrink-0 absolute left-2 md:left-3 bottom-2 md:bottom-3 z-10">
-              <FileInputAttachment
-                ref={fileInputAttachmentRef}
-                onImageSelected={handleImageSelected}
-                onFilesUploaded={handleFilesReadyForUpload}
-                disabled={disabled}
-              />
-            </div>
+              {/* Attach icon button - far left side */}
+              <div className="shrink-0 absolute left-2 md:left-3 bottom-2 md:bottom-3 z-10">
+                <FileInputAttachment
+                  ref={fileInputAttachmentRef}
+                  onImageSelected={handleImageSelected}
+                  onFilesUploaded={handleFilesReadyForUpload}
+                  disabled={disabled}
+                />
+              </div>
 
-            {/* Main input area - text starts after left icon, stops before right icon */}
-            <div className="flex-1 relative">
-              <textarea
-                ref={textareaRef}
-                className="w-full resize-none rounded-wp-xl border-2 border-wp-border-mid pl-10 md:pl-12 pr-10 md:pr-12 py-3 md:py-4 text-sm md:text-base text-wp-text-primary
+              {/* Main input area - text starts after left icon, stops before right icon */}
+              <div className="flex-1 relative">
+                <textarea
+                  ref={textareaRef}
+                  className="w-full resize-none rounded-wp-xl border-2 border-wp-border-mid pl-10 md:pl-12 pr-10 md:pr-12 py-3 md:py-4 text-sm md:text-base text-wp-text-primary
                   placeholder:text-wp-text-tertiary focus:outline-none focus:ring-2 focus:ring-wp-accent focus:border-wp-accent
                   bg-wp-page max-h-48 md:max-h-56 min-h-[3rem] md:min-h-[3.5rem] font-sans transition-all shadow-sm"
-                placeholder="Ask EduClaw anything... (Enter to send, Shift+Enter for new line)"
-                rows={1}
-                value={inputValue}
-                onChange={(e) => {
-                  onInputChange(e.target.value);
-                  e.target.style.height = "auto";
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-                }}
-                onKeyDown={handleKeyDown}
-                disabled={disabled}
-              />
-            </div>
+                  placeholder="Ask EduClaw anything... (Enter to send, Shift+Enter for new line)"
+                  rows={1}
+                  value={inputValue}
+                  onChange={(e) => {
+                    onInputChange(e.target.value);
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+                  }}
+                  onKeyDown={handleKeyDown}
+                  disabled={disabled}
+                />
+              </div>
 
-            {/* Stop/Send icon buttons - far right side */}
-            <div className="shrink-0 absolute right-2 md:right-3 bottom-2 md:bottom-3 flex items-center gap-1.5 md:gap-2 z-10">
-              {disabled && onCancel && (
-                <button
-                  onClick={onCancel}
-                  className="p-2 rounded-wp-md bg-wp-error hover:bg-wp-error/80 active:bg-wp-error/70 text-wp-text-on-accent font-bold flex items-center justify-center transition-all shadow-sm border border-wp-error"
-                  title="Stop generating"
-                >
-                  <Square className="w-4 h-4" />
-                </button>
-              )}
-              <button
-                onClick={doSend}
-                disabled={
-                  disabled ||
-                  (!inputValue.trim() &&
-                    !attachedImage &&
-                    filesToUpload.length === 0 &&
-                    (!attachedFileRefs || attachedFileRefs.length === 0))
-                }
-                className="p-2 rounded-wp-md bg-wp-accent hover:bg-wp-accent-hover active:bg-wp-accent/70 disabled:bg-wp-border-soft
-                  disabled:cursor-not-allowed text-wp-text-on-accent font-bold flex items-center justify-center transition-all shadow-sm disabled:shadow border border-wp-accent-hover disabled:border-wp-border-soft"
-                title="Send (Enter)"
-              >
-                {disabled ? (
-                  <div className="w-4 h-4 border-2 border-wp-text-on-accent/40 border-t-wp-text-on-accent rounded-full animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
+              {/* Stop/Send icon buttons - far right side */}
+              <div className="shrink-0 absolute right-2 md:right-3 bottom-2 md:bottom-3 flex items-center gap-1.5 md:gap-2 z-10">
+                {disabled && onCancel && (
+                  <button
+                    onClick={onCancel}
+                    className="p-2 rounded-wp-md bg-wp-error hover:bg-wp-error/80 active:bg-wp-error/70 text-wp-text-on-accent font-bold flex items-center justify-center transition-all shadow-sm border border-wp-error"
+                    title="Stop generating"
+                  >
+                    <Square className="w-4 h-4" />
+                  </button>
                 )}
-              </button>
+                <button
+                  onClick={doSend}
+                  disabled={
+                    disabled ||
+                    (!inputValue.trim() &&
+                      !attachedImage &&
+                      filesToUpload.length === 0 &&
+                      (!attachedFileRefs || attachedFileRefs.length === 0))
+                  }
+                  className="p-2 rounded-wp-md bg-wp-accent hover:bg-wp-accent-hover active:bg-wp-accent/70 disabled:bg-wp-border-soft
+                  disabled:cursor-not-allowed text-wp-text-on-accent font-bold flex items-center justify-center transition-all shadow-sm disabled:shadow border border-wp-accent-hover disabled:border-wp-border-soft"
+                  title="Send (Enter)"
+                >
+                  {disabled ? (
+                    <div className="w-4 h-4 border-2 border-wp-text-on-accent/40 border-t-wp-text-on-accent rounded-full animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
         )}
       </div>
     </div>

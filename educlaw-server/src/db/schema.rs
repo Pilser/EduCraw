@@ -50,11 +50,9 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_subjects_cohort ON subjects(cohort_id)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_subjects_cohort ON subjects(cohort_id)")
+        .execute(pool)
+        .await?;
 
     // ── assignments ───────────────────────────────────────────────────────────
     sqlx::query(
@@ -100,6 +98,9 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         "ALTER TABLE students ADD COLUMN token_blocked_at TEXT",
         "ALTER TABLE students ADD COLUMN last_model TEXT",
         "ALTER TABLE models ADD COLUMN multiplier REAL NOT NULL DEFAULT 1.0",
+        "ALTER TABLE models ADD COLUMN provider TEXT",
+        "ALTER TABLE models ADD COLUMN think_mode INTEGER",
+        "ALTER TABLE models ADD COLUMN visual_support INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE sessions ADD COLUMN last_token_checkpoint INTEGER NOT NULL DEFAULT 0",
     ] {
         let _ = sqlx::query(col).execute(pool).await;
@@ -129,23 +130,17 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id)")
+        .execute(pool)
+        .await?;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state)")
+        .execute(pool)
+        .await?;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_assignments_subject ON assignments(subject_id)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_assignments_subject ON assignments(subject_id)")
+        .execute(pool)
+        .await?;
 
     // ── token_usage ───────────────────────────────────────────────────────────
     // One row per API turn; each row stores the deltas reported by claw for
@@ -165,11 +160,9 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id)")
+        .execute(pool)
+        .await?;
 
     // ── token_deductions ──────────────────────────────────────────────────────
     // Audit trail for token deductions with model multiplier applied

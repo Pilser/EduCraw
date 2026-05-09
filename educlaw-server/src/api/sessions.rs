@@ -22,14 +22,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::auth::bearer_token;
 use crate::db::sessions::{self as db_sess, Session};
 use crate::db::{models as db_models, students, subjects, token_usage as db_tokens};
-use crate::auth::bearer_token;
 use crate::error::{AppError, Result};
 use crate::session::{
     broker::now_secs,
     dirs::SessionDirs,
-    namespace::{mount_overlay, umount_overlay, spawn_claw_session, SpawnParams},
+    namespace::{mount_overlay, spawn_claw_session, umount_overlay, SpawnParams},
     watchdog::{run_watchdog, WatchdogConfig},
 };
 
@@ -161,7 +161,8 @@ async fn create_session(
     std::fs::write(
         dirs.config.join("settings.json"),
         serde_json::to_string_pretty(&initial_settings).unwrap(),
-    ).map_err(|e| AppError::Session(format!("failed to write session settings: {e}")))?;
+    )
+    .map_err(|e| AppError::Session(format!("failed to write session settings: {e}")))?;
 
     // Copy credentials.json from the user's default claw config home so the
     // per-session CLAW_CONFIG_HOME has working API credentials (OAuth token etc.).
@@ -224,9 +225,12 @@ async fn create_session(
     } else if let Some(last) = student.last_model.clone().filter(|m| !m.is_empty()) {
         Some(last)
     } else {
-        let student_models = db_models::models_for_student(&state.pool, &student.id).await
+        let student_models = db_models::models_for_student(&state.pool, &student.id)
+            .await
             .unwrap_or_default();
-        student_models.into_iter().next()
+        student_models
+            .into_iter()
+            .next()
             .or_else(|| std::env::var("CLAW_MODEL").ok())
     };
     tracing::info!(
@@ -255,36 +259,46 @@ async fn create_session(
 
     // Create broker entry + spawn idle watchdog
     let last_input_at = Arc::new(AtomicU64::new(now_secs()));
-    state.broker.create_entry(&session_id, Arc::clone(&last_input_at)).await;
+    state
+        .broker
+        .create_entry(&session_id, Arc::clone(&last_input_at))
+        .await;
     let idle_secs: u64 = std::env::var("IDLE_TIMEOUT_S")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(900);
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(900);
     let warn_secs: u64 = std::env::var("WARN_BEFORE_S")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(60);
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
     tokio::spawn(run_watchdog(
         WatchdogConfig {
             session_id: session_id.clone(),
             overlay_mount: dirs.merged.clone(),
             idle_timeout: Duration::from_secs(idle_secs),
-            warn_before:  Duration::from_secs(warn_secs),
+            warn_before: Duration::from_secs(warn_secs),
         },
         Arc::clone(&state.broker),
         state.pool.clone(),
     ));
 
     // Spawn claw inside an unshare namespace; record the PID for Shell MCP nsenter.
-    let mcp_socket = std::env::var("EDUCLAW_MCP_SOCKET")
-        .unwrap_or_else(|_| "127.0.0.1:9000".to_string());
+    let mcp_socket =
+        std::env::var("EDUCLAW_MCP_SOCKET").unwrap_or_else(|_| "127.0.0.1:9000".to_string());
 
     // Detect if student has a prior session to resume
     let mut env_vars = vec![
         ("EDUCLAW_MCP_SOCKET".to_string(), mcp_socket),
-        ("EDUCLAW_SYSTEM_PROMPT".to_string(), system_prompt_b64.clone()),
-        ("EDUCLAW_STRUCTURED_OUTPUT".to_string(), "1".to_string()),  // Enable OSC diagnostics
+        (
+            "EDUCLAW_SYSTEM_PROMPT".to_string(),
+            system_prompt_b64.clone(),
+        ),
+        ("EDUCLAW_STRUCTURED_OUTPUT".to_string(), "1".to_string()), // Enable OSC diagnostics
         // Force matplotlib to use the non-interactive Agg backend so plt.show()
         // never blocks waiting for a GUI display that doesn't exist.
         ("MPLBACKEND".to_string(), "Agg".to_string()),
     ];
-    
+
     if let Some(latest_session_id) = detect_latest_student_session(&dirs.upper) {
         env_vars.push(("CLAW_LOAD_SESSION".to_string(), latest_session_id.clone()));
         tracing::info!(
@@ -399,9 +413,8 @@ async fn set_model(
     // Signal the running pty_bridge by writing a side-channel file.
     // pty_bridge watches for this file and injects `/model <name>\n` into
     // claw's stdin, then removes the file.
-    let dirs = crate::session::dirs::SessionDirs::for_existing_session(
-        &state.workspace_root, &session_id,
-    );
+    let dirs =
+        crate::session::dirs::SessionDirs::for_existing_session(&state.workspace_root, &session_id);
     let signal_path = dirs.config.join("pending_model.txt");
     let _ = std::fs::write(&signal_path, &model);
 
@@ -429,8 +442,9 @@ async fn get_session_models(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
-    let models =
-        db_models::models_for_student(&state.pool, &session.student_id).await?;
+    // Get full Model objects with specs (provider, think_mode, visual_support)
+    let models = db_models::full_models_for_student(&state.pool, &session.student_id).await?;
+
     // Priority: student.last_model (persisted preference) → session.model → default
     let student_last_model = students::get_student(&state.pool, &session.student_id)
         .await
@@ -501,10 +515,7 @@ async fn broadcast_message(
     }
 
     // Format the banner: ANSI bold yellow, visible on any dark/light terminal.
-    let banner = format!(
-        "\r\n\x1b[1;33m[EduClaw] {}\x1b[0m\r\n",
-        body.message
-    );
+    let banner = format!("\r\n\x1b[1;33m[EduClaw] {}\x1b[0m\r\n", body.message);
     let bytes = banner.into_bytes();
 
     if body.all {
@@ -532,7 +543,8 @@ async fn broadcast_message(
 /// `upper` contains the student's persistent personal files; shown separately after
 /// the subject tree (`.claw/` is excluded as it is session config).
 fn build_workspace_tree(lower: &std::path::Path, upper: &std::path::Path) -> String {
-    let mut lines: Vec<String> = vec!["/ (workspace root — subject materials, read-only)".to_string()];
+    let mut lines: Vec<String> =
+        vec!["/ (workspace root — subject materials, read-only)".to_string()];
 
     // Collect subject dirs from lower layer, sorted by name.
     let mut subject_dirs: Vec<std::path::PathBuf> = std::fs::read_dir(lower)
@@ -573,9 +585,7 @@ fn build_workspace_tree(lower: &std::path::Path, upper: &std::path::Path) -> Str
         let mut files: Vec<_> = std::fs::read_dir(subj)
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
-                    .filter(|e| {
-                        e.path().is_file() && e.file_name() != "subject.json"
-                    })
+                    .filter(|e| e.path().is_file() && e.file_name() != "subject.json")
                     .map(|e| e.path())
                     .collect()
             })
@@ -584,7 +594,11 @@ fn build_workspace_tree(lower: &std::path::Path, upper: &std::path::Path) -> Str
 
         let show = files.len().min(8);
         for (j, f) in files.iter().take(show).enumerate() {
-            let fc = if j == show - 1 && files.len() <= 8 { "└──" } else { "├──" };
+            let fc = if j == show - 1 && files.len() <= 8 {
+                "└──"
+            } else {
+                "├──"
+            };
             let fname = f.file_name().unwrap_or_default().to_string_lossy();
             lines.push(format!("│   {fc} {fname}"));
         }
@@ -599,7 +613,10 @@ fn build_workspace_tree(lower: &std::path::Path, upper: &std::path::Path) -> Str
         lines.push(format!("├── {n}   ← personal saved file"));
     }
     if personal.len() > 20 {
-        lines.push(format!("├── ... {} more personal file(s)", personal.len() - 20));
+        lines.push(format!(
+            "├── ... {} more personal file(s)",
+            personal.len() - 20
+        ));
     }
 
     lines.push("└── .claw/".to_string());
@@ -618,10 +635,10 @@ fn read_subject_title(subject_dir: &std::path::Path) -> Option<String> {
 /// Returns the session ID if found, or None if no sessions exist.
 fn detect_latest_student_session(student_dir: &std::path::Path) -> Option<String> {
     let sessions_dir = student_dir.join(".claw/sessions");
-    
+
     // Try to read the sessions directory
     let entries = std::fs::read_dir(&sessions_dir).ok()?;
-    
+
     // Find all .jsonl and .json files, sorted by modification time (newest first)
     let mut session_files: Vec<(std::time::SystemTime, String)> = entries
         .filter_map(|entry| {
@@ -632,25 +649,21 @@ fn detect_latest_student_session(student_dir: &std::path::Path) -> Option<String
                 .and_then(|ext| ext.to_str())
                 .map(|ext| ext == "jsonl" || ext == "json")
                 .unwrap_or(false);
-            
+
             if !is_session_file {
                 return None;
             }
-            
+
             let modified = entry.metadata().ok()?.modified().ok()?;
-            let session_id = path
-                .file_stem()?
-                .to_str()?
-                .to_string();
-            
+            let session_id = path.file_stem()?.to_str()?.to_string();
+
             Some((modified, session_id))
         })
         .collect();
-    
+
     // Sort by modification time (newest first)
     session_files.sort_by(|a, b| b.0.cmp(&a.0));
-    
+
     // Return the ID of the most recently modified session
     session_files.into_iter().next().map(|(_, id)| id)
 }
-
