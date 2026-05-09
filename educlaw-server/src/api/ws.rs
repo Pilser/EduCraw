@@ -93,9 +93,17 @@ async fn session_ws(
         let mut env_vars: Vec<(String, String)> = Vec::new();
         for key in &[
             "HOME", "USER", "PATH", "TERM",
+            // Built-in providers
             "XAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-            "GEMINI_API_KEY", "GOOGLE_API_KEY", "MISTRAL_API_KEY",
-            "GROQ_API_KEY", "OPENAI_BASE_URL",
+            "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
+            // Declared providers
+            "DEEPSEEK_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
+            "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "NOVITA_API_KEY",
+            "NVIDIA_API_KEY", "CEREBRAS_API_KEY", "INCEPTION_API_KEY",
+            "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
+            "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
+            // Other
+            "OPENAI_BASE_URL",
         ] {
             if let Ok(val) = std::env::var(key) {
                 env_vars.push((key.to_string(), val));
