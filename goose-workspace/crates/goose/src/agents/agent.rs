@@ -928,8 +928,7 @@ impl Agent {
             .await
             .unwrap_or_default();
 
-        if (extension_name.is_none() || extension_name.as_deref() == Some("platform"))
-        {
+        if extension_name.is_none() || extension_name.as_deref() == Some("platform") {
             // Schedule management tool removed
         }
 

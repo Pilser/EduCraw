@@ -22,7 +22,10 @@ use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use sacp::schema::{CancelNotification, ContentBlock, ImageContent, NewSessionRequest, PromptRequest, SessionId, StopReason, TextContent};
+use sacp::schema::{
+    CancelNotification, ContentBlock, ImageContent, NewSessionRequest, PromptRequest, SessionId,
+    StopReason, TextContent,
+};
 use sacp::{Agent as SacpAgent, ConnectionTo};
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, Mutex};
@@ -119,7 +122,9 @@ pub async fn run_acp_session(
             if let Some(ref prompt) = system_prompt {
                 let prompt_dir = goose_path_root.join("config").join("prompts");
                 tokio::fs::create_dir_all(&prompt_dir).await.ok();
-                tokio::fs::write(prompt_dir.join("system.md"), prompt).await.ok();
+                tokio::fs::write(prompt_dir.join("system.md"), prompt)
+                    .await
+                    .ok();
             }
 
             // Spawn goose acp subprocess
@@ -149,7 +154,7 @@ pub async fn run_acp_session(
 
             tracing::info!(session_id = %session_id, "✓ [GOOSE] Subprocess spawned successfully");
 
-            let child_stdin  = child.stdin.take().expect("stdin piped");
+            let child_stdin = child.stdin.take().expect("stdin piped");
             let child_stdout = child.stdout.take().expect("stdout piped");
             let child_stderr = child.stderr.take().expect("stderr piped");
 
@@ -169,7 +174,7 @@ pub async fn run_acp_session(
                 }
             });
 
-            let model_arc    = Arc::new(Mutex::new(model.clone()));
+            let model_arc = Arc::new(Mutex::new(model.clone()));
             let loading_flag = Arc::new(AtomicBool::new(false));
 
             // Wrap notif sender so the sacp callback can have its target swapped on reconnect
@@ -378,7 +383,11 @@ async fn handle_client_message(
     loading_flag: &Arc<AtomicBool>,
 ) {
     match msg {
-        ClientMessage::Input { data, image, mime_type } => {
+        ClientMessage::Input {
+            data,
+            image,
+            mime_type,
+        } => {
             tracing::info!(session_id = %session_id, "📥 [INPUT] Processing input message (len={}, has_image={})", data.len(), image.is_some());
 
             // ── Token-block gate ──────────────────────────────────────
@@ -400,9 +409,8 @@ async fn handle_client_message(
                          Please contact your administrator to continue."
                             .to_string()
                     });
-                let frame =
-                    serde_json::json!({"type": "token_limit_reached", "banner": banner})
-                        .to_string();
+                let frame = serde_json::json!({"type": "token_limit_reached", "banner": banner})
+                    .to_string();
                 let _ = ctrl_tx.send(frame).await;
                 return;
             }
@@ -501,6 +509,18 @@ async fn handle_client_message(
 
                 let frame = match resp {
                     Ok(r) => {
+                        // Log full token usage including cache tokens from PromptResponse
+                        if let Some(usage) = &r.usage {
+                            tracing::info!(
+                                session_id = %session_id_for_prompt,
+                                total_tokens = usage.total_tokens,
+                                input_tokens = usage.input_tokens,
+                                output_tokens = usage.output_tokens,
+                                cached_read_tokens = ?usage.cached_read_tokens,
+                                cached_write_tokens = ?usage.cached_write_tokens,
+                                "📊 [GOOSE PROMPT RESPONSE] Full token usage from PromptResponse"
+                            );
+                        }
                         tracing::info!(session_id = %session_id_for_prompt, "✓ [ACP] Response OK, stop_reason: {:?}", r.stop_reason);
                         match r.stop_reason {
                             StopReason::EndTurn | StopReason::Cancelled => {
@@ -512,7 +532,7 @@ async fn handle_client_message(
                             })
                             .to_string(),
                         }
-                    },
+                    }
                     Err(e) => {
                         tracing::error!(session_id = %session_id_for_prompt, "✗ [ACP] PromptRequest failed: {}", e);
                         serde_json::json!({
@@ -535,7 +555,7 @@ async fn handle_client_message(
 
             // Check if student has specific model restrictions in educlaw DB
             let has_restrictions = sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM student_models WHERE student_id = ?"
+                "SELECT COUNT(*) FROM student_models WHERE student_id = ?",
             )
             .bind(student_id)
             .fetch_one(pool)
@@ -707,6 +727,68 @@ async fn handle_client_message(
                     let frame = serde_json::json!({
                         "type": "error",
                         "message": format!("Failed to fork session: {}", e),
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+            }
+        }
+
+        ClientMessage::ExportSession {
+            session_id: export_session_id,
+        } => {
+            tracing::info!(session_id = %session_id, export_session_id = %export_session_id, "📤 [EXPORT-SESSION] Exporting session as JSON");
+            match super::handle_export_session(&cx, export_session_id.clone()).await {
+                Ok(data) => {
+                    tracing::info!(session_id = %session_id, export_session_id = %export_session_id, data_len = data.len(), "✓ [EXPORT-SESSION] Successfully exported session");
+                    let frame = serde_json::json!({
+                        "type": "export_session_result",
+                        "data": data,
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+                Err(e) => {
+                    tracing::error!(session_id = %session_id, export_session_id = %export_session_id, error = %e, "✗ [EXPORT-SESSION] Failed to export session");
+                    let frame = serde_json::json!({
+                        "type": "error",
+                        "message": format!("Failed to export session: {}", e),
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+            }
+        }
+
+        ClientMessage::ImportSession { data } => {
+            tracing::info!(session_id = %session_id, data_len = data.len(), "📥 [IMPORT-SESSION] Importing session from JSON");
+            match super::handle_import_session(&cx, data.clone()).await {
+                Ok(result) => {
+                    // ImportSession succeeded - the new session_id becomes our active ACP session_id
+                    let imported_sid = SessionId::new(result.session_id.clone());
+                    *acp_session_id_holder.lock().await = Some(imported_sid.clone());
+                    tracing::info!(
+                        session_id = %session_id,
+                        imported_session_id = %result.session_id,
+                        title = ?result.title,
+                        message_count = result.message_count,
+                        "✓ [IMPORT-SESSION] Successfully imported, session_id set to imported session"
+                    );
+                    let frame = serde_json::json!({
+                        "type": "import_session_result",
+                        "session_id": result.session_id,
+                        "title": result.title,
+                        "updated_at": result.updated_at,
+                        "message_count": result.message_count,
+                    })
+                    .to_string();
+                    let _ = ctrl_tx.send(frame).await;
+                }
+                Err(e) => {
+                    tracing::error!(session_id = %session_id, error = %e, "✗ [IMPORT-SESSION] Failed to import session");
+                    let frame = serde_json::json!({
+                        "type": "error",
+                        "message": format!("Failed to import session: {}", e),
                     })
                     .to_string();
                     let _ = ctrl_tx.send(frame).await;

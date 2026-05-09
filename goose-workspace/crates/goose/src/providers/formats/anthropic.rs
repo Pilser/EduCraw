@@ -396,21 +396,24 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
 
-        // IMPORTANT: For display purposes, we want to show the ACTUAL total tokens consumed
-        // The cache pricing should only affect cost calculation, not token count display
-        let total_input_tokens = input_tokens + cache_creation_tokens + cache_read_tokens;
-
         // Convert to i32 with bounds checking
-        let total_input_i32 = total_input_tokens.min(i32::MAX as u64) as i32;
+        let input_tokens_i32 = input_tokens.min(i32::MAX as u64) as i32;
         let output_tokens_i32 = output_tokens.min(i32::MAX as u64) as i32;
-        let total_tokens_i32 =
-            (total_input_i32 as i64 + output_tokens_i32 as i64).min(i32::MAX as i64) as i32;
+        let cache_read_i32 = cache_read_tokens.min(i32::MAX as u64) as i32;
+        let cache_write_i32 = cache_creation_tokens.min(i32::MAX as u64) as i32;
+
+        // Total includes all token types
+        let total_input_tokens = input_tokens + cache_creation_tokens + cache_read_tokens;
+        let total_tokens_i32 = (total_input_tokens.min(i32::MAX as u64) as i64
+            + output_tokens_i32 as i64)
+            .min(i32::MAX as i64) as i32;
 
         Ok(Usage::new(
-            Some(total_input_i32),
+            Some(input_tokens_i32),
             Some(output_tokens_i32),
             Some(total_tokens_i32),
-        ))
+        )
+        .with_cache_tokens(Some(cache_read_i32), Some(cache_write_i32)))
     } else if data.as_object().is_some() {
         // Check if the data itself is the usage object (for message_delta events that might have usage at top level)
         let input_tokens = data
@@ -446,7 +449,7 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
             let total_tokens_i32 =
                 (total_input_i32 as i64 + output_tokens_i32 as i64).min(i32::MAX as i64) as i32;
 
-            tracing::debug!("🔍 Anthropic ACTUAL token counts from direct object: input={}, output={}, total={}", 
+            tracing::debug!("🔍 Anthropic ACTUAL token counts from direct object: input={}, output={}, total={}",
                     total_input_i32, output_tokens_i32, total_tokens_i32);
 
             Ok(Usage::new(

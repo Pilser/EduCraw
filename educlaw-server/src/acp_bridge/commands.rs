@@ -8,6 +8,7 @@ use sacp::{Agent as SacpAgent, ConnectionTo};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use super::custom_requests::{ExportSessionRequest, ImportSessionRequest, ImportSessionResponse};
 use crate::error::{AppError, Result};
 
 /// Control message sent from frontend through WebSocket to trigger ACP commands
@@ -20,6 +21,10 @@ pub enum ControlMessage {
     LoadSession { thread_id: String },
     #[serde(rename = "fork_session")]
     ForkSession { thread_id: String },
+    #[serde(rename = "export_session")]
+    ExportSession { session_id: String },
+    #[serde(rename = "import_session")]
+    ImportSession { data: String },
 }
 
 /// Response for list_sessions command
@@ -39,9 +44,7 @@ pub struct ForkSessionResult {
 }
 
 /// Handle ListSessionsRequest: fetch available threads from Goose
-pub async fn handle_list_sessions(
-    cx: &ConnectionTo<SacpAgent>,
-) -> Result<Vec<SessionListItem>> {
+pub async fn handle_list_sessions(cx: &ConnectionTo<SacpAgent>) -> Result<Vec<SessionListItem>> {
     let req = ListSessionsRequest::new();
     let resp = cx
         .send_request(req)
@@ -65,10 +68,7 @@ pub async fn handle_list_sessions(
 }
 
 /// Handle LoadSessionRequest: load a specific thread and start replay
-pub async fn handle_load_session(
-    cx: &ConnectionTo<SacpAgent>,
-    thread_id: String,
-) -> Result<()> {
+pub async fn handle_load_session(cx: &ConnectionTo<SacpAgent>, thread_id: String) -> Result<()> {
     let req = LoadSessionRequest::new(SessionId::new(thread_id.clone()), PathBuf::from("."));
 
     // block_task is safe here: called from the WebSocket receive loop (a plain
@@ -89,10 +89,7 @@ pub async fn handle_fork_session(
 ) -> Result<ForkSessionResult> {
     // ForkSession copies all messages + metadata from source thread into a new thread
     // Returns new SessionId which can then be loaded to continue conversation
-    let req = ForkSessionRequest::new(
-        SessionId::new(source_thread_id),
-        PathBuf::from("."),
-    );
+    let req = ForkSessionRequest::new(SessionId::new(source_thread_id), PathBuf::from("."));
 
     let resp = cx
         .send_request(req)
@@ -103,4 +100,32 @@ pub async fn handle_fork_session(
     Ok(ForkSessionResult {
         new_session_id: resp.session_id.0.to_string(),
     })
+}
+
+/// Handle ExportSessionRequest: export a session as JSON string
+pub async fn handle_export_session(
+    cx: &ConnectionTo<SacpAgent>,
+    session_id: String,
+) -> Result<String> {
+    let req = ExportSessionRequest { session_id };
+    let resp = cx
+        .send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ExportSession ACP error: {e}")))?;
+    Ok(resp.data)
+}
+
+/// Handle ImportSessionRequest: import a session from JSON string
+pub async fn handle_import_session(
+    cx: &ConnectionTo<SacpAgent>,
+    data: String,
+) -> Result<ImportSessionResponse> {
+    let req = ImportSessionRequest { data };
+    let resp = cx
+        .send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ImportSession ACP error: {e}")))?;
+    Ok(resp)
 }

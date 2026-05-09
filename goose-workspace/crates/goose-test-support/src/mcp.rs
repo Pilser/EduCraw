@@ -16,8 +16,6 @@ use tokio::task::JoinHandle;
 
 pub const FAKE_CODE: &str = "test-uuid-12345-67890";
 
-pub const TEST_IMAGE_B64: &str = include_str!("test_assets/test_image.b64").trim_ascii_end();
-
 pub trait HasMeta {
     fn meta(&self) -> &Meta;
 }
@@ -101,13 +99,7 @@ impl McpFixtureServer {
         Ok(CallToolResult::success(vec![Content::text(FAKE_CODE)]))
     }
 
-    #[tool(description = "Get an image")]
-    fn get_image(&self) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![Content::image(
-            TEST_IMAGE_B64,
-            "image/png",
-        )]))
-    }
+    
 }
 
 #[tool_handler]
@@ -116,7 +108,7 @@ impl ServerHandler for McpFixtureServer {
         InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_03_26)
             .with_server_info(Implementation::new("mcp-fixture", "1.0.0"))
-            .with_instructions("Test server with get_code and get_image tools.")
+            .with_instructions("Test server with get_code tool.")
     }
 }
 

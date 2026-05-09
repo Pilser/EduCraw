@@ -14,6 +14,7 @@
 
 mod client;
 mod commands;
+mod custom_requests;
 mod images;
 mod messages;
 mod model_poller;
@@ -23,8 +24,10 @@ mod permissions;
 mod session;
 
 pub use commands::{
-    handle_fork_session, handle_list_sessions, handle_load_session, ControlMessage, ForkSessionResult,
-    SessionListItem,
+    handle_export_session, handle_fork_session, handle_import_session, handle_list_sessions,
+    handle_load_session, ControlMessage, ForkSessionResult, SessionListItem,
 };
+
+pub use custom_requests::ImportSessionResponse;
 
 pub use session::run_acp_session;

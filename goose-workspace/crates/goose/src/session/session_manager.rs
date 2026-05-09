@@ -19,7 +19,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 11;
+pub const CURRENT_SCHEMA_VERSION: i32 = 12;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 
@@ -69,9 +69,13 @@ pub struct Session {
     pub total_tokens: Option<i32>,
     pub input_tokens: Option<i32>,
     pub output_tokens: Option<i32>,
+    pub cache_read_input_tokens: Option<i32>,
+    pub cache_write_input_tokens: Option<i32>,
     pub accumulated_total_tokens: Option<i32>,
     pub accumulated_input_tokens: Option<i32>,
     pub accumulated_output_tokens: Option<i32>,
+    pub accumulated_cache_read_tokens: Option<i32>,
+    pub accumulated_cache_write_tokens: Option<i32>,
     pub schedule_id: Option<String>,
     pub recipe: Option<Recipe>,
     pub user_recipe_values: Option<HashMap<String, String>>,
@@ -96,9 +100,13 @@ pub struct SessionUpdateBuilder<'a> {
     total_tokens: Option<Option<i32>>,
     input_tokens: Option<Option<i32>>,
     output_tokens: Option<Option<i32>>,
+    cache_read_input_tokens: Option<Option<i32>>,
+    cache_write_input_tokens: Option<Option<i32>>,
     accumulated_total_tokens: Option<Option<i32>>,
     accumulated_input_tokens: Option<Option<i32>>,
     accumulated_output_tokens: Option<Option<i32>>,
+    accumulated_cache_read_tokens: Option<Option<i32>>,
+    accumulated_cache_write_tokens: Option<Option<i32>>,
     schedule_id: Option<Option<String>>,
     recipe: Option<Option<Recipe>>,
     user_recipe_values: Option<Option<HashMap<String, String>>>,
@@ -128,9 +136,13 @@ impl<'a> SessionUpdateBuilder<'a> {
             total_tokens: None,
             input_tokens: None,
             output_tokens: None,
+            cache_read_input_tokens: None,
+            cache_write_input_tokens: None,
             accumulated_total_tokens: None,
             accumulated_input_tokens: None,
             accumulated_output_tokens: None,
+            accumulated_cache_read_tokens: None,
+            accumulated_cache_write_tokens: None,
             schedule_id: None,
             recipe: None,
             user_recipe_values: None,
@@ -193,6 +205,16 @@ impl<'a> SessionUpdateBuilder<'a> {
         self
     }
 
+    pub fn cache_read_input_tokens(mut self, tokens: Option<i32>) -> Self {
+        self.cache_read_input_tokens = Some(tokens);
+        self
+    }
+
+    pub fn cache_write_input_tokens(mut self, tokens: Option<i32>) -> Self {
+        self.cache_write_input_tokens = Some(tokens);
+        self
+    }
+
     pub fn accumulated_total_tokens(mut self, tokens: Option<i32>) -> Self {
         self.accumulated_total_tokens = Some(tokens);
         self
@@ -205,6 +227,16 @@ impl<'a> SessionUpdateBuilder<'a> {
 
     pub fn accumulated_output_tokens(mut self, tokens: Option<i32>) -> Self {
         self.accumulated_output_tokens = Some(tokens);
+        self
+    }
+
+    pub fn accumulated_cache_read_tokens(mut self, tokens: Option<i32>) -> Self {
+        self.accumulated_cache_read_tokens = Some(tokens);
+        self
+    }
+
+    pub fn accumulated_cache_write_tokens(mut self, tokens: Option<i32>) -> Self {
+        self.accumulated_cache_write_tokens = Some(tokens);
         self
     }
 
@@ -452,9 +484,13 @@ impl Default for Session {
             total_tokens: None,
             input_tokens: None,
             output_tokens: None,
+            cache_read_input_tokens: None,
+            cache_write_input_tokens: None,
             accumulated_total_tokens: None,
             accumulated_input_tokens: None,
             accumulated_output_tokens: None,
+            accumulated_cache_read_tokens: None,
+            accumulated_cache_write_tokens: None,
             schedule_id: None,
             recipe: None,
             user_recipe_values: None,
@@ -518,14 +554,24 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
             total_tokens: row.try_get("total_tokens")?,
             input_tokens: row.try_get("input_tokens")?,
             output_tokens: row.try_get("output_tokens")?,
+            cache_read_input_tokens: row.try_get("cache_read_input_tokens").ok().flatten(),
+            cache_write_input_tokens: row.try_get("cache_write_input_tokens").ok().flatten(),
             accumulated_total_tokens: row.try_get("accumulated_total_tokens")?,
             accumulated_input_tokens: row.try_get("accumulated_input_tokens")?,
             accumulated_output_tokens: row.try_get("accumulated_output_tokens")?,
+            accumulated_cache_read_tokens: row
+                .try_get("accumulated_cache_read_tokens")
+                .ok()
+                .flatten(),
+            accumulated_cache_write_tokens: row
+                .try_get("accumulated_cache_write_tokens")
+                .ok()
+                .flatten(),
             schedule_id: row.try_get("schedule_id")?,
             recipe,
             user_recipe_values,
             conversation: None,
-            message_count: row.try_get("message_count").unwrap_or(0) as usize,
+            message_count: row.try_get::<i64, _>("message_count").unwrap_or(0) as usize,
             provider_name: row.try_get("provider_name").ok().flatten(),
             model_config,
             goose_mode: row
@@ -625,9 +671,13 @@ impl SessionStorage {
                 total_tokens INTEGER,
                 input_tokens INTEGER,
                 output_tokens INTEGER,
+                cache_read_input_tokens INTEGER,
+                cache_write_input_tokens INTEGER,
                 accumulated_total_tokens INTEGER,
                 accumulated_input_tokens INTEGER,
                 accumulated_output_tokens INTEGER,
+                accumulated_cache_read_tokens INTEGER,
+                accumulated_cache_write_tokens INTEGER,
                 schedule_id TEXT,
                 recipe_json TEXT,
                 user_recipe_values_json TEXT,
@@ -1065,6 +1115,37 @@ impl SessionStorage {
             11 => {
                 crate::providers::inventory::create_tables_in_tx(tx).await?;
             }
+            12 => {
+                // Add cache token fields to sessions table
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN cache_read_input_tokens INTEGER
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN cache_write_input_tokens INTEGER
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN accumulated_cache_read_tokens INTEGER
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN accumulated_cache_write_tokens INTEGER
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1124,7 +1205,9 @@ impl SessionStorage {
             r#"
         SELECT id, working_dir, name, description, user_set_name, session_type, created_at, updated_at, extension_data,
                total_tokens, input_tokens, output_tokens,
+               cache_read_input_tokens, cache_write_input_tokens,
                accumulated_total_tokens, accumulated_input_tokens, accumulated_output_tokens,
+               accumulated_cache_read_tokens, accumulated_cache_write_tokens,
                schedule_id, recipe_json, user_recipe_values_json,
                provider_name, model_config_json, goose_mode, thread_id
         FROM sessions
@@ -1178,11 +1261,21 @@ impl SessionStorage {
         add_update!(builder.total_tokens, "total_tokens");
         add_update!(builder.input_tokens, "input_tokens");
         add_update!(builder.output_tokens, "output_tokens");
+        add_update!(builder.cache_read_input_tokens, "cache_read_input_tokens");
+        add_update!(builder.cache_write_input_tokens, "cache_write_input_tokens");
         add_update!(builder.accumulated_total_tokens, "accumulated_total_tokens");
         add_update!(builder.accumulated_input_tokens, "accumulated_input_tokens");
         add_update!(
             builder.accumulated_output_tokens,
             "accumulated_output_tokens"
+        );
+        add_update!(
+            builder.accumulated_cache_read_tokens,
+            "accumulated_cache_read_tokens"
+        );
+        add_update!(
+            builder.accumulated_cache_write_tokens,
+            "accumulated_cache_write_tokens"
         );
         add_update!(builder.schedule_id, "schedule_id");
         add_update!(builder.recipe, "recipe_json");
@@ -1225,6 +1318,12 @@ impl SessionStorage {
         if let Some(ot) = builder.output_tokens {
             q = q.bind(ot);
         }
+        if let Some(crit) = builder.cache_read_input_tokens {
+            q = q.bind(crit);
+        }
+        if let Some(cwit) = builder.cache_write_input_tokens {
+            q = q.bind(cwit);
+        }
         if let Some(att) = builder.accumulated_total_tokens {
             q = q.bind(att);
         }
@@ -1233,6 +1332,12 @@ impl SessionStorage {
         }
         if let Some(aot) = builder.accumulated_output_tokens {
             q = q.bind(aot);
+        }
+        if let Some(acrt) = builder.accumulated_cache_read_tokens {
+            q = q.bind(acrt);
+        }
+        if let Some(acwt) = builder.accumulated_cache_write_tokens {
+            q = q.bind(acwt);
         }
         if let Some(sid) = builder.schedule_id {
             q = q.bind(sid);
@@ -1411,7 +1516,9 @@ impl SessionStorage {
             r#"
             SELECT s.id, s.working_dir, s.name, s.description, s.user_set_name, s.session_type, s.created_at, s.updated_at, s.extension_data,
                    s.total_tokens, s.input_tokens, s.output_tokens,
+                   s.cache_read_input_tokens, s.cache_write_input_tokens,
                    s.accumulated_total_tokens, s.accumulated_input_tokens, s.accumulated_output_tokens,
+                   s.accumulated_cache_read_tokens, s.accumulated_cache_write_tokens,
                    s.schedule_id, s.recipe_json, s.user_recipe_values_json,
                    s.provider_name, s.model_config_json, s.goose_mode, s.thread_id,
                    COUNT(m.id) as message_count

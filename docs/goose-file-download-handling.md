@@ -168,11 +168,68 @@ The `line` parameter is 1-based (line 1 = first line). `limit` is optional and c
 
 ---
 
-## 6. Key Locations
+## 7. File Outline / Skeleton with Line References (NOT Implemented)
+
+You asked about a mechanism that generates a **file outline with line number references** so the agent can discover which lines it needs, like:
+
+```markdown
+# File outline for /path/file.md
+
+# Overview [L3-9]
+## Provider-Level [L9-176]
+  ### 1. Anthropic [L11-51]
+   usage [L18-23]
+    input_tokens [L19]
+    cache_creation [L20]
+```
+
+**Goose does NOT have this feature.** Here is what exists vs. what does not:
+
+### What exists:
+1. **ResourceLink → full content**: `read_resource_link()` at `server.rs:500-514` reads the **entire file** and formats it as:
+   ```
+   # /path/to/file.txt
+   ```
+   [full file content]
+   ```
+   ```
+   No outline, no line refs — full raw content.
+
+2. **`read` tool with line/limit**: The LLM can call `read` with `line=1, limit=500` to get a slice. But Goose does **not** proactively generate an outline — the LLM must know to use these params.
+
+3. **Analyze tool** (tree-sitter): Returns symbol names (functions, classes) but **no line numbers**:
+   ```
+   - my_function() → 2 calls, defined at line 42
+   - MyStruct → fields, methods
+   ```
+
+4. **Summarize tool**: Sends full file content to LLM (100KB/file max) for LLM-generated summary. No structural line references.
+
+### What does NOT exist:
+- No automatic file outline generation with `[L1-646]` style line references
+- No "skeleton" or "table of contents" for large files
+- No proactive warning to LLM about file size or structure
+- No line count metadata sent to LLM before reading
+
+### Shell tool truncation (closest to partial view):
+The only truncation that exists is shell output (`shell.rs:699-732`):
+- 5000 line limit → saves full to disk, returns **last 100 lines** + message
+- Message format: `"Output exceeded 5000 line limit (12345 lines total)."`
+- This is NOT an outline — just the tail of the output
+
+### Conclusion:
+If you need the `[L1-646]` style file outline for EduCraw, this would need to be **added as a new feature** in Goose (either as a new ACP method or as part of the ResourceLink processing). Goose currently has no such mechanism.
+
+---
+
+## 8. Key Locations
 
 - **ACP ReadTextFileRequest/Response**: `agent-client-protocol-schema-0.11.3/src/client.rs:848-938`
 - **Goose line limit function**: `goose-workspace/crates/goose/src/agents/platform_extensions/developer/edit.rs:199-213`
 - **FileReadParams schema**: `goose-workspace/crates/goose/src/agents/platform_extensions/developer/edit.rs:10-19`
 - **Shell output truncation**: `goose-workspace/crates/goose/src/agents/platform_extensions/developer/shell.rs:699-732`
-- **Shell limits constants**: `goose-workspace/crates/goose/src/agents/platform_extensions/developer/shell.rs` (OUTPUT_LIMIT_LINES, OUTPUT_LIMIT_BYTES, OUTPUT_PREVIEW_LINES)
-- **ACP fs read via network**: `goose-workspace/crates/goose/src/acp/fs.rs:26-46` (uses ACP request if client FS enabled, otherwise direct fs::read_to_string)
+- **Shell limits constants**: `shell.rs` (OUTPUT_LIMIT_LINES=5000, OUTPUT_LIMIT_BYTES=50000, OUTPUT_PREVIEW_LINES=100)
+- **ACP fs read via network**: `goose-workspace/crates/goose/src/acp/fs.rs:26-46`
+- **ResourceLink full-file read**: `goose-workspace/crates/goose/src/acp/server.rs:500-514`
+- **Summarize tool**: `goose-workspace/crates/goose/src/agents/platform_extensions/summarize.rs:166-219`
+- **Analyze tool (no line refs)**: `goose-workspace/crates/goose/src/agents/platform_extensions/analyze/mod.rs:100-122` (uses ACP request if client FS enabled, otherwise direct fs::read_to_string)

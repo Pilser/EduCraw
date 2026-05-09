@@ -791,12 +791,42 @@ fn build_prompt_usage(session: &Session) -> Option<Usage> {
     let total = to_nonnegative_u64(session.total_tokens)?;
     let input = to_nonnegative_u64(session.input_tokens).unwrap_or(0);
     let output = to_nonnegative_u64(session.output_tokens).unwrap_or(0);
-    Some(Usage::new(total, input, output))
+    let cache_read = to_nonnegative_u64(session.cache_read_input_tokens);
+    let cache_write = to_nonnegative_u64(session.cache_write_input_tokens);
+
+    let mut usage = Usage::new(total, input, output);
+    if let Some(cr) = cache_read {
+        usage = usage.cached_read_tokens(cr);
+    }
+    if let Some(cw) = cache_write {
+        usage = usage.cached_write_tokens(cw);
+    }
+    Some(usage)
 }
 
 fn build_usage_update(session: &Session, context_limit: usize) -> UsageUpdate {
     let used = session.total_tokens.unwrap_or(0).max(0) as u64;
-    UsageUpdate::new(used, context_limit as u64)
+    let mut usage_update = UsageUpdate::new(used, context_limit as u64);
+
+    // Attach cache info via meta field
+    let mut meta = serde_json::Map::new();
+    if let Some(cache_read) = session.cache_read_input_tokens {
+        meta.insert(
+            "cache_read_tokens".to_string(),
+            serde_json::json!(cache_read),
+        );
+    }
+    if let Some(cache_write) = session.cache_write_input_tokens {
+        meta.insert(
+            "cache_write_tokens".to_string(),
+            serde_json::json!(cache_write),
+        );
+    }
+    if !meta.is_empty() {
+        usage_update = usage_update.meta(meta);
+    }
+
+    usage_update
 }
 
 impl GooseAcpAgent {

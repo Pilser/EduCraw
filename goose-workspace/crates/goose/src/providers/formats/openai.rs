@@ -633,13 +633,16 @@ pub fn get_usage(usage: &Value) -> Usage {
         .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()))
         .map(|v| v as i32);
 
+    // Support both OpenAI and DeepSeek cache field names
     let cache_read_input_tokens = usage
         .get("cache_read_input_tokens")
+        .or_else(|| usage.get("prompt_cache_hit_tokens")) // DeepSeek field
         .and_then(|v| v.as_i64())
         .map(|v| v as i32);
 
     let cache_write_input_tokens = usage
         .get("cache_creation_input_tokens")
+        .or_else(|| usage.get("prompt_cache_miss_tokens")) // DeepSeek field
         .and_then(|v| v.as_i64())
         .map(|v| v as i32);
 

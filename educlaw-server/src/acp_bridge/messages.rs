@@ -35,4 +35,12 @@ pub enum ClientMessage {
     /// Backend returns: {"type":"forked_session","new_session_id":"..."}
     #[serde(rename = "fork_session")]
     ForkSession { thread_id: String },
+    /// Export a session as JSON string.
+    /// Backend returns: {"type":"export_session_result","data":"<json-string>"}
+    #[serde(rename = "export_session")]
+    ExportSession { session_id: String },
+    /// Import a session from JSON string.
+    /// Backend returns: {"type":"import_session_result","session_id":"...","title":"...","message_count":42}
+    #[serde(rename = "import_session")]
+    ImportSession { data: String },
 }
