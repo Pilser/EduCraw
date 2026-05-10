@@ -101,6 +101,22 @@ pub async fn update_model_specs(
     Ok(())
 }
 
+/// Store provider-specific thinking parameters as JSON.
+/// `params` should be a valid JSON object (e.g. `{"thinking_type":"enabled","budget_tokens":16000}`).
+/// Pass `None` to clear.
+pub async fn update_thinking_params(
+    pool: &SqlitePool,
+    id: &str,
+    params: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE models SET thinking_params = ? WHERE id = ?")
+        .bind(params)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // ── Reads ─────────────────────────────────────────────────────────────────
 
 pub async fn list_models(pool: &SqlitePool) -> Result<Vec<Model>, sqlx::Error> {

@@ -120,6 +120,7 @@ export interface Model {
   provider?: string | null; // Provider ID (e.g., "xai", "deepseek", "openai")
   think_mode?: number | null; // 1 = thinking, 0 = non-thinking, null = unknown
   visual_support: number; // 1 = supports vision, 0 = text-only
+  thinking_params?: Record<string, unknown> | null; // Provider-specific thinking config JSON
   created_at: string;
 }
 
@@ -154,4 +155,20 @@ export interface TokenUsageUpdate {
   used: number; // total tokens used
   size?: number; // token context window size
   cost?: Cost | null; // cost from goose provider
+}
+
+// Provider thinking schema (from GET /admin/provider-schema/:provider)
+export interface ConfigParamDef {
+  key: string;
+  type: "select" | "integer";
+  values?: string[];
+  default?: unknown;
+  min?: number;
+  max?: number;
+  description?: string;
+}
+
+export interface ProviderSchema {
+  provider: string;
+  params: ConfigParamDef[];
 }

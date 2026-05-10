@@ -380,6 +380,11 @@ async fn get_session(
 #[derive(Deserialize)]
 struct SetModelBody {
     model: String,
+    /// Optional per-session thinking parameter overrides (JSON object).
+    /// e.g. {"thinking_type":"enabled","budget_tokens":8000}
+    /// Overrides the defaults stored on the model record in the DB.
+    #[serde(default)]
+    thinking_params: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /// PUT /sessions/:id/model
@@ -417,6 +422,17 @@ async fn set_model(
         crate::session::dirs::SessionDirs::for_existing_session(&state.workspace_root, &session_id);
     let signal_path = dirs.config.join("pending_model.txt");
     let _ = std::fs::write(&signal_path, &model);
+
+    // Write per-session thinking param overrides (if any) to a side-channel
+    // file that model_poller reads and merges with DB defaults.
+    if let Some(ref params) = body.thinking_params {
+        if !params.is_empty() {
+            let thinking_path = dirs.config.join("pending_thinking.json");
+            let json_str = serde_json::to_string(params).unwrap_or_default();
+            let _ = std::fs::write(&thinking_path, &json_str);
+            tracing::info!(session_id = %session_id, has_thinking_override = true, "thinking override written");
+        }
+    }
 
     tracing::info!(session_id = %session_id, model = %model, "model update requested");
     Ok((StatusCode::NO_CONTENT, ()))

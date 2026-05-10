@@ -46,6 +46,9 @@ interface Props {
   availableModels?: Model[];
   activeModel?: string;
   onModelChange?: (model: string) => void;
+  // thinking config
+  thinkingParams?: Record<string, unknown> | null;
+  onThinkingChange?: (params: Record<string, unknown> | null) => void;
   // token usage
   tokenUsage?: TokenUsage | null;
   tokenBalance?: number | null;
@@ -296,6 +299,8 @@ export default function ChatPanel({
   availableModels,
   activeModel,
   onModelChange,
+  thinkingParams,
+  onThinkingChange,
   tokenUsage,
   tokenBalance,
   sessionTokensUsed,
@@ -321,6 +326,7 @@ export default function ChatPanel({
 
   // Drag-over state for attaching files from FileTree
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showThinkingConfig, setShowThinkingConfig] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -488,6 +494,27 @@ export default function ChatPanel({
           </div>
         )}
 
+        {/* Thinking config toggle — appears when active model supports thinking */}
+        {onThinkingChange &&
+          activeModel &&
+          availableModels?.find((m) => m.name === activeModel)
+            ?.thinking_params && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowThinkingConfig(!showThinkingConfig)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-wp-md text-[10px] md:text-xs font-semibold transition-all border ${
+                  showThinkingConfig
+                    ? "bg-wp-info-bg text-wp-info border-wp-info/30"
+                    : "bg-wp-accent-subtle text-wp-accent border-wp-border-mid hover:bg-wp-accent-muted"
+                }`}
+                title="Thinking settings"
+              >
+                <Brain className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                Think
+              </button>
+            </div>
+          )}
+
         {/* Compact token info: Balance:34556tkn 67979/2,000,000tkn */}
         {((sessionTokensUsed ?? 0) > 0 ||
           !!tokenUsage ||
@@ -520,6 +547,80 @@ export default function ChatPanel({
           </div>
         )}
       </div>
+
+      {/* ── Thinking config panel (expandable) ──────────────────────────── */}
+      {showThinkingConfig && onThinkingChange && thinkingParams && (
+        <div className="shrink-0 px-3 md:px-4 py-2 bg-wp-info-bg/50 border-b border-wp-info/20">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <Brain className="w-3.5 h-3.5 text-wp-info" />
+              <span className="text-xs font-semibold text-wp-text-primary">
+                Thinking Settings
+              </span>
+            </div>
+            <button
+              onClick={() => setShowThinkingConfig(false)}
+              className="text-wp-text-tertiary hover:text-wp-text-primary"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(thinkingParams).map(([key, val]) => (
+              <div key={key} className="flex items-center gap-1.5">
+                <label className="text-[10px] font-medium text-wp-text-secondary capitalize">
+                  {key.replace(/_/g, " ")}:
+                </label>
+                {typeof val === "boolean" ? (
+                  <select
+                    value={String(val)}
+                    onChange={(e) => {
+                      const next = {
+                        ...thinkingParams,
+                        [key]: e.target.value === "true",
+                      };
+                      onThinkingChange(next);
+                    }}
+                    className="text-[10px] font-semibold bg-wp-page border border-wp-border-mid rounded px-1.5 py-0.5 text-wp-text-primary"
+                  >
+                    <option value="true">On</option>
+                    <option value="false">Off</option>
+                  </select>
+                ) : typeof val === "number" ? (
+                  <input
+                    type="number"
+                    value={val}
+                    onChange={(e) => {
+                      const next = {
+                        ...thinkingParams,
+                        [key]: Number(e.target.value),
+                      };
+                      onThinkingChange(next);
+                    }}
+                    className="w-20 text-[10px] font-mono bg-wp-page border border-wp-border-mid rounded px-1.5 py-0.5 text-wp-text-primary"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={String(val)}
+                    onChange={(e) => {
+                      const next = { ...thinkingParams, [key]: e.target.value };
+                      onThinkingChange(next);
+                    }}
+                    className="w-24 text-[10px] font-mono bg-wp-page border border-wp-border-mid rounded px-1.5 py-0.5 text-wp-text-primary"
+                  />
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => onThinkingChange(null)}
+              className="text-[10px] text-wp-text-tertiary hover:text-wp-error transition-colors ml-2"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Token limit banner ─────────────────────────────────────────────── */}
       {tokenBlocked && tokenBannerText && (

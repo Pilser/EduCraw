@@ -23,8 +23,10 @@ import {
   type AdminSession,
   type CreateStudentBody,
   type CreateAssignmentBody,
+  normalizeThinkingParams,
 } from "../api/client";
 import type { Cohort, Subject, Assignment, Model } from "../api/types";
+import ThinkingConfigEditor from "../components/ThinkingConfigEditor";
 
 interface Props {
   token: string;
@@ -959,6 +961,10 @@ function ModelsTab({ token }: { token: string }) {
     think_mode: string;
     visual_support: boolean;
   } | null>(null);
+  const [editingThinking, setEditingThinking] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
 
   async function load() {
     setLoading(true);
@@ -1043,6 +1049,11 @@ function ModelsTab({ token }: { token: string }) {
         think_mode,
         visual_support,
       );
+      // Save thinking params if they were edited
+      if (editingThinking !== null) {
+        await api.adminUpdateModelThinking(token, id, editingThinking);
+        setEditingThinking(null);
+      }
       setEditingSpecs(null);
       load();
     } catch (e) {
@@ -1311,7 +1322,7 @@ function ModelsTab({ token }: { token: string }) {
                     <td className="px-4 py-3">
                       <div className="flex gap-1 flex-wrap">
                         <button
-                          onClick={() =>
+                          onClick={() => {
                             setEditingSpecs({
                               id: m.id,
                               provider: m.provider || "",
@@ -1320,8 +1331,11 @@ function ModelsTab({ token }: { token: string }) {
                                   ? ""
                                   : String(m.think_mode),
                               visual_support: m.visual_support === 1,
-                            })
-                          }
+                            });
+                            setEditingThinking(
+                              normalizeThinkingParams(m.thinking_params),
+                            );
+                          }}
                           className="px-2.5 py-1.5 text-xs font-medium bg-wp-info-bg text-wp-info hover:bg-wp-info/10 rounded-wp-md transition-colors border border-wp-info/20 flex items-center gap-1"
                           title="Update model specs"
                         >
@@ -1418,6 +1432,15 @@ function ModelsTab({ token }: { token: string }) {
                               </label>
                             </div>
                           </div>
+                          {editingSpecs.provider && (
+                            <div className="mt-4 p-3 bg-wp-accent-subtle/20 border border-wp-border-soft rounded-wp-md">
+                              <ThinkingConfigEditor
+                                provider={editingSpecs.provider}
+                                value={editingThinking}
+                                onChange={setEditingThinking}
+                              />
+                            </div>
+                          )}
                           <div className="flex gap-2 mt-4">
                             <button
                               onClick={() =>
@@ -1436,7 +1459,10 @@ function ModelsTab({ token }: { token: string }) {
                               Save changes
                             </button>
                             <button
-                              onClick={() => setEditingSpecs(null)}
+                              onClick={() => {
+                                setEditingSpecs(null);
+                                setEditingThinking(null);
+                              }}
                               className="px-4 py-2 bg-wp-border-soft text-wp-text-secondary hover:bg-wp-border-mid text-sm font-medium rounded-wp-md transition-colors"
                             >
                               Cancel

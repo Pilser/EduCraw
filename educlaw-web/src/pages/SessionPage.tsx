@@ -21,7 +21,7 @@ import FilePreview from "../components/FilePreview";
 import DraggableModal from "../components/DraggableModal";
 import SessionSelector from "../components/SessionSelector";
 import { useWebSocket, type WsStatus } from "../hooks/useWebSocket";
-import { api } from "../api/client";
+import { api, normalizeThinkingParams } from "../api/client";
 import type {
   LoginResponse,
   Session,
@@ -217,6 +217,10 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   // Model + token state (models come from backend via WebSocket)
   const [availableModels, setAvailableModels] = useState<Model[]>([]);
   const [activeModel, setActiveModel] = useState<string | undefined>(undefined);
+  const [thinkingParams, setThinkingParams] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
   const [sessionTokensUsed, setSessionTokensUsed] = useState(0);
   const [tokenContextSize, setTokenContextSize] = useState<number | null>(null);
@@ -231,6 +235,11 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
       api.getSessionModels(session.session_id, session.token).then((r) => {
         setAvailableModels(r.models || []);
         setActiveModel(r.active || r.models?.[0]?.name || undefined);
+        // Set thinking params from the active model's defaults
+        const active = r.models?.find(
+          (m) => m.name === (r.active || r.models?.[0]?.name),
+        );
+        setThinkingParams(normalizeThinkingParams(active?.thinking_params));
       }),
       api.getSessionTokenUsage(session.session_id, session.token).then((r) => {
         setTokenUsage(r);
@@ -563,9 +572,15 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setTokenBannerText(banner);
   }, []);
 
-  const handleModelChanged = useCallback((model: string) => {
-    setActiveModel(model);
-  }, []);
+  const handleModelChanged = useCallback(
+    (model: string) => {
+      setActiveModel(model);
+      // Load thinking params from the new model's defaults
+      const m = availableModels.find((m) => m.name === model);
+      setThinkingParams(normalizeThinkingParams(m?.thinking_params));
+    },
+    [availableModels],
+  );
 
   const handleModelsReceived = useCallback(
     (_models: string[], active: string) => {
@@ -870,6 +885,9 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
   const handleModelChange = useCallback(
     async (model: string) => {
       setActiveModel(model);
+      // Reset thinking params when switching models — the new model's
+      // defaults will be loaded from DB by the model_poller.
+      setThinkingParams(null);
       try {
         await api.setSessionModel(session.session_id, session.token, model);
       } catch {
@@ -877,6 +895,24 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
       }
     },
     [session.session_id, session.token],
+  );
+
+  // Update thinking params for current model — sends override to backend
+  const handleThinkingChange = useCallback(
+    (params: Record<string, unknown> | null) => {
+      setThinkingParams(params);
+      if (activeModel) {
+        api
+          .setSessionModel(
+            session.session_id,
+            session.token,
+            activeModel,
+            params,
+          )
+          .catch(() => {});
+      }
+    },
+    [session.session_id, session.token, activeModel],
   );
 
   // ── SessionSelector Handlers (modal overlay) ────────────────────────────
@@ -1091,6 +1127,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
               availableModels={availableModels}
               activeModel={activeModel}
               onModelChange={handleModelChange}
+              thinkingParams={thinkingParams}
+              onThinkingChange={handleThinkingChange}
               tokenUsage={tokenUsage}
               sessionTokensUsed={sessionTokensUsed}
               tokenContextSize={tokenContextSize}

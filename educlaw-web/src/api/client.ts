@@ -9,9 +9,30 @@ import type {
   Model,
   SessionModels,
   TokenUsage,
+  ConfigParamDef,
 } from "./types";
 
 const BASE = ""; // same origin
+
+/** Normalize thinking_params from JSON string (as sent by backend) to object. */
+export function normalizeThinkingParams(
+  raw: unknown,
+): Record<string, unknown> | null {
+  if (!raw) return null;
+  if (typeof raw === "object" && raw !== null)
+    return raw as Record<string, unknown>;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 const json = (res: Response) => {
   if (!res.ok)
@@ -348,11 +369,12 @@ export const api = {
     }).then(json);
   },
 
-  /** Switch the active model mid-session. */
+  /** Switch the active model mid-session, optionally with thinking overrides. */
   async setSessionModel(
     sessionId: string,
     token: string,
     model: string,
+    thinkingParams?: Record<string, unknown> | null,
   ): Promise<void> {
     await fetch(`${BASE}/sessions/${sessionId}/model`, {
       method: "PUT",
@@ -360,7 +382,7 @@ export const api = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ model }),
+      body: JSON.stringify({ model, thinking_params: thinkingParams || null }),
     }).then(json);
   },
 
@@ -462,6 +484,31 @@ export const api = {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });
+  },
+
+  /** Update thinking parameters for a model (arbitrary JSON object). */
+  async adminUpdateModelThinking(
+    token: string,
+    id: string,
+    thinkingParams: Record<string, unknown> | null,
+  ): Promise<void> {
+    await fetch(`${BASE}/admin/models/${id}/thinking`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ thinking_params: thinkingParams }),
+    });
+  },
+
+  /** Get the configurable parameter schema for a provider. */
+  async adminGetProviderSchema(
+    provider: string,
+  ): Promise<{ provider: string; params: ConfigParamDef[] }> {
+    return fetch(
+      `${BASE}/admin/provider-schema/${encodeURIComponent(provider)}`,
+    ).then(json);
   },
 
   // Token limit

@@ -101,8 +101,18 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/models/:name/multiplier", put(set_model_multiplier))
         .route("/admin/models/:id/specs", put(update_model_specs_handler))
         .route(
+            "/admin/models/:id/thinking",
+            put(update_thinking_params_handler),
+        )
+        .route(
             "/admin/models/:id",
             put(update_model).delete(delete_model_handler),
+        )
+        // Provider schema discovery -- tells the frontend what thinking params
+        // each provider supports so the UI can render dynamic controls.
+        .route(
+            "/admin/provider-schema/:provider",
+            get(provider_schema_handler),
         )
 }
 
@@ -884,6 +894,186 @@ async fn delete_model_handler(
     require_admin(&state, &headers)?;
     db_models::delete_model(&state.pool, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── PUT /admin/models/:id/thinking ────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct UpdateThinkingBody {
+    /// Arbitrary JSON object with provider-specific thinking parameters.
+    /// e.g. {"thinking_type":"enabled","budget_tokens":16000}
+    /// Pass null to clear.
+    thinking_params: Option<serde_json::Value>,
+}
+
+async fn update_thinking_params_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateThinkingBody>,
+) -> Result<impl IntoResponse> {
+    require_admin(&state, &headers)?;
+
+    let params_str = match &body.thinking_params {
+        Some(v) if v.is_null() => None,
+        Some(v) => {
+            if !v.is_object() {
+                return Err(AppError::BadRequest(
+                    "thinking_params must be a JSON object".into(),
+                ));
+            }
+            Some(
+                serde_json::to_string(v)
+                    .map_err(|e| AppError::BadRequest(format!("invalid JSON: {e}")))?,
+            )
+        }
+        None => None,
+    };
+
+    db_models::update_thinking_params(&state.pool, &id, params_str.as_deref()).await?;
+    tracing::info!(model_id = %id, has_params = params_str.is_some(), "admin: thinking params updated");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── GET /admin/provider-schema/:provider ──────────────────────────────────
+//
+// Returns the configurable thinking parameters for a given provider.
+// This is the single source of truth that the frontend uses to render
+// dynamic controls. When a new provider or param is added, update this
+// function — no frontend changes needed.
+
+#[derive(Serialize)]
+struct ConfigParamDef {
+    key: String,
+    #[serde(rename = "type")]
+    param_type: String, // "select" | "integer"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    values: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ProviderSchema {
+    provider: String,
+    params: Vec<ConfigParamDef>,
+}
+
+async fn provider_schema_handler(
+    AxumPath(provider): AxumPath<String>,
+) -> Result<impl IntoResponse> {
+    let provider_lower = provider.to_lowercase();
+
+    let params = match provider_lower.as_str() {
+        // Anthropic / Databricks share the same thinking config parameters
+        "anthropic" | "databricks" => vec![
+            ConfigParamDef {
+                key: "thinking_type".into(),
+                param_type: "select".into(),
+                values: Some(vec![
+                    "disabled".into(),
+                    "enabled".into(),
+                    "adaptive".into(),
+                ]),
+                default: Some(serde_json::json!("adaptive")),
+                min: None,
+                max: None,
+                description: Some(
+                    "Controls extended thinking mode. 'adaptive' only on Claude 4.6+ models."
+                        .into(),
+                ),
+            },
+            ConfigParamDef {
+                key: "budget_tokens".into(),
+                param_type: "integer".into(),
+                values: None,
+                default: Some(serde_json::json!(16000)),
+                min: Some(1024),
+                max: Some(64000),
+                description: Some(
+                    "Token budget for thinking. Only used when thinking_type='enabled'.".into(),
+                ),
+            },
+            ConfigParamDef {
+                key: "effort".into(),
+                param_type: "select".into(),
+                values: Some(vec![
+                    "low".into(),
+                    "medium".into(),
+                    "high".into(),
+                    "max".into(),
+                ]),
+                default: Some(serde_json::json!("high")),
+                min: None,
+                max: None,
+                description: Some(
+                    "Thinking effort level. Only used when thinking_type='adaptive'.".into(),
+                ),
+            },
+        ],
+
+        // Google Gemini has two different config paths depending on model version
+        "google" => vec![
+            ConfigParamDef {
+                key: "thinking_level".into(),
+                param_type: "select".into(),
+                values: Some(vec!["low".into(), "high".into()]),
+                default: Some(serde_json::json!("low")),
+                min: None,
+                max: None,
+                description: Some(
+                    "Thinking level for Gemini 3 models. 'low' or 'high'.".into(),
+                ),
+            },
+            ConfigParamDef {
+                key: "thinking_budget".into(),
+                param_type: "integer".into(),
+                values: None,
+                default: Some(serde_json::json!(8192)),
+                min: Some(0),
+                max: Some(65536),
+                description: Some(
+                    "Thinking token budget for Gemini 2.5 models.".into(),
+                ),
+            },
+        ],
+
+        // OpenAI uses model name suffix, but we expose reasoning_effort
+        // as a param in case future Goose enhancement reads it from request_params
+        "openai" => vec![
+            ConfigParamDef {
+                key: "reasoning_effort".into(),
+                param_type: "select".into(),
+                values: Some(vec![
+                    "none".into(),
+                    "low".into(),
+                    "medium".into(),
+                    "high".into(),
+                    "xhigh".into(),
+                ]),
+                default: Some(serde_json::json!("none")),
+                min: None,
+                max: None,
+                description: Some(
+                    "Reasoning effort for OpenAI models. Currently read from model name suffix; request_params support planned.".into(),
+                ),
+            },
+        ],
+
+        // Providers that currently don't support configurable thinking params
+        _ => vec![],
+    };
+
+    Ok(Json(ProviderSchema {
+        provider: provider_lower,
+        params,
+    }))
 }
 
 // ── PUT /admin/students/:id/token-limit ──────────────────────────────────

@@ -5,6 +5,7 @@
 // `SetSessionModelConfigRequest` over ACP, then updates the DB and notifies the
 // browser via the ctrl channel.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -115,7 +116,30 @@ pub fn spawn_model_poller(
             let (provider_id, thinking_params) =
                 match db_models::get_model_by_name(&pool, &model_name).await {
                     Ok(Some(model)) => {
-                        let thinking = model.parsed_thinking_params();
+                        let mut thinking = model.parsed_thinking_params();
+
+                        // Check for per-session thinking overrides written by
+                        // the REST API (PUT /sessions/:id/model with thinking_params).
+                        let override_path = pending_model_path
+                            .parent()
+                            .map(|p| p.join("pending_thinking.json"));
+                        if let Some(ref path) = override_path {
+                            if let Ok(raw) = tokio::fs::read_to_string(path).await {
+                                if let Ok(overrides) =
+                                    serde_json::from_str::<HashMap<String, serde_json::Value>>(&raw)
+                                {
+                                    if !overrides.is_empty() {
+                                        thinking.get_or_insert_with(HashMap::new).extend(overrides);
+                                        let _ = tokio::fs::remove_file(path).await;
+                                        tracing::info!(
+                                            model = %model_name,
+                                            "applied per-session thinking overrides"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
                         (model.provider, thinking)
                     }
                     Ok(None) => {
