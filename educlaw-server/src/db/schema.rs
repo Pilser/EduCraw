@@ -101,6 +101,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         "ALTER TABLE models ADD COLUMN provider TEXT",
         "ALTER TABLE models ADD COLUMN think_mode INTEGER",
         "ALTER TABLE models ADD COLUMN visual_support INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE models ADD COLUMN thinking_params TEXT",
         "ALTER TABLE sessions ADD COLUMN last_token_checkpoint INTEGER NOT NULL DEFAULT 0",
     ] {
         let _ = sqlx::query(col).execute(pool).await;

@@ -1025,3 +1025,23 @@ pub struct DictationModelSelectRequest {
     pub provider: String,
     pub model_id: String,
 }
+
+/// Set a session's model WITH optional provider-specific request parameters
+/// (thinking_type, thinking_budget, effort, thinking_level, etc.).
+///
+/// Unlike the standard `session/set_model`, this custom method passes
+/// `request_params` into `ModelConfig`, where providers read them via
+/// `get_config_param()` at inference time.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/session/set_model_config", response = SetSessionModelConfigResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSessionModelConfigRequest {
+    pub session_id: String,
+    pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_params: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSessionModelConfigResponse {}

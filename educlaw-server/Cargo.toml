@@ -69,6 +69,7 @@ libc = "0.2"
 # Goose ACP protocol (SACP client)
 agent-client-protocol-schema = { version = "0.11", features = ["unstable"] }
 sacp = { git = "https://github.com/agentclientprotocol/symposium-acp", rev = "14086c9", features = ["unstable"] }
+goose-sdk = { path = "../goose-workspace/crates/goose-sdk" }
 tokio-util = { version = "0.7", features = ["compat"] }
 
 [patch.crates-io]

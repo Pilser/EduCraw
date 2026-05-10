@@ -2,15 +2,15 @@
 //
 // Background task that polls `pending_model.txt` (written by the REST API
 // when the teacher changes a session's model) and issues a
-// `SetSessionModelRequest` over ACP, then updates the DB and notifies the
+// `SetSessionModelConfigRequest` over ACP, then updates the DB and notifies the
 // browser via the ctrl channel.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use goose_sdk::custom_requests::SetSessionModelConfigRequest;
 use sacp::schema::{
     SessionConfigId, SessionConfigOptionValue, SessionId, SetSessionConfigOptionRequest,
-    SetSessionModelRequest,
 };
 use sacp::{Agent as SacpAgent, ConnectionTo};
 use sqlx::SqlitePool;
@@ -22,7 +22,7 @@ use crate::db::{models as db_models, sessions as db_sess, students as db_student
 ///
 /// Every 500 ms it checks whether `pending_model_path` exists.  If so:
 ///   1. Removes the file (consume the signal).
-///   2. Sends `SetSessionModelRequest` over ACP.
+///   2. Sends `SetSessionModelConfigRequest` over ACP (with thinking params).
 ///   3. Updates the cached `model_arc`.
 ///   4. Persists the new model name to the DB.
 ///   5. Pushes a `{"type":"model_changed","model":"..."}` frame to the browser.
@@ -111,25 +111,29 @@ pub fn spawn_model_poller(
                 continue;
             }
 
-            // Look up provider for this model from database
-            let provider_id = match db_models::get_model_by_name(&pool, &model_name).await {
-                Ok(Some(model)) => model.provider,
-                Ok(None) => {
-                    tracing::warn!(
-                        model = %model_name,
-                        "[MODEL-POLLER] Model not found in database - cannot determine provider"
-                    );
-                    None
-                }
-                Err(e) => {
-                    tracing::error!(
-                        model = %model_name,
-                        error = %e,
-                        "[MODEL-POLLER] Failed to look up model in database"
-                    );
-                    None
-                }
-            };
+            // Look up full model from DB (provider + thinking_params)
+            let (provider_id, thinking_params) =
+                match db_models::get_model_by_name(&pool, &model_name).await {
+                    Ok(Some(model)) => {
+                        let thinking = model.parsed_thinking_params();
+                        (model.provider, thinking)
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            model = %model_name,
+                            "[MODEL-POLLER] Model not found in database - cannot determine provider"
+                        );
+                        (None, None)
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            model = %model_name,
+                            error = %e,
+                            "[MODEL-POLLER] Failed to look up model in database"
+                        );
+                        (None, None)
+                    }
+                };
 
             // If we have a provider, switch to it first
             if let Some(provider) = &provider_id {
@@ -170,12 +174,15 @@ pub fn spawn_model_poller(
                 );
             }
 
-            // Now switch the model
+            // Now switch the model using the custom ACP method that supports
+            // request_params (thinking_type, budget_tokens, effort, etc.).
+            // thinking_params comes from the models.thinking_params JSON column.
             match cx
-                .send_request(SetSessionModelRequest::new(
-                    acp_session_id.clone(),
-                    model_name.clone(),
-                ))
+                .send_request(SetSessionModelConfigRequest {
+                    session_id: acp_session_id.to_string(),
+                    model_id: model_name.clone(),
+                    request_params: thinking_params,
+                })
                 .block_task()
                 .await
             {

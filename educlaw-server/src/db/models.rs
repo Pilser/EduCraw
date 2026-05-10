@@ -17,7 +17,22 @@ pub struct Model {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think_mode: Option<i64>, // 1 = thinking model, 0 = non-thinking, NULL = unknown
     pub visual_support: i64, // 1 = supports vision, 0 = text-only
+    /// JSON with provider-specific thinking parameters.
+    /// Stored as TEXT in SQLite; use `parsed_thinking_params()` at call sites.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_params: Option<String>,
     pub created_at: String,
+}
+
+impl Model {
+    /// Parse `thinking_params` JSON into the `HashMap` Goose expects.
+    pub fn parsed_thinking_params(
+        &self,
+    ) -> Option<std::collections::HashMap<String, serde_json::Value>> {
+        self.thinking_params
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+    }
 }
 
 // ── Writes ────────────────────────────────────────────────────────────────

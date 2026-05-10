@@ -2518,6 +2518,56 @@ impl GooseAcpAgent {
         Ok(SetSessionModelResponse::new())
     }
 
+    /// Handles `_goose/session/set_model_config` — model switch WITH request_params.
+    /// Mirrors `on_set_model` but passes `request_params` into `ModelConfig` so
+    /// provider-specific thinking parameters (thinking_type, budget_tokens, effort,
+    /// thinking_level, etc.) are applied at inference time.
+    async fn on_set_model_config(
+        &self,
+        req: SetSessionModelConfigRequest,
+    ) -> Result<SetSessionModelConfigResponse, sacp::Error> {
+        let internal_id = self.internal_session_id(&req.session_id).await?;
+        let config = self.config()?;
+        let agent = self
+            .get_session_agent_provider_ready(&req.session_id)
+            .await?;
+        let current_provider = agent
+            .provider()
+            .await
+            .internal_err_ctx("Failed to get provider")?;
+        let provider_name = current_provider.get_name().to_string();
+        let extensions =
+            EnabledExtensionsState::for_session(&self.session_manager, &internal_id, &config).await;
+
+        // THE KEY LINE: passes request_params to ModelConfig
+        let model_config = crate::model::ModelConfig::new(&req.model_id)
+            .invalid_params_err_ctx("Invalid model config")?
+            .with_canonical_limits(&provider_name)
+            .with_request_params(req.request_params);
+
+        let provider = self
+            .create_provider(&provider_name, model_config, extensions)
+            .await
+            .internal_err_ctx("Failed to create provider")?;
+        agent
+            .update_provider(provider, &internal_id)
+            .await
+            .internal_err_ctx("Failed to update provider")?;
+
+        let mode = agent.goose_mode().await;
+        agent
+            .update_goose_mode(mode, &internal_id)
+            .await
+            .internal_err_ctx("Failed to propagate mode")?;
+
+        self.update_thread_metadata(&req.session_id, move |meta| {
+            meta.model_id = Some(req.model_id);
+        })
+        .await?;
+
+        Ok(SetSessionModelConfigResponse::default())
+    }
+
     async fn internal_session_id(&self, thread_id: &str) -> Result<String, sacp::Error> {
         self.sessions
             .lock()

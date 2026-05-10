@@ -507,6 +507,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "futures-util",
+ "goose-sdk",
  "jsonwebtoken",
  "libc",
  "sacp",
@@ -807,6 +808,17 @@ dependencies = [
  "r-efi 6.0.0",
  "wasip2",
  "wasip3",
+]
+
+[[package]]
+name = "goose-sdk"
+version = "1.33.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "sacp",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

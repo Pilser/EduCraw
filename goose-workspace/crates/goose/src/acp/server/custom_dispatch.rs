@@ -335,5 +335,12 @@ impl GooseAcpAgent {
     ) -> Result<ImportSourcesResponse, sacp::Error> {
         self.on_import_sources(req).await
     }
-}
 
+    #[custom_method(SetSessionModelConfigRequest)]
+    async fn dispatch_set_session_model_config(
+        &self,
+        req: SetSessionModelConfigRequest,
+    ) -> Result<SetSessionModelConfigResponse, sacp::Error> {
+        self.on_set_model_config(req).await
+    }
+}
