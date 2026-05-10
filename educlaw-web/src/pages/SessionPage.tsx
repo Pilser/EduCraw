@@ -92,6 +92,8 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   // Track if we're loading a thread (from session selector)
   const [sourceThreadId, setSourceThreadId] = useState<string | null>(null);
+  // Tracks the active Goose thread ID for export
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const sessionsPromiseResolverRef = useRef<(sessions: any[]) => void>();
 
@@ -580,6 +582,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
   const handleForkSessionComplete = useCallback((newSessionId: string) => {
     // After fork completes, auto-load the forked session
+    setCurrentThreadId(newSessionId);
     setSourceThreadId(newSessionId);
   }, []);
 
@@ -591,7 +594,9 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setSessionsLoading(false);
   }, []);
 
-  const handleLoadSessionComplete = useCallback(() => {
+  const handleLoadSessionComplete = useCallback((threadId: string) => {
+    // Store the Goose thread ID for export
+    setCurrentThreadId(threadId);
     // Flush replay buffer - create new copies to ensure React detects changes
     if (replayBufferRef.current.length > 0) {
       const messages = replayBufferRef.current.map((msg) => ({
@@ -606,18 +611,40 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     setIsLoadingSession(false);
   }, []);
 
-  const handleExportSessionResult = useCallback((data: string) => {
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `session-${session.session_id}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [session.session_id]);
+  const handleExportSessionResult = useCallback(
+    (data: string) => {
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `session-${session.session_id}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    [session.session_id],
+  );
 
-  const handleImportSessionResult = useCallback((result: { session_id: string; title?: string; updated_at?: string; message_count: number }) => {
-    console.log('Imported session:', result.session_id, 'with', result.message_count, 'messages');
+  const handleImportSessionResult = useCallback(
+    (result: {
+      session_id: string;
+      title?: string;
+      updated_at?: string;
+      message_count: number;
+    }) => {
+      setCurrentThreadId(result.session_id);
+      console.log(
+        "Imported session:",
+        result.session_id,
+        "with",
+        result.message_count,
+        "messages",
+      );
+    },
+    [],
+  );
+
+  const handleSessionCreated = useCallback((sessionId: string) => {
+    setCurrentThreadId(sessionId);
   }, []);
 
   // Safety net: if replay takes too long, exit loading mode
@@ -669,6 +696,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
     onLoadSessionComplete: handleLoadSessionComplete,
     onExportSessionResult: handleExportSessionResult,
     onImportSessionResult: handleImportSessionResult,
+    onSessionCreated: handleSessionCreated,
   });
 
   // Auto-load the last session on first connection
@@ -982,9 +1010,18 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
 
         {/* Export session */}
         <button
-          onClick={() => sendExportSession(session.session_id)}
-          title="Export session as JSON"
-          className="p-1.5 md:p-2 rounded-wp-md text-wp-text-secondary hover:text-wp-accent hover:bg-wp-accent/10 transition-all"
+          onClick={() => {
+            if (currentThreadId) {
+              sendExportSession(currentThreadId);
+            }
+          }}
+          disabled={!currentThreadId}
+          title={
+            currentThreadId
+              ? "Export session as JSON"
+              : "No active session to export"
+          }
+          className="p-1.5 md:p-2 rounded-wp-md text-wp-text-secondary hover:text-wp-accent hover:bg-wp-accent/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Download className="w-5 h-5" />
         </button>
@@ -992,9 +1029,9 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
         {/* Import session */}
         <button
           onClick={() => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = ".json";
             input.onchange = async (e) => {
               const file = (e.target as HTMLInputElement).files?.[0];
               if (file) {
@@ -1130,14 +1167,14 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
       {/* ── Session Selector Modal Overlay ──────────────────────────────── */}
       {showSessionSelectorModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-          <div className="bg-wp-bgSurface rounded-lg shadow-xl w-full max-w-sm max-h-[70vh] flex flex-col border border-wp-borderMid">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-wp-borderMid">
-              <h2 className="text-lg font-bold text-wp-textPrimary">
+          <div className="bg-wp-surface rounded-lg shadow-xl w-full max-w-sm max-h-[70vh] flex flex-col border border-wp-border-mid">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-wp-border-mid">
+              <h2 className="text-lg font-bold text-wp-text-primary">
                 Sessions
               </h2>
               <button
                 onClick={() => setShowSessionSelectorModal(false)}
-                className="text-wp-textSecondary hover:text-wp-textPrimary transition-colors"
+                className="text-wp-text-secondary hover:text-wp-text-primary transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1148,6 +1185,7 @@ export default function SessionPage({ auth, session, onEnd }: Props) {
                 onLoadSession={handleSessionSelectorLoadSession}
                 onForkSession={handleSessionSelectorForkSession}
                 onListSessions={handleSessionSelectorListSessions}
+                onExportSession={sendExportSession}
                 isLoading={sessionsLoading}
               />
             </div>

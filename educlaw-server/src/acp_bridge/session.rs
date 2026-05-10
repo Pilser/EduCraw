@@ -450,6 +450,7 @@ async fn handle_client_message(
             // ── Spawn prompt task ─────────────────────────────────────
             let cx_prompt = cx.clone();
             let sid_holder_prompt = acp_session_id_holder.clone();
+            let ctrl_tx_prompt = ctrl_tx.clone();
             let turn_tx_prompt = turn_tx.clone();
             let session_id_for_prompt = session_id.to_string();
             let workspace_for_prompt = workspace.clone();
@@ -479,6 +480,13 @@ async fn handle_client_message(
                                     acp_session_id = %new_sid.0,
                                     "✓ [ACP] NewSession created for first prompt"
                                 );
+                                // Notify frontend of the new Goose thread ID
+                                let frame = serde_json::json!({
+                                    "type": "session_created",
+                                    "session_id": new_sid.0,
+                                })
+                                .to_string();
+                                let _ = ctrl_tx_prompt.send(frame).await;
                                 *holder = Some(new_sid.clone());
                                 new_sid
                             }
