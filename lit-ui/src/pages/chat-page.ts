@@ -171,6 +171,17 @@ export class ChatPage extends LitElement {
         console.log("[chat-page] WebSocket reconnected - reloading session");
         this.handleReconnection();
       },
+      onError: (error) => {
+        // Handle session expiration or auth failures
+        console.error("[chat-page] WsManager error:", error.message);
+        if (
+          error.message.includes("Session expired") ||
+          error.message.includes("authentication failed")
+        ) {
+          console.warn("[chat-page] Session/auth expired - dispatching event");
+          this.dispatchSessionExpired();
+        }
+      },
       onMessage: () => {
         // Initial empty handler - will be overridden by ws-stream-fn
       },

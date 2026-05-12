@@ -131,19 +131,45 @@ export class WsManager {
 
     this.ws.onerror = (err) => {
       console.error("[WsManager] WebSocket error:", err);
-      this.setStatus("error");
-      if (this.onError) {
-        this.onError(new Error("WebSocket error"));
-      }
+      // Don't set status to error here immediately - onclose will handle it
     };
 
-    this.ws.onclose = () => {
-      console.log(`[WsManager] WebSocket closed for session ${this.sessionId}`);
+    this.ws.onclose = (event) => {
+      console.log(
+        `[WsManager] WebSocket closed for session ${this.sessionId} - code: ${event.code}, reason: ${event.reason || "none"}`,
+      );
       this.setStatus("disconnected");
 
       if (!this.isMounted) return;
 
-      // Attempt reconnection with exponential backoff
+      // Check if close code indicates session is gone/expired
+      // 1000 = Normal closure
+      // 1001 = Going away
+      // 1006 = Abnormal closure (connection refused/server down)
+      // 1008 = Policy violation (auth failure)
+      // 4000-4999 = Custom application codes
+      const isAuthOrSessionExpired =
+        event.code === 1008 || // Policy violation (auth failure)
+        event.code === 1006 || // Connection refused (session doesn't exist)
+        event.code === 4401 || // Custom: Unauthorized
+        event.code === 4403; // Custom: Forbidden
+
+      if (isAuthOrSessionExpired) {
+        console.warn(
+          `[WsManager] Session expired or authentication failed (code ${event.code}) - not reconnecting`,
+        );
+        this.setStatus("error");
+        if (this.onError) {
+          this.onError(
+            new Error(
+              `Session expired or authentication failed (WebSocket close code: ${event.code})`,
+            ),
+          );
+        }
+        return; // Don't attempt reconnection
+      }
+
+      // Attempt reconnection with exponential backoff (only for network issues)
       const elapsedTime = this.reconnectAttempts * 1000;
       if (elapsedTime < this.maxReconnectTime) {
         const delay = Math.min(
