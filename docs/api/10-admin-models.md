@@ -94,6 +94,61 @@ Delete a model.
 
 ---
 
+### PUT /admin/models/:id/thinking
+Update provider-specific thinking parameters for a model.
+Accepts arbitrary JSON object — no validation against schema (schema is a guide for the UI).
+
+**Headers:** `Authorization: Bearer <token>` (admin only)
+
+**Request:**
+```json
+{
+  "thinking_params": {
+    "thinking_type": "enabled",
+    "budget_tokens": 16000
+  }
+}
+```
+
+Pass `null` to clear: `{ "thinking_params": null }`
+
+**Response:** 204 No Content
+
+---
+
+### GET /admin/provider-schema/:provider
+Returns configurable thinking parameter definitions for a provider.
+The frontend uses this to render dynamic controls (no hard-coded schemas).
+
+**Response (200):**
+```json
+{
+  "provider": "anthropic",
+  "params": [
+    {
+      "key": "thinking_type",
+      "type": "select",
+      "values": ["disabled", "enabled", "adaptive"],
+      "default": "adaptive",
+      "description": "Controls extended thinking mode"
+    },
+    {
+      "key": "budget_tokens",
+      "type": "integer",
+      "min": 1024,
+      "max": 64000,
+      "default": 16000,
+      "description": "Token budget for thinking"
+    }
+  ]
+}
+```
+
+Supported providers: `anthropic`, `databricks`, `google`, `openai`.
+Unrecognized providers return an empty `params` array.
+
+---
+
 ### PUT /admin/models/:name/multiplier
 Set model's token deduction multiplier.
 
@@ -143,6 +198,17 @@ await api.adminSetModelEnabled(token, modelId, true);
 
 // Update model specs
 await api.adminUpdateModelSpecs(token, modelId, "anthropic", 1, 1);
+
+// Update thinking params (arbitrary JSON object)
+await api.adminUpdateModelThinking(token, modelId, {
+  thinking_type: "enabled",
+  budget_tokens: 16000,
+});
+// Clear thinking params
+await api.adminUpdateModelThinking(token, modelId, null);
+
+// Get provider schema for dynamic form rendering
+const schema = await api.adminGetProviderSchema("anthropic");
 
 // Delete model
 await api.adminDeleteModel(token, modelId);

@@ -93,9 +93,16 @@ Switch active model mid-session.
 **Request:**
 ```json
 {
-  "model": "string"
+  "model": "string",
+  "thinking_params": {
+    "thinking_type": "enabled",
+    "budget_tokens": 8000
+  }
 }
 ```
+
+`thinking_params` is optional. When provided, it overrides the model's default
+thinking configuration for this session only.
 
 **Response:** 204 No Content
 
@@ -153,6 +160,12 @@ const models = await api.getSessionModels(sessionId, token);
 
 // Set active model
 await api.setSessionModel(sessionId, token, "model-name");
+
+// Set active model with thinking overrides
+await api.setSessionModel(sessionId, token, "model-name", {
+  thinking_type: "enabled",
+  budget_tokens: 8000,
+});
 
 // Get token usage
 const usage = await api.getSessionTokenUsage(sessionId, token);

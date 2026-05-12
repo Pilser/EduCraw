@@ -47,8 +47,14 @@ pub fn notification_to_frames(
             }
         }
 
-        SessionUpdate::AgentThoughtChunk(_) => {
-            (Some(serde_json::json!({"type": "thinking"})), None)
+        SessionUpdate::AgentThoughtChunk(chunk) => {
+            let thinking_text = if let ContentBlock::Text(t) = &chunk.content {
+                t.text.clone()
+            } else {
+                String::new()
+            };
+            let json = serde_json::json!({"type": "thinking", "thinking": thinking_text});
+            (Some(json), None)
         }
 
         SessionUpdate::ToolCall(tc) => {

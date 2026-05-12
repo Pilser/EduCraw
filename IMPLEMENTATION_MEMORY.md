@@ -1,232 +1,125 @@
-# Implementation Memory: Provider/Model Switching & Model Table Enhancement
+# Implementation Memory — Thinking Parameters via Custom ACP Method
 
-## Task Overview
-Implement proper provider/model switching in EduCraw and enhance model table with new fields.
+## Date: 2025-07-11
+## Status: COMPLETE — All changes implemented, all diagnostics clean
 
-## Key Requirements
-1. Fix provider switching - currently only switches model, not provider
-2. Add fields to model table:
-   - provider (string)
-   - think_mode (nullable bool/string)
-   - visual_support (bool)
-3. Wire new fields to frontend admin page
-4. Add update button for model specs
+### Changes Made
 
-## Current Issues
-- Model selection logs "model switched via ACP" but doesn't actually set provider
-- Database model table doesn't store provider name
-- model_poller.rs only sends SetSessionModelRequest without provider switching
+#### Goose Side (Steps 1-3)
+- [x] `goose-sdk/src/custom_requests.rs` — Added `SetSessionModelConfigRequest` + `SetSessionModelConfigResponse`
+- [x] `goose/src/acp/server/custom_dispatch.rs` — Added `dispatch_set_session_model_config`
+- [x] `goose/src/acp/server.rs` — Added `on_set_model_config` handler (mirrors `on_set_model` but with `.with_request_params()`)
 
-## Investigation Progress
+#### EduCraw Side (Step 4 + Fixes)
+- [x] `educlaw-server/Cargo.toml` — Added `goose-sdk` as path dependency
+- [x] `educlaw-server/src/db/schema.rs` — Added `ALTER TABLE models ADD COLUMN thinking_params TEXT` migration
+- [x] `educlaw-server/src/db/models.rs` — Added `thinking_params: Option<String>` field + `parsed_thinking_params()` helper
+- [x] `educlaw-server/src/acp_bridge/model_poller.rs` — Now uses `SetSessionModelConfigRequest` with `thinking_params` from DB
+- [x] `educlaw-server/src/acp_bridge/custom_requests.rs` — Replaced local Export/Import type duplicates with re-exports from `goose_sdk`
 
-### Files to Check
-- [x] Database schema for models table
-- [x] educlaw-server/src/acp_bridge/model_poller.rs (model switching logic)
-- [x] Frontend admin page for models
-- [x] Model struct definitions
-- [x] API endpoints for model management
+### Side Fix: Import/Export Session
 
-### Key Findings
+Previously EduCraw defined its OWN `ExportSessionRequest`, `ImportSessionRequest`, etc. using `sacp::JsonRpcRequest` directly — duplicating goose-sdk types. These could drift out of sync. Now `acp_bridge/custom_requests.rs` re-exports from `goose_sdk::custom_requests`, so:
+- Import/export session uses the canonical types
+- No risk of type mismatch between EduCraw and Goose
+- `acp_bridge/mod.rs` and `commands.rs` continue to work unchanged (they import via `super::custom_requests`)
 
-#### Database Schema (schema.rs)
-- Current fields: id, name, display_name, enabled, multiplier, created_at
-- MISSING: provider, think_mode, visual_support
+### How thinking_params flows
 
-#### Model Struct (db/models.rs)
-- Current fields match DB schema
-- Need to add: provider, think_mode, visual_support
+1. Admin stores JSON in `models.thinking_params` column (e.g. `{"thinking_type":"enabled","budget_tokens":16000}`)
+2. `model_poller` reads model → calls `parsed_thinking_params()` → gets `Option<HashMap<String, Value>>`
+3. Sends `_goose/session/set_model_config` ACP method with `requestParams`
+4. Goose handler calls `.with_request_params(req.request_params)` on `ModelConfig`
+5. Providers read via `get_config_param()` at inference time
+6. Persisted to DB via `update_provider()` → `model_config_json` column
 
-#### Model Poller (acp_bridge/model_poller.rs)
-- Line 111-116: Only sends SetSessionModelRequest
-- Does NOT switch provider first
-- Need to add provider switching logic before model switch
+### Critical Constraint
+EduCraw MUST always use `_goose/session/set_model_config` — never `session/set_model`. The standard method creates a fresh `ModelConfig` with `request_params: None`, which would overwrite thinking config.
 
-#### Admin Page (educlaw-web/src/pages/AdminPage.tsx)
-- ModelsTab starts at line 605
-- Has create, toggle enable/disable, set multiplier, delete functions
-- MISSING: update function for new fields, UI for provider/think_mode/visual_support
+---
 
-#### Admin API Endpoints (api/admin.rs)
-- POST /admin/models: creates model (CreateModelBody struct line 714)
-- PUT /admin/models/:id: updates enabled status (UpdateModelBody struct line 752)
-- DELETE /admin/models/:id: deletes model
-- MISSING: endpoint for updating model specs (provider, think_mode, visual_support)
+## Date: 2025-07-11 — Frontend Wiring Plan (PENDING APPROVAL)
 
-#### ACP Protocol Available
-- SetSessionConfigOptionRequest - for setting provider/model separately
-- ConfigId::new("provider") - for provider switching
-- ConfigId::new("model") - for model switching
-- ListProvidersRequest - to get provider+model mapping
+### Discovery: Current State
 
-## Implementation Plan
+**Backend (already done):**
+- `models.thinking_params` column exists (JSON TEXT in SQLite)
+- `Model.parsed_thinking_params()` helper returns `Option<HashMap<String, Value>>`
+- `model_poller.rs` reads thinking_params from DB and sends via `SetSessionModelConfigRequest`
+- `adminUpdateModelSpecs` only updates `provider`, `think_mode`, `visual_support` — NOT thinking_params
 
-### Phase 1: Database & Backend Schema Update
-1. Add migration to add new columns to models table:
-   - provider TEXT
-   - think_mode INTEGER (nullable, 1=thinking, 0=non-thinking, NULL=unknown)
-   - visual_support INTEGER (0=no, 1=yes)
+**Frontend (not yet wired):**
+- `Model` TypeScript interface has `think_mode` but NO `thinking_params`
+- Admin ModelsTab has controls for provider, think_mode, visual_support but NO thinking config
+- Student ChatPanel has model dropdown with think_mode/visual icons but NO thinking controls
+- `setSessionModel()` only sends model name — no thinking_params
 
-2. Update Model struct in db/models.rs:
-   - Add new fields with proper types
-   - Update all SQL queries to include new fields
+---
 
-3. Update API endpoints in api/admin.rs:
-   - Modify CreateModelBody to include new fields
-   - Create UpdateModelSpecsBody for updating existing models
-   - Add new endpoint PUT /admin/models/:id/specs
+## Date: 2025-07-11 — Frontend Wiring IMPLEMENTED
 
-### Phase 2: Provider Switching Logic
-1. Update model_poller.rs:
-   - Look up model's provider from database
-   - Send SetSessionConfigOptionRequest to switch provider first
-   - Then send SetSessionModelRequest to switch model
+### Changes Made
 
-### Phase 3: Frontend Updates
-1. Update AdminPage.tsx ModelsTab:
-   - Add provider, think_mode, visual_support to create form
-   - Add update button/form for editing existing models
-   - Display new fields in table
-   - Add API calls for update endpoint
+#### Backend (Rust)
 
-2. Update api client to include new fields
+1. **`educlaw-server/src/db/models.rs`** — Added `update_thinking_params()` function
+2. **`educlaw-server/src/api/admin.rs`** — Added:
+   - `PUT /admin/models/:id/thinking` — accepts `{"thinking_params": {...}}` JSON, validates it's an object, stores as TEXT
+   - `GET /admin/provider-schema/:provider` — returns ConfigParamDef[] for supported providers (anthropic, databricks, google, openai). **No frontend hard-coding — the schema lives on the server.**
+3. **`educlaw-server/src/api/sessions.rs`** — Extended `SetModelBody` with optional `thinking_params: Option<HashMap<String, Value>>`. Writes `pending_thinking.json` side-channel file for model_poller to merge as per-session overrides.
+4. **`educlaw-server/src/acp_bridge/model_poller.rs`** — Now checks for `pending_thinking.json` after reading model from DB, merges overrides into thinking_params before sending ACP request.
 
-### Files to Modify
-1. educlaw-server/src/db/schema.rs (migration) ✓ DONE
-2. educlaw-server/src/db/models.rs (struct + queries) ✓ DONE
-3. educlaw-server/src/api/admin.rs (endpoints) ✓ DONE
-4. educlaw-server/src/acp_bridge/model_poller.rs (provider switching) ✓ DONE
-5. educlaw-web/src/api/types.ts (type definitions) ✓ DONE
-6. educlaw-web/src/api/client.ts (API client) ✓ DONE
-7. educlaw-web/src/pages/AdminPage.tsx (UI) ✓ DONE
-8. educlaw-web/src/components/ChatPanel.tsx (student model selector) ⏸️ NEEDS MODEL DATA
+#### Frontend (TypeScript/React)
 
-## User Concern - Model Listing Flow ✓ VERIFIED
+5. **`educlaw-web/src/api/types.ts`** — Added `thinking_params` to `Model`, added `ConfigParamDef` and `ProviderSchema` types
+6. **`educlaw-web/src/api/client.ts`** — Added:
+   - `adminUpdateModelThinking(token, id, params)` — calls PUT /admin/models/:id/thinking
+   - `adminGetProviderSchema(provider)` — calls GET /admin/provider-schema/:provider
+   - `normalizeThinkingParams(raw)` — normalizes JSON string from backend to object
+   - Extended `setSessionModel()` with optional `thinkingParams` parameter
+7. **`educlaw-web/src/components/ThinkingConfigEditor.tsx`** — NEW component:
+   - Fetches provider schema from backend on mount/provider change
+   - Renders dynamic select/number controls based on schema
+   - Raw JSON mode for arbitrary key-value pairs
+   - Supports providers with empty schemas (shows raw JSON option)
+   - Follows warm parchment styling
+8. **`educlaw-web/src/pages/AdminPage.tsx`** — ModelsTab changes:
+   - Added `editingThinking` state
+   - Specs editor now includes `ThinkingConfigEditor` when provider is set
+   - Save/Cancel properly handles thinking params
+   - Uses `normalizeThinkingParams()` for the JSON string from DB
+9. **`educlaw-web/src/components/ChatPanel.tsx`** — Added:
+   - `thinkingParams`, `onThinkingChange` props
+   - "Think" toggle button next to model selector (appears when active model has thinking_params)
+   - Expandable compact thinking config panel with inline key-value editing
+   - Reset button to clear overrides
+10. **`educlaw-web/src/pages/SessionPage.tsx`** — Wired thinking flow:
+    - `thinkingParams` state initialized from active model's defaults on mount
+    - `handleThinkingChange()` sends model + thinking override to API
+    - `handleModelChange()` resets thinking params when switching models
+    - `handleModelChanged()` (WebSocket) loads thinking params from new model
+    - Uses `normalizeThinkingParams()` everywhere
 
-### Flow Analysis Complete
+### How It All Flows
 
-**1. Admin Creates Model:**
-- Frontend: POST /admin/models with {name, display_name, multiplier}
-- Backend: admin.rs:create_model() → db_models::insert_model()
-- Database: New row in `models` table with enabled=1 by default
+**Admin path:**
+1. Admin opens Models tab → clicks "Specs" on a model
+2. Sets provider → ThinkingConfigEditor fetches `GET /admin/provider-schema/:provider`
+3. Dynamic form renders (selects, number inputs) or raw JSON mode
+4. Saves → `PUT /admin/models/:id/specs` + `PUT /admin/models/:id/thinking`
+5. Stored in `models.thinking_params` as JSON TEXT
 
-**2. Admin Views All Models:**
-- Frontend: GET /admin/models
-- Backend: admin.rs:list_models() → db_models::list_models()
-- SQL: `SELECT * FROM models ORDER BY display_name`
-- Returns: ALL models (enabled + disabled) ✓
+**Student path:**
+1. Session loads → `GET /sessions/:id/models` returns models with `thinking_params`
+2. Active model with thinking → "Think" button appears next to model dropdown
+3. Student clicks "Think" → compact inline panel shows current params
+4. Adjusts params → `PUT /sessions/:id/model` with `thinking_params` override
+5. Backend writes `pending_model.txt` + `pending_thinking.json`
+6. model_poller picks up both → sends `_goose/session/set_model_config` with merged params
 
-**3. Student Model Assignment:**
-- Frontend: Admin assigns models to student via PUT /admin/students/:id/models
-- Backend: Uses db_models::models_for_student()
-- Logic:
-  - If student has specific assignments in `student_models` table → return those
-  - If NO assignments → return ALL ENABLED models via list_enabled()
-  - SQL for enabled: `SELECT * FROM models WHERE enabled = 1`
-- Returns: Only model NAMES (strings), not full Model objects ✓
-
-**4. Session Model Usage:**
-- When student creates session → uses models_for_student() to get allowed list
-- When student switches model → model_poller validates against models_for_student()
-- ACP bridge returns model names to frontend
-
-### Conclusion: Flow is CORRECT ✓
-- Admin-created models ARE stored in models table
-- Admin-created models ARE included in list_models() for admin panel
-- Admin-created models ARE included in list_enabled() for student assignment
-- When enabled=1, they become available to all students (unless specific assignment)
-
-No backend changes needed for model listing. Can proceed with frontend.
-
-## Implementation Summary
-
-### ✅ COMPLETED
-
-#### Backend (Server)
-1. **Database Schema** - Added 3 new columns to `models` table:
-   - `provider` (TEXT, nullable) - e.g. "xai", "deepseek", "openai"
-   - `think_mode` (INTEGER, nullable) - 1=thinking, 0=non-thinking, NULL=unknown
-   - `visual_support` (INTEGER, default 0) - 1=supports vision, 0=text-only
-
-2. **Model Struct** - Updated with new fields and proper serialization
-
-3. **Database Functions** - Added `update_model_specs()` to update provider/capabilities
-
-4. **API Endpoint** - Added `PUT /admin/models/:id/specs` for updating model specs
-
-5. **Provider Switching** - model_poller.rs now:
-   - Looks up model's provider from database
-   - Sends SetSessionConfigOptionRequest to switch provider FIRST
-   - Then sends SetSessionModelRequest to switch model
-   - Logs provider switching success/failure
-
-#### Frontend (Web)
-1. **Type Definitions** - Updated Model interface with new fields
-
-2. **API Client** - Added `adminUpdateModelSpecs()` function
-
-3. **Admin Panel ModelsTab**:
-   - **Create form** - Added fields for provider, think_mode, visual_support
-   - **Table display** - Shows icons (Brain for thinking, Eye for vision) in:
-     - Display name column (inline icons)
-     - New "Capabilities" column (badge pills)
-   - **Provider column** - Shows provider ID or "—"
-   - **Update button** - "Specs" button opens inline editor
-   - **Inline editor** - Expandable row with form to update all specs
-   - **Theme compliance** - Uses wp-* color variables throughout
-
-4. **Icons Used**:
-   - `Brain` (from lucide-react) - Thinking models (wp-info color)
-   - `Eye` (from lucide-react) - Vision support (wp-accent color)
-   - `Edit2` - Update specs button
-   - `Check` - Save button
-
-### ✅ Student Chat Panel Icons - COMPLETED
-
-**Changes made:**
-1. ✓ Added `full_models_for_student()` function in db/models.rs to return full Model objects
-2. ✓ Updated `GET /sessions/:id/models` endpoint to use `full_models_for_student()`
-3. ✓ Updated SessionModels type to `models: Model[]` instead of `string[]`
-4. ✓ Updated ChatPanel props to accept `availableModels?: Model[]`
-5. ✓ Updated ChatPanel dropdown to:
-   - Show `m.display_name` instead of model name
-   - Show Brain icon for thinking models (think_mode === 1)
-   - Show Eye icon for vision-capable models (visual_support === 1)
-   - Icons appear next to the model selector
-6. ✓ Updated SessionPage to handle Model[] instead of string[]
-7. ✓ Imported Brain and Eye icons from lucide-react
-8. ✓ Used warm parchment theme colors (wp-info for Brain, wp-accent for Eye)
-
-**Result:** Students now see capability icons next to their model selector in chat!
-
-## Testing Checklist
-
-- [ ] Run server - migrations apply automatically
-- [ ] Admin panel - Create new model with provider/capabilities
-- [ ] Admin panel - Update existing model specs  
-- [ ] Admin panel - Icons display correctly (Brain for thinking, Eye for vision)
-- [ ] Admin panel - Theme colors match (no blue/purple, only wp-*)
-- [ ] **Student chat - Icons show next to model selector**
-- [ ] **Student chat - Display names shown instead of model IDs**
-- [ ] Student session - Switch to model with different provider
-- [ ] Check logs - Provider switching happens before model switching
-- [ ] Student session - Model switch works across providers
-
-## Icons Used (React Icons from lucide-react)
-
-✅ **Brain** - Indicates thinking/reasoning models
-- Color: `text-wp-info` (warm blue-grey from parchment theme)
-- Used in: Admin table, Student chat selector
-- Models with `think_mode === 1`
-
-✅ **Eye** - Indicates vision-capable models  
-- Color: `text-wp-accent` (warm orange from parchment theme)
-- Used in: Admin table, Student chat selector
-- Models with `visual_support === 1`
-
-✅ **Edit2** - Update button for model specs
-- Used in: Admin table actions column
-
-✅ **Check** - Save button
-- Used in: Inline spec editor, confirmation actions
-
-❌ **NO EMOJIS USED** - All icons are from lucide-react library!
+### Key Design Decisions
+- **Schema on server, not frontend** — `GET /admin/provider-schema/:provider` is the single source of truth
+- **Universal JSON storage** — `models.thinking_params` accepts any JSON object, not constrained to schema
+- **Raw JSON fallback** — ThinkingConfigEditor always has a "Raw JSON" mode for unknown params
+- **Per-session overrides** — Students can temporarily adjust thinking level without changing admin defaults
+- **No hard-coding** — New providers/params added by updating the Rust match statement in `provider_schema_handler`

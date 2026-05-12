@@ -23,7 +23,7 @@ This documentation covers all backend API endpoints exposed by `educlaw-server` 
 | `/sessions/:id` | GET | Get session status |
 | `/sessions/:id` | DELETE | Terminate session |
 | `/sessions/:id/models` | GET | List allowed models for session |
-| `/sessions/:id/model` | PUT | Switch active model |
+| `/sessions/:id/model` | PUT | Switch active model (optional thinking_params override) |
 | `/sessions/:id/token-usage` | GET | Get token usage |
 | `/sessions/:id/broadcast` | POST | Push message to PTY |
 
@@ -134,8 +134,10 @@ This documentation covers all backend API endpoints exposed by `educlaw-server` 
 | `/admin/models` | POST | Create model |
 | `/admin/models/:id` | PUT | Enable/disable model |
 | `/admin/models/:id/specs` | PUT | Update model specs |
+| `/admin/models/:id/thinking` | PUT | Update thinking parameters |
 | `/admin/models/:id` | DELETE | Delete model |
 | `/admin/models/:name/multiplier` | PUT | Set multiplier |
+| `/admin/provider-schema/:provider` | GET | Get configurable param schema |
 | `/models` | GET | List enabled models (public) |
 
 **File:** [10-admin-models.md](10-admin-models.md)
@@ -197,6 +199,7 @@ interface Model {
   provider?: string | null;
   think_mode?: number | null;
   visual_support: number;
+  thinking_params?: string | null;  // JSON string, use normalizeThinkingParams()
   created_at: string;
 }
 ```
