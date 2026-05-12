@@ -6,8 +6,6 @@ import { Label } from "@mariozechner/mini-lit/dist/Label.js";
 import { Switch } from "@mariozechner/mini-lit/dist/Switch.js";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import "../components/ProviderKeyInput.js";
-import { getAppStorage } from "../storage/app-storage.js";
 
 // Base class for settings tabs
 export abstract class SettingsTab extends LitElement {
@@ -18,56 +16,18 @@ export abstract class SettingsTab extends LitElement {
 	}
 }
 
-// API Keys Tab
-@customElement("api-keys-tab")
-export class ApiKeysTab extends SettingsTab {
-	getTabName(): string {
-		return i18n("API Keys");
-	}
-
-	render(): TemplateResult {
-		const providers = getProviders();
-
-		return html`
-			<div class="flex flex-col gap-6">
-				<p class="text-sm text-muted-foreground">
-					${i18n("Configure API keys for LLM providers. Keys are stored locally in your browser.")}
-				</p>
-				${providers.map((provider) => html`<provider-key-input .provider=${provider}></provider-key-input>`)}
-			</div>
-		`;
-	}
-}
-
 // Proxy Tab
 @customElement("proxy-tab")
 export class ProxyTab extends SettingsTab {
 	@state() private proxyEnabled = false;
 	@state() private proxyUrl = "http://localhost:3001";
 
-	override async connectedCallback() {
-		super.connectedCallback();
-		// Load proxy settings when tab is connected
-		try {
-			const storage = getAppStorage();
-			const enabled = await storage.settings.get<boolean>("proxy.enabled");
-			const url = await storage.settings.get<string>("proxy.url");
-
-			if (enabled !== null) this.proxyEnabled = enabled;
-			if (url !== null) this.proxyUrl = url;
-		} catch (error) {
-			console.error("Failed to load proxy settings:", error);
-		}
-	}
-
 	private async saveProxySettings() {
-		try {
-			const storage = getAppStorage();
-			await storage.settings.set("proxy.enabled", this.proxyEnabled);
-			await storage.settings.set("proxy.url", this.proxyUrl);
-		} catch (error) {
-			console.error("Failed to save proxy settings:", error);
-		}
+		// UI only - not wired to backend
+		console.log("[ProxyTab] Proxy settings (UI only):", {
+			enabled: this.proxyEnabled,
+			url: this.proxyUrl,
+		});
 	}
 
 	getTabName(): string {

@@ -6,9 +6,20 @@ import { FileText } from "lucide";
 import { type Static, Type } from "typebox";
 import { EXTRACT_DOCUMENT_DESCRIPTION } from "../prompts/prompts.js";
 import { loadAttachment } from "../utils/attachment-utils.js";
-import { isCorsError } from "../utils/proxy-utils.js";
 import { registerToolRenderer, renderCollapsibleHeader, renderHeader } from "./renderer-registry.js";
 import type { ToolRenderer, ToolRenderResult } from "./types.js";
+
+// Simple CORS error detection (inline since proxy-utils was removed)
+function isCorsError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+	const message = error.message.toLowerCase();
+	return (error.name === "TypeError" && message.includes("failed to fetch")) ||
+		error.name === "NetworkError" ||
+		message.includes("cors") ||
+		message.includes("cross-origin");
+}
 
 // ============================================================================
 // TYPES

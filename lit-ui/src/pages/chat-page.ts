@@ -18,6 +18,13 @@ import type { LoginResponse, EduModel } from "../core/edu-types";
 import { defaultConvertToLlm } from "../components/Messages.js";
 import "../ChatPanel.js";
 import type { ChatPanel } from "../ChatPanel.js";
+import { Button } from "@mariozechner/mini-lit/dist/Button.js";
+import { icon } from "@mariozechner/mini-lit";
+import { Input } from "@mariozechner/mini-lit/dist/Input.js";
+import { History, Plus, Settings } from "lucide";
+import "@mariozechner/mini-lit/dist/ThemeToggle.js";
+import { SessionListDialog } from "../dialogs/SessionListDialog.js";
+import { SettingsDialog, ProxyTab } from "../dialogs/SettingsDialog.js";
 
 // ── Session list item from server (sessions_list frame) ──
 interface SessionListItem {
@@ -35,6 +42,8 @@ export class ChatPage extends LitElement {
   @property({ attribute: false }) sessionToken!: string;
   @state() private _ready = false;
   @state() private _error = "";
+  @state() private currentTitle = "";
+  @state() private isEditingTitle = false;
 
   private agent?: Agent;
   private chatPanel?: ChatPanel;
@@ -471,6 +480,12 @@ export class ChatPage extends LitElement {
 
             if (replayedMessages.length > 0 && this.agent) {
               this.agent.state.messages = replayedMessages;
+              
+              // Auto-generate title if not set
+              if (!this.currentTitle) {
+                this.currentTitle = this.generateTitle(replayedMessages);
+              }
+              
               const agentInterface = this.querySelector("agent-interface");
               if (agentInterface) {
                 (agentInterface as LitElement).requestUpdate();
@@ -644,6 +659,97 @@ export class ChatPage extends LitElement {
     }, 15000);
   }
 
+  // ── Title Generation ──
+
+  private generateTitle(messages: AgentMessage[]): string {
+    const firstUserMsg = messages.find((m) => m.role === "user");
+    if (!firstUserMsg) return "";
+
+    let text = "";
+    const content = firstUserMsg.content;
+
+    if (typeof content === "string") {
+      text = content;
+    } else {
+      const textBlocks = content.filter((c): c is TextContent => c.type === "text");
+      text = textBlocks.map((c) => c.text || "").join(" ");
+    }
+
+    text = text.trim();
+    if (!text) return "";
+
+    const sentenceEnd = text.search(/[.!?]/);
+    if (sentenceEnd > 0 && sentenceEnd <= 50) {
+      return text.substring(0, sentenceEnd + 1);
+    }
+    return text.length <= 50 ? text : `${text.substring(0, 47)}...`;
+  }
+
+  private shouldSaveSession(messages: AgentMessage[]): boolean {
+    const hasUserMsg = messages.some((m) => m.role === "user");
+    const hasAssistantMsg = messages.some((m) => m.role === "assistant");
+    return hasUserMsg && hasAssistantMsg;
+  }
+
+  // ── Session Management UI ──
+
+  private async openSessionList() {
+    console.log("[chat-page] Requesting sessions list via WebSocket");
+    
+    const wsManager = WsManager.getExistingInstance(
+      this.sessionId,
+      this.sessionToken,
+    );
+    
+    if (!wsManager) {
+      console.error("[chat-page] No WebSocket connection available");
+      return;
+    }
+
+    // Set up one-time handler for sessions_list response
+    const originalOnMessage = (wsManager as any).onMessage;
+    (wsManager as any).onMessage = (data: any) => {
+      try {
+        const frame = JSON.parse(data);
+        if (frame.type === "sessions_list") {
+          console.log("[chat-page] Received sessions list:", frame.sessions);
+          
+          // Restore original handler first
+          (wsManager as any).onMessage = originalOnMessage;
+          
+          // Display sessions in dialog
+          SessionListDialog.open(
+            (sessionId: string) => {
+              console.log("[chat-page] Loading session:", sessionId);
+              this.loadSessionById(sessionId);
+            },
+            frame.sessions || []
+          );
+          return;
+        }
+      } catch (err) {
+        console.error("[chat-page] Failed to parse sessions list response:", err);
+      }
+      
+      // Pass through to original handler
+      if (originalOnMessage) {
+        originalOnMessage(data);
+      }
+    };
+
+    // Send list_sessions request
+    wsManager.send({ type: "list_sessions" });
+  }
+
+  private newSession() {
+    // For now, reload the page to create a new session
+    window.location.reload();
+  }
+
+  private openSettings() {
+    SettingsDialog.open([new ProxyTab()]);
+  }
+
   // ── Logout ──
 
   private handleLogout() {
@@ -676,10 +782,94 @@ export class ChatPage extends LitElement {
       <div
         class="w-full h-screen flex flex-col bg-background text-foreground overflow-hidden"
       >
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-border shrink-0">
+          <div class="flex items-center gap-2 px-4 py-2">
+            ${Button({
+              variant: "ghost",
+              size: "sm",
+              children: icon(History, "sm"),
+              onClick: () => this.openSessionList(),
+              title: "Sessions",
+            })}
+            ${Button({
+              variant: "ghost",
+              size: "sm",
+              children: icon(Plus, "sm"),
+              onClick: () => this.newSession(),
+              title: "New Session",
+            })}
+
+            ${
+              this.currentTitle
+                ? this.isEditingTitle
+                  ? html`<div class="flex items-center gap-2">
+                      ${Input({
+                        type: "text",
+                        value: this.currentTitle,
+                        className: "text-sm w-64",
+                        onChange: async (e: Event) => {
+                          const newTitle = (e.target as HTMLInputElement).value.trim();
+                          if (newTitle && newTitle !== this.currentTitle) {
+                            this.currentTitle = newTitle;
+                            // TODO: Wire to backend API to update session title
+                          }
+                          this.isEditingTitle = false;
+                          this.requestUpdate();
+                        },
+                        onKeyDown: async (e: KeyboardEvent) => {
+                          if (e.key === "Enter") {
+                            const newTitle = (e.target as HTMLInputElement).value.trim();
+                            if (newTitle && newTitle !== this.currentTitle) {
+                              this.currentTitle = newTitle;
+                              // TODO: Wire to backend API to update session title
+                            }
+                            this.isEditingTitle = false;
+                            this.requestUpdate();
+                          } else if (e.key === "Escape") {
+                            this.isEditingTitle = false;
+                            this.requestUpdate();
+                          }
+                        },
+                      })}
+                    </div>`
+                  : html`<button
+                      class="px-2 py-1 text-sm text-foreground hover:bg-secondary rounded transition-colors"
+                      @click=${() => {
+                        this.isEditingTitle = true;
+                        this.requestUpdate();
+                        requestAnimationFrame(() => {
+                          const input = this.querySelector('input[type="text"]') as HTMLInputElement;
+                          if (input) {
+                            input.focus();
+                            input.select();
+                          }
+                        });
+                      }}
+                      title="Click to edit title"
+                    >
+                      ${this.currentTitle}
+                    </button>`
+                : html`<span class="text-base font-semibold text-foreground">EduCraw Chat</span>`
+            }
+          </div>
+          <div class="flex items-center gap-1 px-2">
+            <theme-toggle></theme-toggle>
+            ${Button({
+              variant: "ghost",
+              size: "sm",
+              children: icon(Settings, "sm"),
+              onClick: () => this.openSettings(),
+              title: "Settings",
+            })}
+          </div>
+        </div>
+
+        <!-- Chat Panel -->
         ${this._ready
           ? html`<div class="flex-1 min-h-0 chat-container"></div>`
           : html`
-              <div class="w-full h-screen flex items-center justify-center">
+              <div class="w-full h-full flex items-center justify-center">
                 <p class="text-muted-foreground">Initializing chat…</p>
               </div>
             `}
