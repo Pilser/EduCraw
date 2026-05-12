@@ -63,6 +63,15 @@ export class WsManager {
     return this.instances.get(key)!;
   }
 
+  /** Get existing WsManager instance (without creating) */
+  static getExistingInstance(
+    sessionId: string,
+    token: string,
+  ): WsManager | null {
+    const key = `${sessionId}:${token}`;
+    return this.instances.get(key) || null;
+  }
+
   /** Update callbacks on existing instance (useful for reconnection handlers) */
   updateCallbacks(options: Partial<WsManagerOptions>): void {
     if (options.onMessage !== undefined) this.onMessage = options.onMessage;
@@ -184,6 +193,38 @@ export class WsManager {
   /** Check if connected */
   isConnected(): boolean {
     return this.status === "connected";
+  }
+
+  /** Wait for connection to be ready (with timeout) */
+  async waitForConnection(timeoutMs: number = 10000): Promise<boolean> {
+    if (this.status === "connected") {
+      return true;
+    }
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        console.warn(
+          `[WsManager] Connection timeout after ${timeoutMs}ms - status: ${this.status}`,
+        );
+        resolve(false);
+      }, timeoutMs);
+
+      const checkInterval = setInterval(() => {
+        if (this.status === "connected") {
+          cleanup();
+          resolve(true);
+        } else if (this.status === "error") {
+          cleanup();
+          resolve(false);
+        }
+      }, 100);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        clearInterval(checkInterval);
+      };
+    });
   }
 
   /** Disconnect and cleanup */

@@ -13,6 +13,7 @@ import { createWsStreamFn } from "../core/ws-stream-fn";
 import { eduModelToPiModel } from "../core/edu-model-provider";
 import { eduApi } from "../core/edu-api";
 import { SessionManager } from "../core/session-manager";
+import { WsManager } from "../core/ws-manager";
 import type { LoginResponse, EduModel } from "../core/edu-types";
 import { defaultConvertToLlm } from "../components/Messages.js";
 import "../ChatPanel.js";
@@ -85,8 +86,25 @@ export class ChatPage extends LitElement {
       // Wait for re-render so .chat-container exists in DOM, then append
       await this.updateComplete;
       this.appendChatPanel();
-      // After chat is visible, try to load the most recent session
-      this.loadMostRecentSession();
+      
+      // IMPORTANT: Wait for WsManager to connect before loading session
+      const wsManager = WsManager.getExistingInstance(
+        this.sessionId,
+        this.sessionToken,
+      );
+      if (wsManager) {
+        console.log("[chat-page] Waiting for WebSocket connection...");
+        const connected = await wsManager.waitForConnection(10000);
+        if (connected) {
+          console.log("[chat-page] WebSocket connected - loading recent session");
+          // After chat is visible and WS is connected, try to load the most recent session
+          this.loadMostRecentSession();
+        } else {
+          console.error(
+            "[chat-page] WebSocket connection timeout - cannot load session",
+          );
+        }
+      }
     } catch (err) {
       // Check if this is an authentication error (session expired)
       if (this.isAuthError(err)) {
@@ -142,6 +160,21 @@ export class ChatPage extends LitElement {
       // Will use default model for other errors
       console.error("Failed to fetch session models:", err);
     }
+
+    // IMPORTANT: Create WsManager BEFORE creating Agent
+    // This ensures the persistent connection exists for session replay
+    console.log("[chat-page] Creating persistent WsManager connection");
+    WsManager.getInstance({
+      sessionId: this.sessionId,
+      token: this.sessionToken,
+      onReconnected: () => {
+        console.log("[chat-page] WebSocket reconnected - reloading session");
+        this.handleReconnection();
+      },
+      onMessage: () => {
+        // Initial empty handler - will be overridden by ws-stream-fn
+      },
+    });
 
     // Create the Agent with WebSocket stream function
     // Pass convertToLlm to handle UserMessageWithAttachments (file attachments)
@@ -243,18 +276,22 @@ export class ChatPage extends LitElement {
   }
 
   /**
-   * Load a specific session by thread ID
+   * Load a specific session by thread ID using the persistent WsManager
    */
   private async loadSessionById(threadId: string) {
     if (!this.agent) return;
 
-    const wsBase =
-      import.meta.env.VITE_WS_TARGET ||
-      `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
-    const wsUrl = `${wsBase}/sessions/${this.sessionId}/ws?token=${encodeURIComponent(this.sessionToken)}`;
+    // Get the persistent WsManager instance (already created by Agent)
+    const wsManager = WsManager.getExistingInstance(
+      this.sessionId,
+      this.sessionToken,
+    );
+    if (!wsManager) {
+      console.error("[replay] WsManager not found - cannot load session");
+      return;
+    }
 
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = "arraybuffer";
+    console.log(`[replay] Loading session ${threadId} via persistent WsManager`);
 
     // Replay state
     const replayedMessages: AgentMessage[] = [];
@@ -263,23 +300,23 @@ export class ChatPage extends LitElement {
     let currentThinkingContent: { type: "thinking"; thinking: string } | null =
       null;
     let pendingToolCallId: string | null = null;
+    let replayComplete = false;
 
-    ws.onopen = () => {
-      console.log(`[replay] Loading session ${threadId}`);
-      ws.send(
-        JSON.stringify({
-          type: "load_session",
-          thread_id: threadId,
-        }),
-      );
-    };
+    // Save the original onMessage handler from ws-stream-fn
+    const originalOnMessage = (wsManager as any).onMessage;
 
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) return;
+    // Temporarily override onMessage to intercept replay frames
+    (wsManager as any).onMessage = (frame: any) => {
+      // If replay is complete, restore original handler and forward
+      if (replayComplete) {
+        if (originalOnMessage) {
+          originalOnMessage(frame);
+        }
+        return;
+      }
 
+      // Handle replay frames
       try {
-        const frame = JSON.parse(event.data as string);
-
         switch (frame.type) {
           case "user_text": {
             // CRITICAL: Flush previous assistant message BEFORE adding user message
@@ -430,7 +467,10 @@ export class ChatPage extends LitElement {
               this.chatPanel?.requestUpdate();
             }
 
-            ws.close();
+            // Mark replay as complete and restore original handler
+            replayComplete = true;
+            (wsManager as any).onMessage = originalOnMessage;
+            console.log("[replay] Restored original WsManager onMessage handler");
             break;
           }
 
@@ -448,39 +488,54 @@ export class ChatPage extends LitElement {
               );
               this.dispatchSessionExpired();
             }
-            ws.close();
+            // Restore original handler on error
+            replayComplete = true;
+            (wsManager as any).onMessage = originalOnMessage;
             break;
           }
 
           default:
+            // Forward other frames to original handler (like binary, chat frames during replay)
+            if (originalOnMessage) {
+              originalOnMessage(frame);
+            }
             break;
         }
-      } catch {
-        // Ignore malformed frames
+      } catch (err) {
+        console.error("[replay] Error processing frame:", err);
       }
     };
 
-    ws.onerror = (err) => {
-      console.error("[replay] Session WS error:", err);
-    };
+    // Send load_session command via the persistent connection
+    const sent = wsManager.send({
+      type: "load_session",
+      thread_id: threadId,
+    });
 
-    ws.onclose = (event) => {
-      this.flushAssistant(replayedMessages, currentAssistant);
-      if (event.code !== 1000 && event.code !== 1005) {
-        console.warn(
-          `[replay] WebSocket closed with code ${event.code}: ${event.reason || "no reason provided"}`,
-        );
-      }
-    };
+    if (!sent) {
+      console.error("[replay] Failed to send load_session - WS not open");
+      // Restore original handler
+      (wsManager as any).onMessage = originalOnMessage;
+      return;
+    }
 
-    // Safety timeout
+    // Safety timeout in case load_session_complete never arrives
     setTimeout(() => {
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
-        console.log("[replay] Session load timed out");
-        ws.close();
+      if (!replayComplete) {
+        console.warn("[replay] Load timeout - restoring original handler");
+        if (currentAssistant) {
+          this.flushAssistant(replayedMessages, currentAssistant);
+        }
+        if (replayedMessages.length > 0 && this.agent) {
+          this.agent.state.messages = replayedMessages;
+          const agentInterface = this.querySelector("agent-interface");
+          if (agentInterface) {
+            (agentInterface as LitElement).requestUpdate();
+          }
+          this.chatPanel?.requestUpdate();
+        }
+        replayComplete = true;
+        (wsManager as any).onMessage = originalOnMessage;
       }
     }, 15000);
   }
@@ -492,25 +547,39 @@ export class ChatPage extends LitElement {
   private async loadMostRecentSession() {
     if (!this.agent || !this.sessionId) return;
 
-    const wsBase =
-      import.meta.env.VITE_WS_TARGET ||
-      `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
-    const wsUrl = `${wsBase}/sessions/${this.sessionId}/ws?token=${encodeURIComponent(this.sessionToken)}`;
+    // Get the persistent WsManager instance
+    const wsManager = WsManager.getExistingInstance(
+      this.sessionId,
+      this.sessionToken,
+    );
+    if (!wsManager) {
+      console.error(
+        "[replay] WsManager not found - cannot list/load sessions",
+      );
+      return;
+    }
 
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = "arraybuffer";
+    console.log("[replay] Listing sessions via persistent WsManager");
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "list_sessions" }));
-    };
+    // Save original onMessage handler
+    const originalOnMessage = (wsManager as any).onMessage;
+    let sessionListHandled = false;
 
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) return;
+    // Temporarily override onMessage to intercept sessions_list
+    (wsManager as any).onMessage = (frame: any) => {
+      if (sessionListHandled) {
+        // Restore and forward
+        if (originalOnMessage) {
+          originalOnMessage(frame);
+        }
+        return;
+      }
 
       try {
-        const frame = JSON.parse(event.data as string);
-
         if (frame.type === "sessions_list") {
+          sessionListHandled = true;
+          (wsManager as any).onMessage = originalOnMessage;
+
           const sessions: SessionListItem[] =
             (frame.sessions as SessionListItem[]) || [];
 
@@ -526,37 +595,40 @@ export class ChatPage extends LitElement {
             console.log(
               `[replay] Loading most recent session: ${latest.id} (${latest.metadata?.messageCount ?? "?"} messages)`,
             );
-            ws.close();
             // Use the dedicated loadSessionById method
             this.loadSessionById(latest.id);
           } else {
             console.log(
               "[replay] No existing sessions with messages — starting fresh",
             );
-            ws.close();
+          }
+        } else {
+          // Forward other frames to original handler
+          if (originalOnMessage) {
+            originalOnMessage(frame);
           }
         }
-      } catch {
-        // Ignore malformed frames
+      } catch (err) {
+        console.error("[replay] Error processing sessions_list:", err);
+        sessionListHandled = true;
+        (wsManager as any).onMessage = originalOnMessage;
       }
     };
 
-    ws.onerror = (err) => {
-      console.error("[replay] Session list WS error:", err);
-    };
-
-    ws.onclose = () => {
-      // Cleanup on close
-    };
+    // Send list_sessions command
+    const sent = wsManager.send({ type: "list_sessions" });
+    if (!sent) {
+      console.error("[replay] Failed to send list_sessions - WS not open");
+      (wsManager as any).onMessage = originalOnMessage;
+      return;
+    }
 
     // Safety timeout
     setTimeout(() => {
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
-        console.log("[replay] Session list timed out");
-        ws.close();
+      if (!sessionListHandled) {
+        console.warn("[replay] Session list timeout - restoring handler");
+        sessionListHandled = true;
+        (wsManager as any).onMessage = originalOnMessage;
       }
     }, 15000);
   }
