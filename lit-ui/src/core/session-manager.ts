@@ -2,12 +2,18 @@ import type { LoginResponse } from "./edu-types";
 
 const AUTH_STORAGE_KEY = "educlaw_auth";
 const SESSION_STORAGE_KEY = "educlaw_session";
+const THREAD_STORAGE_KEY = "educlaw_last_thread";
 
 interface StoredAuth extends LoginResponse {}
 
 interface StoredSession {
   session_id: string;
   session_token: string;
+}
+
+interface StoredThread {
+  thread_id: string;
+  session_id: string; // Associate thread with session
 }
 
 export class SessionManager {
@@ -36,6 +42,7 @@ export class SessionManager {
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       localStorage.removeItem(SESSION_STORAGE_KEY);
+      localStorage.removeItem(THREAD_STORAGE_KEY);
     } catch {
       // Ignore
     }
@@ -119,5 +126,30 @@ export class SessionManager {
   static markSessionExpired(): void {
     console.warn("[SessionManager] Session expired - clearing storage");
     this.clearAuth();
+  }
+
+  /** Save last loaded thread ID (Goose session) */
+  static saveLastThreadId(threadId: string, sessionId: string): void {
+    try {
+      localStorage.setItem(
+        THREAD_STORAGE_KEY,
+        JSON.stringify({ thread_id: threadId, session_id: sessionId }),
+      );
+    } catch {
+      // Ignore
+    }
+  }
+
+  /** Load last loaded thread ID for current session */
+  static loadLastThreadId(sessionId: string): string | null {
+    try {
+      const stored = localStorage.getItem(THREAD_STORAGE_KEY);
+      if (!stored) return null;
+      const data = JSON.parse(stored) as StoredThread;
+      // Only return if it matches current session
+      return data.session_id === sessionId ? data.thread_id : null;
+    } catch {
+      return null;
+    }
   }
 }

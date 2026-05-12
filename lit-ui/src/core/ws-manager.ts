@@ -13,6 +13,7 @@ interface WsManagerOptions {
   onMessage?: (message: any) => void;
   onStatusChange?: (status: WsStatus) => void;
   onError?: (error: Error) => void;
+  onReconnected?: () => void; // Called when reconnection succeeds within 5-min window
 }
 
 /**
@@ -33,9 +34,10 @@ export class WsManager {
   private readonly maxReconnectTime = 5 * 60 * 1000; // 5 minutes
   private readonly sessionId: string;
   private readonly token: string;
-  private readonly onMessage?: (message: any) => void;
-  private readonly onStatusChange?: (status: WsStatus) => void;
-  private readonly onError?: (error: Error) => void;
+  private onMessage?: (message: any) => void;
+  private onStatusChange?: (status: WsStatus) => void;
+  private onError?: (error: Error) => void;
+  private onReconnected?: () => void;
 
   private constructor(options: WsManagerOptions) {
     this.sessionId = options.sessionId;
@@ -43,6 +45,7 @@ export class WsManager {
     this.onMessage = options.onMessage;
     this.onStatusChange = options.onStatusChange;
     this.onError = options.onError;
+    this.onReconnected = options.onReconnected;
   }
 
   /** Get or create WsManager instance for a session */
@@ -52,8 +55,22 @@ export class WsManager {
       const manager = new WsManager(options);
       this.instances.set(key, manager);
       manager.connect();
+    } else {
+      // Update callbacks on existing instance
+      const manager = this.instances.get(key)!;
+      manager.updateCallbacks(options);
     }
     return this.instances.get(key)!;
+  }
+
+  /** Update callbacks on existing instance (useful for reconnection handlers) */
+  updateCallbacks(options: Partial<WsManagerOptions>): void {
+    if (options.onMessage !== undefined) this.onMessage = options.onMessage;
+    if (options.onStatusChange !== undefined)
+      this.onStatusChange = options.onStatusChange;
+    if (options.onError !== undefined) this.onError = options.onError;
+    if (options.onReconnected !== undefined)
+      this.onReconnected = options.onReconnected;
   }
 
   /** Connect or reconnect to WebSocket */
@@ -75,8 +92,15 @@ export class WsManager {
 
     this.ws.onopen = () => {
       console.log(`[WsManager] Connected to session ${this.sessionId}`);
+      const wasReconnecting = this.reconnectAttempts > 0;
       this.setStatus("connected");
       this.reconnectAttempts = 0; // Reset on successful connection
+      
+      // Notify about successful reconnection (not initial connection)
+      if (wasReconnecting && this.onReconnected) {
+        console.log(`[WsManager] Reconnection successful - firing callback`);
+        this.onReconnected();
+      }
     };
 
     this.ws.onmessage = (event) => {

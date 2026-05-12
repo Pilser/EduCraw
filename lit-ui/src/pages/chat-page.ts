@@ -37,6 +37,7 @@ export class ChatPage extends LitElement {
 
   private agent?: Agent;
   private chatPanel?: ChatPanel;
+  private lastLoadedThreadId: string | null = null; // Track loaded session
 
   /**
    * Helper: Detect if an error is auth-related (401/403)
@@ -144,6 +145,7 @@ export class ChatPage extends LitElement {
 
     // Create the Agent with WebSocket stream function
     // Pass convertToLlm to handle UserMessageWithAttachments (file attachments)
+    // Pass onReconnected handler to reload session on reconnection
     this.agent = new Agent({
       initialState: {
         model: model!,
@@ -152,6 +154,10 @@ export class ChatPage extends LitElement {
       streamFn: createWsStreamFn({
         sessionId: this.sessionId,
         authToken: this.sessionToken,
+        onReconnected: () => {
+          console.log("[chat-page] WebSocket reconnected - reloading session");
+          this.handleReconnection();
+        },
       }),
       convertToLlm: defaultConvertToLlm,
     });
@@ -184,6 +190,24 @@ export class ChatPage extends LitElement {
   }
 
   // ── Session auto-load (matches legacy educlaw-web behavior) ──
+
+  /**
+   * Handle WebSocket reconnection - reload last session to restore state
+   */
+  private handleReconnection() {
+    // Try to reload the last loaded session if we have one
+    const lastThreadId = SessionManager.loadLastThreadId(this.sessionId);
+    if (lastThreadId) {
+      console.log(
+        `[chat-page] Reloading last session ${lastThreadId} after reconnection`,
+      );
+      this.loadSessionById(lastThreadId);
+    } else {
+      console.log(
+        "[chat-page] No previous session to reload - starting fresh after reconnection",
+      );
+    }
+  }
 
   /** Helper: finalize current assistant message and push to array */
   private flushAssistant(
@@ -219,11 +243,10 @@ export class ChatPage extends LitElement {
   }
 
   /**
-   * Opens a temporary WebSocket to list sessions, find the most recent
-   * one with messages, load it, and inject replayed messages into the Agent.
+   * Load a specific session by thread ID
    */
-  private async loadMostRecentSession() {
-    if (!this.agent || !this.sessionId) return;
+  private async loadSessionById(threadId: string) {
+    if (!this.agent) return;
 
     const wsBase =
       import.meta.env.VITE_WS_TARGET ||
@@ -242,7 +265,13 @@ export class ChatPage extends LitElement {
     let pendingToolCallId: string | null = null;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "list_sessions" }));
+      console.log(`[replay] Loading session ${threadId}`);
+      ws.send(
+        JSON.stringify({
+          type: "load_session",
+          thread_id: threadId,
+        }),
+      );
     };
 
     ws.onmessage = (event) => {
@@ -250,58 +279,19 @@ export class ChatPage extends LitElement {
 
       try {
         const frame = JSON.parse(event.data as string);
-        // Debug replay frame order
-        if (
-          frame.type === "user_text" ||
-          frame.type === "assistant_text" ||
-          frame.type === "chat_start" ||
-          frame.type === "chat_end"
-        ) {
-          console.log(
-            "[replay] frame:",
-            frame.type,
-            (frame as any).text?.slice(0, 30) || "",
-          );
-        }
 
         switch (frame.type) {
-          case "sessions_list": {
-            const sessions: SessionListItem[] =
-              (frame.sessions as SessionListItem[]) || [];
-
-            // Filter to sessions with messages (skip empty just-created ones)
-            const withMessages = sessions.filter((s) => {
-              const count = s.metadata?.messageCount ?? 0;
-              return count > 0;
-            });
-
-            if (withMessages.length > 0) {
-              // Sessions are ordered newest-first by Goose
-              const latest = withMessages[0];
-              console.log(
-                `Loading most recent session: ${latest.id} (${latest.metadata?.messageCount ?? "?"} messages)`,
-              );
-              ws.send(
-                JSON.stringify({
-                  type: "load_session",
-                  thread_id: latest.id,
-                }),
-              );
-            } else {
-              console.log(
-                "No existing sessions with messages — starting fresh",
-              );
-              ws.close();
-            }
-            break;
-          }
-
           case "user_text": {
-            // New user turn — finalize previous assistant message first
-            currentAssistant = this.flushAssistant(
-              replayedMessages,
-              currentAssistant,
-            );
+            // CRITICAL: Flush previous assistant message BEFORE adding user message
+            if (currentAssistant) {
+              currentAssistant = this.flushAssistant(
+                replayedMessages,
+                currentAssistant,
+              );
+              currentTextContent = null;
+              currentThinkingContent = null;
+            }
+
             const text = (frame.text as string) || "";
             replayedMessages.push({
               role: "user",
@@ -312,9 +302,9 @@ export class ChatPage extends LitElement {
           }
 
           case "assistant_text": {
-            // Clear any pending thinking block (transition to text)
             currentThinkingContent = null;
             const delta = (frame.text as string) || "";
+
             if (!currentAssistant) {
               currentAssistant = this.makeAssistantMsg();
             }
@@ -332,15 +322,12 @@ export class ChatPage extends LitElement {
           }
 
           case "thinking": {
-            // Auto-create assistant if needed (thinking may arrive before text)
             if (!currentAssistant) {
               currentAssistant = this.makeAssistantMsg();
             }
             const thinkText = (frame.thinking as string) || "";
 
-            // Accumulate thinking chunks into a single block
             if (currentThinkingContent === null) {
-              // Start new thinking block
               currentThinkingContent = {
                 type: "thinking",
                 thinking: thinkText,
@@ -350,13 +337,15 @@ export class ChatPage extends LitElement {
                 currentThinkingContent,
               ];
             } else {
-              // Continue accumulating
               currentThinkingContent.thinking += thinkText;
             }
             break;
           }
 
           case "tool_start": {
+            currentTextContent = null;
+            currentThinkingContent = null;
+
             if (!currentAssistant) {
               currentAssistant = this.makeAssistantMsg();
             }
@@ -379,7 +368,6 @@ export class ChatPage extends LitElement {
 
             currentAssistant.content = [...currentAssistant.content, toolCall];
             pendingToolCallId = toolCall.id;
-            currentTextContent = null;
             break;
           }
 
@@ -409,22 +397,32 @@ export class ChatPage extends LitElement {
           }
 
           case "load_session_complete": {
-            // Flush any pending assistant message
-            this.flushAssistant(replayedMessages, currentAssistant);
-            currentAssistant = null;
-            currentTextContent = null;
+            if (currentAssistant) {
+              this.flushAssistant(replayedMessages, currentAssistant);
+              currentAssistant = null;
+              currentTextContent = null;
+              currentThinkingContent = null;
+            }
+
+            const loadedThreadId = (frame.thread_id as string) || "";
+            if (loadedThreadId) {
+              this.lastLoadedThreadId = loadedThreadId;
+              SessionManager.saveLastThreadId(loadedThreadId, this.sessionId);
+              console.log(
+                `[replay] Saved thread ID ${loadedThreadId} for reconnection`,
+              );
+            }
 
             console.log(
-              `Session replay complete — ${replayedMessages.length} messages restored`,
+              `[replay] Session replay complete — ${replayedMessages.length} messages restored`,
             );
             console.log(
-              "[replay] message order:",
+              "[replay] Message order:",
               replayedMessages.map((m: AgentMessage) => m.role),
             );
 
             if (replayedMessages.length > 0 && this.agent) {
               this.agent.state.messages = replayedMessages;
-              // Force UI re-render — find agent-interface and update it
               const agentInterface = this.querySelector("agent-interface");
               if (agentInterface) {
                 (agentInterface as LitElement).requestUpdate();
@@ -438,15 +436,16 @@ export class ChatPage extends LitElement {
 
           case "error": {
             const errorMsg = (frame as any).message || "Unknown error";
-            console.error("Session replay error:", errorMsg);
-            // Check if this is an auth-related error
+            console.error("[replay] Session replay error:", errorMsg);
             if (
               errorMsg.includes("Unauthorized") ||
               errorMsg.includes("unauthorized") ||
               errorMsg.includes("401") ||
               errorMsg.includes("403")
             ) {
-              console.warn("Authentication error detected in session replay");
+              console.warn(
+                "[replay] Authentication error detected in session replay",
+              );
               this.dispatchSessionExpired();
             }
             ws.close();
@@ -462,19 +461,14 @@ export class ChatPage extends LitElement {
     };
 
     ws.onerror = (err) => {
-      console.error("Session WS error:", err);
-      // WebSocket errors might indicate authentication failures
-      // Log it for debugging purposes
+      console.error("[replay] Session WS error:", err);
     };
 
     ws.onclose = (event) => {
-      // Flush any partial assistant message before giving up
       this.flushAssistant(replayedMessages, currentAssistant);
-      // Check if close code indicates auth error (1008 = Policy Violation, sometimes used for auth)
-      // or 1000 is normal close
       if (event.code !== 1000 && event.code !== 1005) {
         console.warn(
-          `WebSocket closed with code ${event.code}: ${event.reason || "no reason provided"}`,
+          `[replay] WebSocket closed with code ${event.code}: ${event.reason || "no reason provided"}`,
         );
       }
     };
@@ -485,7 +479,83 @@ export class ChatPage extends LitElement {
         ws.readyState === WebSocket.OPEN ||
         ws.readyState === WebSocket.CONNECTING
       ) {
-        console.log("Session load timed out");
+        console.log("[replay] Session load timed out");
+        ws.close();
+      }
+    }, 15000);
+  }
+
+  /**
+   * Opens a temporary WebSocket to list sessions, find the most recent
+   * one with messages, and load it.
+   */
+  private async loadMostRecentSession() {
+    if (!this.agent || !this.sessionId) return;
+
+    const wsBase =
+      import.meta.env.VITE_WS_TARGET ||
+      `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+    const wsUrl = `${wsBase}/sessions/${this.sessionId}/ws?token=${encodeURIComponent(this.sessionToken)}`;
+
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "list_sessions" }));
+    };
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) return;
+
+      try {
+        const frame = JSON.parse(event.data as string);
+
+        if (frame.type === "sessions_list") {
+          const sessions: SessionListItem[] =
+            (frame.sessions as SessionListItem[]) || [];
+
+          // Filter to sessions with messages (skip empty just-created ones)
+          const withMessages = sessions.filter((s) => {
+            const count = s.metadata?.messageCount ?? 0;
+            return count > 0;
+          });
+
+          if (withMessages.length > 0) {
+            // Sessions are ordered newest-first by Goose
+            const latest = withMessages[0];
+            console.log(
+              `[replay] Loading most recent session: ${latest.id} (${latest.metadata?.messageCount ?? "?"} messages)`,
+            );
+            ws.close();
+            // Use the dedicated loadSessionById method
+            this.loadSessionById(latest.id);
+          } else {
+            console.log(
+              "[replay] No existing sessions with messages — starting fresh",
+            );
+            ws.close();
+          }
+        }
+      } catch {
+        // Ignore malformed frames
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error("[replay] Session list WS error:", err);
+    };
+
+    ws.onclose = () => {
+      // Cleanup on close
+    };
+
+    // Safety timeout
+    setTimeout(() => {
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
+        console.log("[replay] Session list timed out");
         ws.close();
       }
     }, 15000);

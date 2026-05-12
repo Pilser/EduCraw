@@ -19,6 +19,7 @@ import { WsManager } from "./ws-manager";
 interface WsStreamFnOptions {
   sessionId: string;
   authToken: string;
+  onReconnected?: () => void; // Pass through reconnection handler
 }
 
 const EMPTY_USAGE: Usage = {
@@ -35,7 +36,7 @@ const EMPTY_USAGE: Usage = {
  * (like educlaw-web - keeps connection alive across messages)
  */
 export function createWsStreamFn(options: WsStreamFnOptions): StreamFn {
-  const { sessionId, authToken } = options;
+  const { sessionId, authToken, onReconnected } = options;
 
   return async (
     model: Model<any>,
@@ -95,6 +96,7 @@ export function createWsStreamFn(options: WsStreamFnOptions): StreamFn {
     const wsManager = WsManager.getInstance({
       sessionId,
       token: authToken,
+      onReconnected, // Pass through reconnection handler
       onMessage: (frame) => {
         if (streamEnded) return;
 
