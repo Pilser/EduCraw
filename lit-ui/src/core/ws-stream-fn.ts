@@ -355,8 +355,8 @@ export function createWsStreamFn(options: WsStreamFnOptions): StreamFn {
 
         console.log("[ws-stream] WebSocket closed");
 
-        // Check if this was an auth failure (don't reconnect)
-        if (frame?.type === "error" || ws.readyState === WebSocket.CLOSED) {
+        // Try reconnection with exponential backoff (like educlaw-web)
+        if (true) {
           // Try reconnection with exponential backoff (like educlaw-web)
           const elapsedTime = reconnectAttempts * 1000;
           if (elapsedTime < maxReconnectTime) {
@@ -381,9 +381,9 @@ export function createWsStreamFn(options: WsStreamFnOptions): StreamFn {
             // Max reconnect time reached - end stream with error
             assistantMsg.stopReason = "error";
             stream.push({
-              type: "error",
-              reason: "Connection lost",
-              error: { ...assistantMsg },
+              type: "done",
+              reason: "stop",
+              message: { ...assistantMsg },
             });
             stream.end({ ...assistantMsg });
             streamEnded = true;
