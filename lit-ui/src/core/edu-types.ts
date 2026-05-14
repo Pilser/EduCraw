@@ -33,8 +33,8 @@ export interface SessionModels {
   active: string;
 }
 
+// Backend SessionTokenTotals structure
 export interface TokenUsage {
-  total_tokens_used: number;
   total_input_tokens: number;
   total_output_tokens: number;
   total_cache_creation_tokens: number;
@@ -43,6 +43,7 @@ export interface TokenUsage {
 }
 
 // WebSocket frame types (from server → client)
+// Only streaming types stay on WS (others moved to REST)
 export type WsFrameType =
   | "user_text"
   | "assistant_text"
@@ -59,6 +60,25 @@ export type WsFrameType =
 export interface WsFrame {
   type: WsFrameType;
   [key: string]: unknown;
+}
+
+// Thread / session management types (REST)
+export interface SessionListItem {
+  id: string;
+  title?: string;
+  updated_at?: string;
+  cwd: string;
+  metadata?: { messageCount?: number; [key: string]: unknown };
+}
+
+export interface ForkThreadResult {
+  new_session_id: string;
+}
+
+export interface ImportThreadResult {
+  session_id: string;
+  title: string | null;
+  message_count: number;
 }
 
 export interface WsToolStartFrame extends WsFrame {

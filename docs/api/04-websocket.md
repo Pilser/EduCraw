@@ -8,6 +8,10 @@ GET /sessions/:session_id/ws?token=<jwt_token>
 
 **Protocol:** WebSocket (ws:// or wss:// depending on HTTP scheme)
 
+The WebSocket handles real-time AI chat streaming, session replay, and auxiliary
+notifications that flow through the ACP pipeline. Session management operations
+(list, fork, export, import, get models) were moved to REST — see [02-sessions.md](02-sessions.md).
+
 ---
 
 ## Client Messages (Frontend → Backend)
@@ -27,122 +31,95 @@ GET /sessions/:session_id/ws?token=<jwt_token>
 }
 ```
 
-### Resize terminal
-```json
-{ "type": "resize", "cols": 80, "rows": 24 }
-```
-
 ### Cancel current operation
 ```json
 { "type": "cancel" }
 ```
 
-### Get available models
-```json
-{ "type": "getmodels" }
-```
-
-### Load previous session
+### Load previous session (replay)
 ```json
 { "type": "load_session", "thread_id": "session-id" }
 ```
 
-### Fork current session
+### Terminal resize (no-op for ACP)
 ```json
-{ "type": "fork_session", "thread_id": "session-id" }
+{ "type": "resize", "cols": 80, "rows": 24 }
 ```
 
-### List all sessions
-```json
-{ "type": "list_sessions" }
-```
-
-### Export session
-```json
-{ "type": "export_session", "session_id": "goose-session-id" }
-```
-
-### Import session
-```json
-{ "type": "import_session", "data": "<full-session-json-string>" }
-```
+> **Note:** `getmodels`, `list_sessions`, `fork_session`, `export_session`, and
+> `import_session` were moved to REST endpoints. See
+> [02-sessions.md](02-sessions.md).
 
 ---
 
 ## Server Messages (Backend → Frontend)
 
-### PTY output (binary)
-Raw terminal output - rendered directly to terminal emulator.
+### Streaming & replay (from ACP notifications)
 
-### Image display
-```json
-{
-  "type": "show_image",
-  "payload": {
-    "path": "string",
-    "data_url": "data:image/png;base64,..."
-  }
-}
-```
-
-### Chat start
+#### Chat start
 ```json
 { "type": "chat_start" }
 ```
 
-### User text
+#### User text (during replay)
 ```json
 { "type": "user_text", "text": "string" }
 ```
 
-### Tool start
+#### Assistant text (streaming + replay)
+```json
+{ "type": "assistant_text", "text": "string" }
+```
+
+#### Thinking
+```json
+{ "type": "thinking", "thinking": "string" }
+```
+
+#### Tool start
 ```json
 { "type": "tool_start", "name": "string", "input": "string" }
 ```
 
-### Tool end
+#### Tool end
 ```json
 {
   "type": "tool_end",
+  "status": "completed | failed",
   "exit_code": 0,
   "stdout": "string",
   "stderr": "string"
 }
 ```
 
-### Assistant text (streaming)
-```json
-{ "type": "assistant_text", "text": "string" }
-```
-
-### Chat end
+#### Chat end
 ```json
 { "type": "chat_end" }
 ```
 
-### Token usage (new format)
+#### Chat error
+```json
+{
+  "type": "chat_error",
+  "error": "string"
+}
+```
+
+### Token & session metadata
+
+#### Token usage
 ```json
 {
   "type": "token_usage",
   "used": 1000,
   "size": 200000,
+  "cache_read_tokens": 0,
+  "cache_write_tokens": 0,
   "cost": { "amount": 0.001, "currency": "USD" }
 }
 ```
 
-### Token usage (old format)
-```json
-{
-  "type": "token_usage",
-  "model": "string",
-  "input_tokens": 500,
-  "output_tokens": 500,
-  "cache_creation_input_tokens": 0,
-  "cache_read_input_tokens": 0
-}
-```
-
-### Token limit reached
+#### Token limit reached
 ```json
 {
   "type": "token_limit_reached",
@@ -150,39 +127,26 @@ Raw terminal output - rendered directly to terminal emulator.
 }
 ```
 
-### Model changed
+#### Model changed
 ```json
 { "type": "model_changed", "model": "string" }
 ```
 
-### Models list
+#### Session created
+```json
+{ "type": "session_created", "session_id": "string" }
+```
+
+#### Session info update
 ```json
 {
-  "type": "models",
-  "models": ["model1", "model2"],
-  "active": "model1"
+  "type": "session_info_update",
+  "title": "string | null",
+  "updated_at": "string | null"
 }
 ```
 
-### Sessions list
-```json
-{
-  "type": "sessions_list",
-  "sessions": [
-    { "id": "string", "title": "string", "created_at": "string" }
-  ]
-}
-```
-
-### Forked session
-```json
-{
-  "type": "forked_session",
-  "new_session_id": "uuid"
-}
-```
-
-### Load session complete
+#### Load session complete
 ```json
 {
   "type": "load_session_complete",
@@ -190,22 +154,59 @@ Raw terminal output - rendered directly to terminal emulator.
 }
 ```
 
-### Export session result
+### Planning & modes
+
+#### Plan update
 ```json
 {
-  "type": "export_session_result",
-  "data": "<full-session-json-string>"
+  "type": "plan_update",
+  "entries": [
+    {
+      "content": "string",
+      "priority": "string",
+      "status": "string"
+    }
+  ],
+  "stats": {
+    "total": 3,
+    "completed": 1,
+    "in_progress": 1,
+    "pending": 1,
+    "progress_percent": 33
+  }
 }
 ```
 
-### Import session result
+#### Mode update
+```json
+{ "type": "mode_update", "current_mode_id": "string" }
+```
+
+### Configuration
+
+#### Config update
 ```json
 {
-  "type": "import_session_result",
-  "session_id": "new-session-id",
-  "title": "Session Title",
-  "updated_at": "2026-05-09T10:00:00Z",
-  "message_count": 42
+  "type": "config_update",
+  "config_options": [
+    {
+      "id": "string",
+      "name": "string",
+      "description": "string",
+      "category": "string"
+    }
+  ]
+}
+```
+
+#### Available commands
+```json
+{
+  "type": "available_commands",
+  "commands": [
+    { "name": "string", "description": "string" }
+  ],
+  "count": 5
 }
 ```
 
@@ -213,7 +214,7 @@ Raw terminal output - rendered directly to terminal emulator.
 ```json
 {
   "type": "error",
-  "message": "Failed to export session: ..."
+  "message": "Error description"
 }
 ```
 
@@ -222,7 +223,7 @@ Raw terminal output - rendered directly to terminal emulator.
 ## Frontend Usage
 
 ```typescript
-// Connect (from useWebSocket.ts)
+// Connect
 const ws = new WebSocket(
   `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/sessions/${sessionId}/ws?token=${encodeURIComponent(token)}`
 );
@@ -232,44 +233,47 @@ ws.binaryType = 'arraybuffer';
 // Handle messages
 ws.onmessage = (e) => {
   if (e.data instanceof ArrayBuffer) {
-    // PTY data - decode and render
     const raw = new Uint8Array(e.data);
     const text = new TextDecoder().decode(raw);
-    // Check for OSC 99 envelope
+    // Check for OSC 99 envelope (images)
     const oscMatch = text.match(/\x1b\]99;(.+?)\x07/);
     if (oscMatch) {
       const envelope = JSON.parse(oscMatch[1]);
-      if (envelope.type === 'show_image') {
-        // Handle image
-      }
+      if (envelope.type === 'show_image') { /* Handle image */ }
     }
   } else {
     const frame = JSON.parse(e.data);
     switch (frame.type) {
       case 'chat_start':
-        // ...
       case 'assistant_text':
-        // ...
-      // etc.
+      case 'user_text':
+      case 'thinking':
+      case 'tool_start':
+      case 'tool_end':
+      case 'chat_end':
+      case 'chat_error':
+      case 'token_usage':
+      case 'model_changed':
+      case 'session_created':
+      case 'load_session_complete':
+      case 'plan_update':
+      case 'mode_update':
+      case 'session_info_update':
+      case 'config_update':
+      case 'available_commands':
+      case 'token_limit_reached':
+      case 'error':
+        // handle frame
+        break;
     }
   }
 };
 
 // Send messages
 ws.send(JSON.stringify({ type: 'input', data: 'Hello' }));
-ws.send(JSON.stringify({ type: 'resize', cols: 80, rows: 24 }));
-
-// Export session - triggers download of JSON file
-ws.send(JSON.stringify({ type: 'export_session', session_id: 'goose-session-id' }));
-
-// Import session - uploads JSON file to create new session
-const fileInput = document.createElement('input');
-fileInput.type = 'file';
-fileInput.accept = '.json';
-fileInput.onchange = async (e) => {
-  const file = e.target.files[0];
-  const text = await file.text();
-  ws.send(JSON.stringify({ type: 'import_session', data: text }));
-};
-fileInput.click();
+ws.send(JSON.stringify({ type: 'cancel' }));
+ws.send(JSON.stringify({ type: 'load_session', thread_id: 'session-id' }));
 ```
+
+For session management (list, fork, export, import, get models), use the REST
+endpoints documented in [02-sessions.md](02-sessions.md).

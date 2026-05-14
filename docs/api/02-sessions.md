@@ -144,6 +144,83 @@ Push a message to a session's PTY (teacher/admin only).
 
 ---
 
+## Thread Endpoints
+
+Thread operations moved from WebSocket to REST. These replace `list_sessions`, `fork_session`, `export_session`, and `import_session` WS messages.
+
+### GET /sessions/:id/threads
+List all threads (conversations) for this session.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+[
+  {
+    "id": "string",
+    "title": "string | null",
+    "updated_at": "string | null",
+    "cwd": "string",
+    "metadata": {
+      "messageCount": 42
+    }
+  }
+]
+```
+
+---
+
+### POST /sessions/:id/threads/:thread_id/fork
+Fork an existing thread into a new session with copied message history.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (201):**
+```json
+{
+  "new_session_id": "string"
+}
+```
+
+---
+
+### GET /sessions/:id/threads/:thread_id/export
+Export a thread as a JSON string.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "data": "<full-session-json-string>"
+}
+```
+
+---
+
+### POST /sessions/:id/threads/import
+Import a thread from a JSON string.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "data": "<full-session-json-string>"
+}
+```
+
+**Response (201):**
+```json
+{
+  "session_id": "string",
+  "title": "string | null",
+  "message_count": 42
+}
+```
+
+---
+
 ## Frontend Usage
 
 ```typescript
@@ -170,4 +247,18 @@ await api.setSessionModel(sessionId, token, "model-name", {
 // Get token usage
 const usage = await api.getSessionTokenUsage(sessionId, token);
 // usage: { total_tokens_used, total_input_tokens, ... }
+
+// List threads
+const threads = await api.listThreads(sessionId, token);
+// threads: { id, title, updated_at, cwd, metadata }[]
+
+// Fork thread
+const { new_session_id } = await api.forkThread(sessionId, threadId, token);
+
+// Export thread (downloads JSON file)
+const { data } = await api.exportThread(sessionId, threadId, token);
+
+// Import thread
+const result = await api.importThread(sessionId, jsonData, token);
+// result: { session_id, title, message_count }
 ```

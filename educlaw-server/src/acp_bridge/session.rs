@@ -323,7 +323,6 @@ pub async fn run_acp_session(
                     &ctrl_tx,
                     &turn_tx,
                     &last_input_at,
-                    &available_models_arc,
                     &loading_flag,
                 )
                 .await;
@@ -379,7 +378,6 @@ async fn handle_client_message(
     ctrl_tx: &mpsc::Sender<String>,
     turn_tx: &mpsc::Sender<String>,
     last_input_at: &Arc<AtomicU64>,
-    available_models_arc: &Arc<tokio::sync::Mutex<Vec<String>>>,
     loading_flag: &Arc<AtomicBool>,
 ) {
     match msg {
@@ -555,70 +553,6 @@ async fn handle_client_message(
             });
         }
 
-        ClientMessage::GetModels => {
-            tracing::info!(session_id = %session_id, "📋 [GET-MODELS] Requesting available models");
-            // Get available models from goose (source of truth)
-            let goose_models = available_models_arc.lock().await.clone();
-            tracing::debug!(models_from_goose = ?goose_models, count = goose_models.len(), "📋 [GET-MODELS] Got models from goose");
-
-            // Check if student has specific model restrictions in educlaw DB
-            let has_restrictions = sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM student_models WHERE student_id = ?",
-            )
-            .bind(student_id)
-            .fetch_one(pool)
-            .await
-            .map(|count| count > 0)
-            .unwrap_or(false);
-
-            // If NO restrictions, use all goose models. If restrictions exist, filter by them.
-            let filtered_models = if !has_restrictions {
-                tracing::info!(student_id = %student_id, count = goose_models.len(), "✓ [GET-MODELS] No restrictions - returning all goose models");
-                goose_models.clone()
-            } else {
-                // Student has specific model restrictions - return STUDENT'S ALLOWED MODELS from DB
-                // (don't filter by Goose models - Goose will validate at message send time)
-                match crate::db::models::models_for_student(pool, student_id).await {
-                    Ok(allowed_models) => {
-                        tracing::debug!(
-                            allowed_by_educlaw = ?allowed_models,
-                            "📋 [GET-MODELS] Returning student's allowed models from DB (not filtered by Goose)"
-                        );
-                        allowed_models
-                    }
-                    Err(e) => {
-                        tracing::warn!(student_id = %student_id, error = %e, "✗ [GET-MODELS] Failed to check restrictions");
-                        goose_models.clone()
-                    }
-                }
-            };
-
-            // Get the session's current model (if any), otherwise first available
-            let active = match crate::db::sessions::get_session(pool, session_id).await {
-                Ok(Some(sess)) => {
-                    if let Some(current) = sess.model {
-                        if filtered_models.contains(&current) {
-                            current
-                        } else {
-                            filtered_models.first().cloned().unwrap_or_default()
-                        }
-                    } else {
-                        filtered_models.first().cloned().unwrap_or_default()
-                    }
-                }
-                _ => filtered_models.first().cloned().unwrap_or_default(),
-            };
-
-            let frame = serde_json::json!({
-                "type": "models",
-                "models": filtered_models,
-                "active": active,
-            })
-            .to_string();
-            let _ = ctrl_tx.send(frame).await;
-            tracing::info!(session_id = %session_id, count = filtered_models.len(), active = %active, "✓ [MODELS] Sent to frontend ({} models)", filtered_models.len());
-        }
-
         ClientMessage::Cancel => {
             tracing::info!(session_id = %session_id, "🛑 [CANCEL] Received cancel request");
 
@@ -641,30 +575,6 @@ async fn handle_client_message(
 
         // Resize events are no-ops for ACP (goose runs headless, no PTY).
         ClientMessage::Resize { .. } => {}
-
-        ClientMessage::ListSessions => {
-            tracing::info!(session_id = %session_id, "📝 [LIST-SESSIONS] Fetching threads from Goose");
-            match super::handle_list_sessions(&cx).await {
-                Ok(sessions) => {
-                    let frame = serde_json::json!({
-                        "type": "sessions_list",
-                        "sessions": sessions,
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                    tracing::info!(session_id = %session_id, count = sessions.len(), "✓ [LIST-SESSIONS] Sent {} sessions to frontend", sessions.len());
-                }
-                Err(e) => {
-                    tracing::error!(session_id = %session_id, error = %e, "✗ [LIST-SESSIONS] Failed to list sessions");
-                    let frame = serde_json::json!({
-                        "type": "error",
-                        "message": format!("Failed to list sessions: {}", e),
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-            }
-        }
 
         ClientMessage::LoadSession { thread_id } => {
             // Set loading flag to skip token accounting during session replay
@@ -709,99 +619,5 @@ async fn handle_client_message(
             }
         }
 
-        ClientMessage::ForkSession { thread_id } => {
-            tracing::info!(session_id = %session_id, thread_id = %thread_id, "🔗 [FORK-SESSION] Forking thread with message history");
-            match super::handle_fork_session(&cx, thread_id.clone()).await {
-                Ok(result) => {
-                    // ForkSession succeeded - the new session_id becomes our active ACP session_id
-                    let forked_sid = SessionId::new(result.new_session_id.clone());
-                    *acp_session_id_holder.lock().await = Some(forked_sid.clone());
-                    tracing::info!(
-                        session_id = %session_id,
-                        thread_id = %thread_id,
-                        new_session_id = %result.new_session_id,
-                        acp_session_id = %forked_sid.0,
-                        "✓ [FORK-SESSION] Successfully forked, session_id set to new fork"
-                    );
-                    let frame = serde_json::json!({
-                        "type": "forked_session",
-                        "new_session_id": result.new_session_id,
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-                Err(e) => {
-                    tracing::error!(session_id = %session_id, thread_id = %thread_id, error = %e, "✗ [FORK-SESSION] Failed to fork session");
-                    let frame = serde_json::json!({
-                        "type": "error",
-                        "message": format!("Failed to fork session: {}", e),
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-            }
-        }
-
-        ClientMessage::ExportSession {
-            session_id: export_session_id,
-        } => {
-            tracing::info!(session_id = %session_id, export_session_id = %export_session_id, "📤 [EXPORT-SESSION] Exporting session as JSON");
-            match super::handle_export_session(&cx, export_session_id.clone()).await {
-                Ok(data) => {
-                    tracing::info!(session_id = %session_id, export_session_id = %export_session_id, data_len = data.len(), "✓ [EXPORT-SESSION] Successfully exported session");
-                    let frame = serde_json::json!({
-                        "type": "export_session_result",
-                        "data": data,
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-                Err(e) => {
-                    tracing::error!(session_id = %session_id, export_session_id = %export_session_id, error = %e, "✗ [EXPORT-SESSION] Failed to export session");
-                    let frame = serde_json::json!({
-                        "type": "error",
-                        "message": format!("Failed to export session: {}", e),
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-            }
-        }
-
-        ClientMessage::ImportSession { data } => {
-            tracing::info!(session_id = %session_id, data_len = data.len(), "📥 [IMPORT-SESSION] Importing session from JSON");
-            match super::handle_import_session(&cx, data.clone()).await {
-                Ok(result) => {
-                    // ImportSession succeeded - the new session_id becomes our active ACP session_id
-                    let imported_sid = SessionId::new(result.session_id.clone());
-                    *acp_session_id_holder.lock().await = Some(imported_sid.clone());
-                    tracing::info!(
-                        session_id = %session_id,
-                        imported_session_id = %result.session_id,
-                        title = ?result.title,
-                        message_count = result.message_count,
-                        "✓ [IMPORT-SESSION] Successfully imported, session_id set to imported session"
-                    );
-                    let frame = serde_json::json!({
-                        "type": "import_session_result",
-                        "session_id": result.session_id,
-                        "title": result.title,
-                        "updated_at": result.updated_at,
-                        "message_count": result.message_count,
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-                Err(e) => {
-                    tracing::error!(session_id = %session_id, error = %e, "✗ [IMPORT-SESSION] Failed to import session");
-                    let frame = serde_json::json!({
-                        "type": "error",
-                        "message": format!("Failed to import session: {}", e),
-                    })
-                    .to_string();
-                    let _ = ctrl_tx.send(frame).await;
-                }
-            }
-        }
     }
 }

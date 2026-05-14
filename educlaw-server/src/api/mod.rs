@@ -7,6 +7,7 @@ mod auth_routes;
 mod files;
 mod sessions;
 mod students;
+mod threads;
 mod ws;
 
 use axum::{routing::get, Json, Router};
@@ -61,6 +62,7 @@ pub fn routes() -> Router<AppState> {
         .merge(admin::routes())
         .merge(students::routes())
         .merge(sessions::routes())
+        .merge(threads::routes())
         .merge(ws::routes())
         .merge(files::routes())
         .route("/health", get(health))

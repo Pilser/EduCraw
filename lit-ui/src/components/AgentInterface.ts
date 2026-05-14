@@ -22,6 +22,13 @@ export class AgentInterface extends LitElement {
   @property({ type: Boolean }) enableModelSelector = true;
   @property({ type: Boolean }) enableThinkingSelector = true;
   @property({ type: Boolean }) showThemeToggle = false;
+  // Optional custom token usage data (for backends that track usage separately)
+  @property({ attribute: false }) sessionTokenUsage?: {
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cache_creation_tokens?: number;
+    total_cache_read_tokens?: number;
+  };
   // Optional custom API key prompt handler - if not provided, uses default dialog
   @property({ attribute: false }) onApiKeyRequired?: (
     provider: string,
@@ -303,33 +310,57 @@ export class AgentInterface extends LitElement {
     if (!this.session) return html`<div class="text-xs h-5"></div>`;
 
     const state = this.session.state;
-    const totals = state.messages
-      .filter((m) => m.role === "assistant")
-      .reduce(
-        (acc, msg: any) => {
-          const usage = msg.usage;
-          if (usage) {
-            acc.input += usage.input;
-            acc.output += usage.output;
-            acc.cacheRead += usage.cacheRead;
-            acc.cacheWrite += usage.cacheWrite;
-            acc.cost.total += usage.cost.total;
-          }
-          return acc;
-        },
-        {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        } satisfies Usage,
-      );
+    
+    // Use sessionTokenUsage if provided (for EduCraw backend)
+    let totalsText = "";
+    if (this.sessionTokenUsage) {
+      const input = this.sessionTokenUsage.total_input_tokens || 0;
+      const output = this.sessionTokenUsage.total_output_tokens || 0;
+      const cacheRead = this.sessionTokenUsage.total_cache_read_tokens || 0;
+      const cacheWrite = this.sessionTokenUsage.total_cache_creation_tokens || 0;
+      const total = input + output;
+      
+      if (total > 0) {
+        totalsText = `${this.formatTokens(total)} tokens`;
+        if (cacheRead > 0 || cacheWrite > 0) {
+          totalsText += ` (in: ${this.formatTokens(input)}, out: ${this.formatTokens(output)}`;
+          if (cacheRead > 0) totalsText += `, cache read: ${this.formatTokens(cacheRead)}`;
+          if (cacheWrite > 0) totalsText += `, cache write: ${this.formatTokens(cacheWrite)}`;
+          totalsText += ')';
+        } else {
+          totalsText += ` (in: ${this.formatTokens(input)}, out: ${this.formatTokens(output)})`;
+        }
+      }
+    } else {
+      // Fall back to calculating from message usage (pi default behavior)
+      const totals = state.messages
+        .filter((m) => m.role === "assistant")
+        .reduce(
+          (acc, msg: any) => {
+            const usage = msg.usage;
+            if (usage) {
+              acc.input += usage.input;
+              acc.output += usage.output;
+              acc.cacheRead += usage.cacheRead;
+              acc.cacheWrite += usage.cacheWrite;
+              acc.cost.total += usage.cost.total;
+            }
+            return acc;
+          },
+          {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          } satisfies Usage,
+        );
 
-    const hasTotals =
-      totals.input || totals.output || totals.cacheRead || totals.cacheWrite;
-    const totalsText = hasTotals ? formatUsage(totals) : "";
+      const hasTotals =
+        totals.input || totals.output || totals.cacheRead || totals.cacheWrite;
+      totalsText = hasTotals ? formatUsage(totals) : "";
+    }
 
     return html`
       <div
@@ -351,6 +382,15 @@ export class AgentInterface extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  private formatTokens(tokens: number): string {
+    if (tokens >= 1000000) {
+      return `${(tokens / 1000000).toFixed(1)}M`;
+    } else if (tokens >= 1000) {
+      return `${(tokens / 1000).toFixed(1)}k`;
+    }
+    return tokens.toString();
   }
 
   override render() {

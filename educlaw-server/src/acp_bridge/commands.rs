@@ -5,27 +5,11 @@
 
 use sacp::schema::{ForkSessionRequest, ListSessionsRequest, LoadSessionRequest, SessionId};
 use sacp::{Agent as SacpAgent, ConnectionTo};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 
 use super::custom_requests::{ExportSessionRequest, ImportSessionRequest, ImportSessionResponse};
 use crate::error::{AppError, Result};
-
-/// Control message sent from frontend through WebSocket to trigger ACP commands
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind")]
-pub enum ControlMessage {
-    #[serde(rename = "list_sessions")]
-    ListSessions,
-    #[serde(rename = "load_session")]
-    LoadSession { thread_id: String },
-    #[serde(rename = "fork_session")]
-    ForkSession { thread_id: String },
-    #[serde(rename = "export_session")]
-    ExportSession { session_id: String },
-    #[serde(rename = "import_session")]
-    ImportSession { data: String },
-}
 
 /// Response for list_sessions command
 #[derive(Debug, Serialize)]

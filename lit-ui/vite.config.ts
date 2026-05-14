@@ -45,6 +45,10 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ws: true,
         },
+        "/files": {
+          target: backendTarget,
+          changeOrigin: true,
+        },
       },
     },
   };

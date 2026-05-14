@@ -1,80 +1,22 @@
-import { getProviders } from "@earendil-works/pi-ai";
-import { i18n } from "@mariozechner/mini-lit";
 import { Dialog, DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
-import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { Label } from "@mariozechner/mini-lit/dist/Label.js";
-import { Switch } from "@mariozechner/mini-lit/dist/Switch.js";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
-// Base class for settings tabs
-export abstract class SettingsTab extends LitElement {
+// Base class for menu tabs
+export abstract class MenuTab extends LitElement {
 	abstract getTabName(): string;
+
+	// Callback to close the parent dialog
+	closeDialog?: () => void;
 
 	protected createRenderRoot() {
 		return this;
 	}
 }
 
-// Proxy Tab
-@customElement("proxy-tab")
-export class ProxyTab extends SettingsTab {
-	@state() private proxyEnabled = false;
-	@state() private proxyUrl = "http://localhost:3001";
-
-	private async saveProxySettings() {
-		// UI only - not wired to backend
-		console.log("[ProxyTab] Proxy settings (UI only):", {
-			enabled: this.proxyEnabled,
-			url: this.proxyUrl,
-		});
-	}
-
-	getTabName(): string {
-		return i18n("Proxy");
-	}
-
-	render(): TemplateResult {
-		return html`
-			<div class="flex flex-col gap-4">
-				<p class="text-sm text-muted-foreground">
-					${i18n("Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.")}
-				</p>
-
-				<div class="flex items-center justify-between">
-					<span class="text-sm font-medium text-foreground">${i18n("Use CORS Proxy")}</span>
-					${Switch({
-						checked: this.proxyEnabled,
-						onChange: (checked: boolean) => {
-							this.proxyEnabled = checked;
-							this.saveProxySettings();
-						},
-					})}
-				</div>
-
-				<div class="space-y-2">
-					${Label({ children: i18n("Proxy URL") })}
-					${Input({
-						type: "text",
-						value: this.proxyUrl,
-						disabled: !this.proxyEnabled,
-						onInput: (e) => {
-							this.proxyUrl = (e.target as HTMLInputElement).value;
-						},
-						onChange: () => this.saveProxySettings(),
-					})}
-					<p class="text-xs text-muted-foreground">
-						${i18n("Format: The proxy must accept requests as <proxy-url>/?url=<target-url>")}
-					</p>
-				</div>
-			</div>
-		`;
-	}
-}
-
-@customElement("settings-dialog")
-export class SettingsDialog extends LitElement {
-	@property({ type: Array, attribute: false }) tabs: SettingsTab[] = [];
+@customElement("menu-dialog")
+export class MenuDialog extends LitElement {
+	@property({ type: Array, attribute: false }) tabs: MenuTab[] = [];
 	@state() private isOpen = false;
 	@state() private activeTabIndex = 0;
 
@@ -84,19 +26,32 @@ export class SettingsDialog extends LitElement {
 
 	private onCloseCallback?: () => void;
 
-	static async open(tabs: SettingsTab[], onClose?: () => void) {
-		const dialog = new SettingsDialog();
+	static async open(tabs: MenuTab[], onClose?: () => void, defaultTabIndex: number = 0) {
+		console.log("[MenuDialog] Opening with tabs:", tabs.length, "defaultTabIndex:", defaultTabIndex);
+		const dialog = new MenuDialog();
 		dialog.tabs = tabs;
 		dialog.onCloseCallback = onClose;
+		dialog.activeTabIndex = defaultTabIndex;
 		dialog.isOpen = true;
+		
+		// Give each tab a way to close the dialog
+		tabs.forEach(tab => {
+			tab.closeDialog = () => {
+				dialog.isOpen = false;
+				dialog.remove();
+				dialog.onCloseCallback?.();
+			};
+		});
+		
 		document.body.appendChild(dialog);
+		console.log("[MenuDialog] Dialog appended to body");
 	}
 
 	private setActiveTab(index: number) {
 		this.activeTabIndex = index;
 	}
 
-	private renderSidebarItem(tab: SettingsTab, index: number): TemplateResult {
+	private renderSidebarItem(tab: MenuTab, index: number): TemplateResult {
 		const isActive = this.activeTabIndex === index;
 		return html`
 			<button
@@ -112,7 +67,7 @@ export class SettingsDialog extends LitElement {
 		`;
 	}
 
-	private renderMobileTab(tab: SettingsTab, index: number): TemplateResult {
+	private renderMobileTab(tab: MenuTab, index: number): TemplateResult {
 		const isActive = this.activeTabIndex === index;
 		return html`
 			<button
@@ -147,10 +102,10 @@ export class SettingsDialog extends LitElement {
 					children: html`
 						<div class="flex flex-col h-full overflow-hidden">
 							<!-- Header -->
-							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
+							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: "Menu" })}</div>
 
 							<!-- Mobile Tabs -->
-							<div class="md:hidden flex flex-shrink-0 pb-4">
+							<div class="md:hidden flex flex-shrink-0 pb-4 overflow-x-auto">
 								${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
 							</div>
 

@@ -14,26 +14,19 @@ import { eduModelToPiModel } from "../core/edu-model-provider";
 import { eduApi } from "../core/edu-api";
 import { SessionManager } from "../core/session-manager";
 import { WsManager } from "../core/ws-manager";
-import type { LoginResponse, EduModel } from "../core/edu-types";
+import type { LoginResponse, EduModel, SessionListItem } from "../core/edu-types";
 import { defaultConvertToLlm } from "../components/Messages.js";
 import "../ChatPanel.js";
 import type { ChatPanel } from "../ChatPanel.js";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { History, Plus, Settings } from "lucide";
+import { Menu, Plus } from "lucide";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
-import { SessionListDialog } from "../dialogs/SessionListDialog.js";
-import { SettingsDialog, ProxyTab } from "../dialogs/SettingsDialog.js";
-
-// ── Session list item from server (sessions_list frame) ──
-interface SessionListItem {
-  id: string;
-  title?: string;
-  updated_at?: string;
-  cwd: string;
-  metadata?: { messageCount?: number };
-}
+import { MenuDialog } from "../dialogs/MenuDialog.js";
+import { FilesTab } from "../dialogs/FilesTab.js";
+import { SessionsTab } from "../dialogs/SessionsTab.js";
+import { AccountTab } from "../dialogs/AccountTab.js";
 
 @customElement("chat-page")
 export class ChatPage extends LitElement {
@@ -207,10 +200,6 @@ export class ChatPage extends LitElement {
       streamFn: createWsStreamFn({
         sessionId: this.sessionId,
         authToken: this.sessionToken,
-        onReconnected: () => {
-          console.log("[chat-page] WebSocket reconnected - reloading session");
-          this.handleReconnection();
-        },
       }),
       convertToLlm: defaultConvertToLlm,
     });
@@ -573,90 +562,30 @@ export class ChatPage extends LitElement {
   private async loadMostRecentSession() {
     if (!this.agent || !this.sessionId) return;
 
-    // Get the persistent WsManager instance
-    const wsManager = WsManager.getExistingInstance(
-      this.sessionId,
-      this.sessionToken,
-    );
-    if (!wsManager) {
-      console.error(
-        "[replay] WsManager not found - cannot list/load sessions",
-      );
-      return;
+    console.log("[replay] Listing threads via REST");
+
+    try {
+      const sessions = await eduApi.listThreads(this.sessionId, this.sessionToken);
+
+      const withMessages = sessions.filter((s) => {
+        const count = s.metadata?.messageCount ?? 0;
+        return count > 0;
+      });
+
+      if (withMessages.length > 0) {
+        const latest = withMessages[0];
+        console.log(
+          `[replay] Loading most recent session: ${latest.id} (${latest.metadata?.messageCount ?? "?"} messages)`,
+        );
+        this.loadSessionById(latest.id);
+      } else {
+        console.log(
+          "[replay] No existing sessions with messages — starting fresh",
+        );
+      }
+    } catch (err) {
+      console.error("[replay] Failed to list threads:", err);
     }
-
-    console.log("[replay] Listing sessions via persistent WsManager");
-
-    // Save original onMessage handler
-    const originalOnMessage = (wsManager as any).onMessage;
-    let sessionListHandled = false;
-
-    // Temporarily override onMessage to intercept sessions_list
-    (wsManager as any).onMessage = (frame: any) => {
-      if (sessionListHandled) {
-        // Restore and forward
-        if (originalOnMessage) {
-          originalOnMessage(frame);
-        }
-        return;
-      }
-
-      try {
-        if (frame.type === "sessions_list") {
-          sessionListHandled = true;
-          (wsManager as any).onMessage = originalOnMessage;
-
-          const sessions: SessionListItem[] =
-            (frame.sessions as SessionListItem[]) || [];
-
-          // Filter to sessions with messages (skip empty just-created ones)
-          const withMessages = sessions.filter((s) => {
-            const count = s.metadata?.messageCount ?? 0;
-            return count > 0;
-          });
-
-          if (withMessages.length > 0) {
-            // Sessions are ordered newest-first by Goose
-            const latest = withMessages[0];
-            console.log(
-              `[replay] Loading most recent session: ${latest.id} (${latest.metadata?.messageCount ?? "?"} messages)`,
-            );
-            // Use the dedicated loadSessionById method
-            this.loadSessionById(latest.id);
-          } else {
-            console.log(
-              "[replay] No existing sessions with messages — starting fresh",
-            );
-          }
-        } else {
-          // Forward other frames to original handler
-          if (originalOnMessage) {
-            originalOnMessage(frame);
-          }
-        }
-      } catch (err) {
-        console.error("[replay] Error processing sessions_list:", err);
-        sessionListHandled = true;
-        (wsManager as any).onMessage = originalOnMessage;
-      }
-    };
-
-    // Send list_sessions command
-    const sent = wsManager.send({ type: "list_sessions" });
-    if (!sent) {
-      console.error("[replay] Failed to send list_sessions - WS not open");
-      (wsManager as any).onMessage = originalOnMessage;
-      return;
-    }
-
-    // Safety timeout
-    setTimeout(() => {
-      if (!sessionListHandled) {
-        console.warn("[replay] Session list timeout - restoring handler");
-        sessionListHandled = true;
-        (wsManager as any).onMessage = originalOnMessage;
-      }
-    }, 15000);
   }
 
   // ── Title Generation ──
@@ -693,61 +622,31 @@ export class ChatPage extends LitElement {
 
   // ── Session Management UI ──
 
-  private async openSessionList() {
-    console.log("[chat-page] Requesting sessions list via WebSocket");
-    
-    const wsManager = WsManager.getExistingInstance(
-      this.sessionId,
-      this.sessionToken,
-    );
-    
-    if (!wsManager) {
-      console.error("[chat-page] No WebSocket connection available");
-      return;
-    }
+  private async openMenu() {
+    console.log("[chat-page] Opening menu dialog");
 
-    // Set up one-time handler for sessions_list response
-    const originalOnMessage = (wsManager as any).onMessage;
-    (wsManager as any).onMessage = (data: any) => {
-      try {
-        const frame = JSON.parse(data);
-        if (frame.type === "sessions_list") {
-          console.log("[chat-page] Received sessions list:", frame.sessions);
-          
-          // Restore original handler first
-          (wsManager as any).onMessage = originalOnMessage;
-          
-          // Display sessions in dialog
-          SessionListDialog.open(
-            (sessionId: string) => {
-              console.log("[chat-page] Loading session:", sessionId);
-              this.loadSessionById(sessionId);
-            },
-            frame.sessions || []
-          );
-          return;
-        }
-      } catch (err) {
-        console.error("[chat-page] Failed to parse sessions list response:", err);
-      }
-      
-      // Pass through to original handler
-      if (originalOnMessage) {
-        originalOnMessage(data);
-      }
-    };
+    const filesTab = new FilesTab();
+    filesTab.sessionId = this.sessionId;
+    filesTab.sessionToken = this.sessionToken;
+    filesTab.studentToken = this.auth.token;
+    filesTab.subjectIds = this.auth.subject_ids;
 
-    // Send list_sessions request
-    wsManager.send({ type: "list_sessions" });
+    const sessionsTab = new SessionsTab();
+    sessionsTab.sessionId = this.sessionId;
+    sessionsTab.sessionToken = this.sessionToken;
+    sessionsTab.onLoadSession = (sessionId: string) => this.loadSessionById(sessionId);
+    sessionsTab.onNewSession = () => this.newSession();
+
+    const accountTab = new AccountTab();
+    accountTab.sessionId = this.sessionId;
+    accountTab.sessionToken = this.sessionToken;
+    accountTab.onLogout = () => this.handleLogout();
+
+    MenuDialog.open([filesTab, sessionsTab, accountTab]);
   }
 
   private newSession() {
-    // For now, reload the page to create a new session
     window.location.reload();
-  }
-
-  private openSettings() {
-    SettingsDialog.open([new ProxyTab()]);
   }
 
   // ── Logout ──
@@ -788,9 +687,9 @@ export class ChatPage extends LitElement {
             ${Button({
               variant: "ghost",
               size: "sm",
-              children: icon(History, "sm"),
-              onClick: () => this.openSessionList(),
-              title: "Sessions",
+              children: icon(Menu, "sm"),
+              onClick: () => this.openMenu(),
+              title: "Menu",
             })}
             ${Button({
               variant: "ghost",
@@ -855,13 +754,6 @@ export class ChatPage extends LitElement {
           </div>
           <div class="flex items-center gap-1 px-2">
             <theme-toggle></theme-toggle>
-            ${Button({
-              variant: "ghost",
-              size: "sm",
-              children: icon(Settings, "sm"),
-              onClick: () => this.openSettings(),
-              title: "Settings",
-            })}
           </div>
         </div>
 

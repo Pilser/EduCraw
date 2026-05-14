@@ -60,6 +60,11 @@ export class SessionManager {
     }
   }
 
+  /** Alias for saveSession */
+  static storeSession(sessionId: string, sessionToken: string): void {
+    this.saveSession(sessionId, sessionToken);
+  }
+
   /** Load session ID */
   static loadSessionId(): string | null {
     try {

@@ -2,17 +2,11 @@ import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
 import { customElement, state } from "lit/decorators.js";
-
-// Simple session item from WebSocket API
-interface SessionItem {
-	id: string;
-	title?: string;
-	created_at?: string;
-}
+import type { SessionListItem } from "../core/edu-types.js";
 
 @customElement("session-list-dialog")
 export class SessionListDialog extends DialogBase {
-	@state() private sessions: SessionItem[] = [];
+	@state() private sessions: SessionListItem[] = [];
 	@state() private loading = false;
 
 	private onSelectCallback?: (sessionId: string) => void;
@@ -20,7 +14,7 @@ export class SessionListDialog extends DialogBase {
 	protected modalWidth = "min(600px, 90vw)";
 	protected modalHeight = "min(700px, 90vh)";
 
-	static async open(onSelect: (sessionId: string) => void, sessions?: SessionItem[]) {
+	static async open(onSelect: (sessionId: string) => void, sessions?: SessionListItem[]) {
 		const dialog = new SessionListDialog();
 		dialog.onSelectCallback = onSelect;
 		dialog.sessions = sessions || [];
@@ -73,7 +67,7 @@ export class SessionListDialog extends DialogBase {
 													${session.title || "Untitled Session"}
 												</div>
 												<div class="text-xs text-muted-foreground">
-													${this.formatDate(session.created_at)}
+													${this.formatDate(session.updated_at)}
 												</div>
 											</button>
 										`,

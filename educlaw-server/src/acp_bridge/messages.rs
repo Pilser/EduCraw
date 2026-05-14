@@ -16,31 +16,12 @@ pub enum ClientMessage {
         #[serde(default)]
         mime_type: Option<String>,
     },
-    /// Request available models for this session.
-    /// Backend returns: {"type":"models","models":[...],"active":"..."}
-    GetModels,
     /// Terminal resize event (no-op for ACP — goose runs headless).
     Resize { cols: u16, rows: u16 },
     /// Cancel the current in-flight prompt.
     Cancel,
-    /// List available threads/sessions from Goose.
-    /// Backend returns: {"type":"sessions_list","sessions":[...]}
-    #[serde(rename = "list_sessions")]
-    ListSessions,
     /// Load a specific thread and replay its message history.
     /// Backend streams SessionNotifications with message replay.
     #[serde(rename = "load_session")]
     LoadSession { thread_id: String },
-    /// Fork an existing session: copy thread + messages into new session.
-    /// Backend returns: {"type":"forked_session","new_session_id":"..."}
-    #[serde(rename = "fork_session")]
-    ForkSession { thread_id: String },
-    /// Export a session as JSON string.
-    /// Backend returns: {"type":"export_session_result","data":"<json-string>"}
-    #[serde(rename = "export_session")]
-    ExportSession { session_id: String },
-    /// Import a session from JSON string.
-    /// Backend returns: {"type":"import_session_result","session_id":"...","title":"...","message_count":42}
-    #[serde(rename = "import_session")]
-    ImportSession { data: String },
 }

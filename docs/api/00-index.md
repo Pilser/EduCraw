@@ -26,6 +26,10 @@ This documentation covers all backend API endpoints exposed by `educlaw-server` 
 | `/sessions/:id/model` | PUT | Switch active model (optional thinking_params override) |
 | `/sessions/:id/token-usage` | GET | Get token usage |
 | `/sessions/:id/broadcast` | POST | Push message to PTY |
+| `/sessions/:id/threads` | GET | List threads for a session |
+| `/sessions/:id/threads/:thread_id/fork` | POST | Fork thread into new session |
+| `/sessions/:id/threads/:thread_id/export` | GET | Export thread as JSON |
+| `/sessions/:id/threads/import` | POST | Import thread from JSON |
 
 **File:** [02-sessions.md](02-sessions.md)
 
@@ -48,9 +52,14 @@ This documentation covers all backend API endpoints exposed by `educlaw-server` 
 
 ## WebSocket
 
+WebSocket handles real-time AI chat streaming, session replay, and ACP notification
+events (tool calls, token usage, plan updates, mode/config changes, etc.).
+Session management operations (list, fork, export, import, get models) use REST
+endpoints above.
+
 | Endpoint | Description |
 |----------|-------------|
-| `/sessions/:id/ws` | Real-time bidirectional communication |
+| `/sessions/:id/ws` | AI chat streaming, session replay, and ACP notifications
 
 **File:** [04-websocket.md](04-websocket.md)
 
@@ -146,12 +155,13 @@ This documentation covers all backend API endpoints exposed by `educlaw-server` 
 
 ## Session Import/Export
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| Export Session | Done (Backend), Todo (Frontend) | Export goose session as JSON |
-| Import Session | Done (Backend), Todo (Frontend) | Import session from JSON |
+| Feature | Endpoint | Description |
+|---------|----------|-------------|
+| Export Thread | `GET /sessions/:id/threads/:thread_id/export` | Export session as JSON |
+| Import Thread | `POST /sessions/:id/threads/import` | Import session from JSON |
+| Fork Thread | `POST /sessions/:id/threads/:thread_id/fork` | Fork a session |
 
-**File:** [11-session-import-export.md](11-session-import-export.md)
+**File:** [02-sessions.md](02-sessions.md)
 
 ---
 

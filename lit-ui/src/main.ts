@@ -83,6 +83,18 @@ function renderApp() {
             currentView = { kind: "login" };
             renderApp();
           }}
+          @new-session=${(e: CustomEvent) => {
+            console.log("[main] Handling new-session event", e.detail);
+            if (currentView.kind === "chat") {
+              currentView = {
+                kind: "chat",
+                auth: currentView.auth,
+                sessionId: e.detail.sessionId,
+                sessionToken: e.detail.sessionToken,
+              };
+              renderApp();
+            }
+          }}
         ></chat-page>
       `;
       break;

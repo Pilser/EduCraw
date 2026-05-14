@@ -32,6 +32,7 @@ test-goose-home/data
 test-goose-home/state
 goose-home/data
 goose-home/state
+web-ui/
 
 .github
 
