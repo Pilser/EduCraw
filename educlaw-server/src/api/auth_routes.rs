@@ -1,13 +1,16 @@
 // educlaw-server/src/api/auth_routes.rs
 //
-// POST /auth/login   — student login with username + password → JWT
-// POST /auth/token   — dev admin token (guarded by ADMIN_SECRET env var)
+// POST /auth/login    — student login with username + password → JWT
+// POST /auth/register — student self-registration
+// POST /auth/token    — dev admin token (guarded by ADMIN_SECRET env var)
+// GET  /cohorts       — list all available cohorts (public)
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::{get, post}, Json, Router};
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::auth;
-use crate::db::{students, subjects};
+use crate::db::{cohorts, students, subjects};
 use crate::error::{AppError, Result};
 
 use super::AppState;
@@ -15,7 +18,9 @@ use super::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/auth/login", post(student_login))
+        .route("/auth/register", post(student_register))
         .route("/auth/token", post(dev_admin_token))
+        .route("/cohorts", get(list_cohorts_public))
 }
 
 // ── Student login ─────────────────────────────────────────────────────────
@@ -94,4 +99,117 @@ async fn dev_admin_token(
     }
     let token = state.auth.sign_admin_token()?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "token": token }))))
+}
+
+// ── Self-registration ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RegisterRequest {
+    display_name: String,
+    username: String,
+    password: String,
+    confirm_password: String,
+    cohort_id: Option<String>,
+}
+
+async fn student_register(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterRequest>,
+) -> Result<impl IntoResponse> {
+    let username = body.username.trim();
+    let display_name = body.display_name.trim();
+
+    // Validation
+    if display_name.is_empty() {
+        return Err(AppError::BadRequest("Display name is required".into()));
+    }
+    if username.len() < 3 || username.len() > 64 {
+        return Err(AppError::BadRequest("Username must be 3-64 characters".into()));
+    }
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        return Err(AppError::BadRequest(
+            "Username can only contain letters, numbers, underscores and dashes".into(),
+        ));
+    }
+    if body.password.len() < 6 {
+        return Err(AppError::BadRequest("Password must be at least 6 characters".into()));
+    }
+    if body.password != body.confirm_password {
+        return Err(AppError::BadRequest("Passwords do not match".into()));
+    }
+
+    // Check username uniqueness
+    if students::get_student_by_username(&state.pool, username)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict("Username already taken".into()));
+    }
+
+    // Verify cohort_id if provided
+    let cohort_id = body.cohort_id.unwrap_or_default();
+    if !cohort_id.is_empty() {
+        if cohorts::get_cohort(&state.pool, &cohort_id).await?.is_none() {
+            return Err(AppError::BadRequest(format!("Cohort '{}' not found", cohort_id)));
+        }
+    }
+
+    let password_hash = auth::hash_password(&body.password)?;
+
+    let student = students::Student {
+        id: Uuid::new_v4().to_string(),
+        username: username.to_string(),
+        password_hash,
+        display_name: display_name.to_string(),
+        role: "student".to_string(),
+        cohort_id: cohort_id.clone(),
+        uid_slot: None,
+        created_at: String::new(),
+        last_seen: None,
+        token_limit: None,
+        token_balance: 0,
+        token_block_banner: None,
+        token_blocked_at: None,
+        last_model: None,
+    };
+
+    students::insert_student(&state.pool, &student).await?;
+
+    // Resolve subject_ids for the cohort
+    let subject_ids: Vec<String> = if cohort_id.is_empty() {
+        vec![]
+    } else {
+        subjects::list_subjects(&state.pool, &cohort_id)
+            .await?
+            .into_iter()
+            .map(|s| s.slug)
+            .collect()
+    };
+
+    let token = state.auth.sign_student_token(
+        &student.id,
+        &student.role,
+        &student.cohort_id,
+        subject_ids.clone(),
+    )?;
+
+    tracing::info!(username = %username, student_id = %student.id, "student self-registered");
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({
+        "token":        token,
+        "student_id":   student.id,
+        "display_name": student.display_name,
+        "role":         student.role,
+        "cohort_id":    student.cohort_id,
+        "subject_ids":  subject_ids,
+    }))))
+}
+
+// ── Public cohort list ─────────────────────────────────────────────────────
+
+async fn list_cohorts_public(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse> {
+    let rows = cohorts::list_cohorts(&state.pool).await?;
+    Ok(Json(rows))
 }

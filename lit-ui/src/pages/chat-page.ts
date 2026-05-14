@@ -645,7 +645,13 @@ export class ChatPage extends LitElement {
     const accountTab = new AccountTab();
     accountTab.sessionId = this.sessionId;
     accountTab.sessionToken = this.sessionToken;
+    accountTab.studentToken = this.auth.token;
+    accountTab.auth = this.auth;
     accountTab.onLogout = () => this.handleLogout();
+    accountTab.onProfileUpdate = (updatedAuth: LoginResponse) => {
+      this.auth = updatedAuth;
+      SessionManager.saveAuth(updatedAuth);
+    };
 
     MenuDialog.open([filesTab, sessionsTab, accountTab]);
   }
@@ -666,7 +672,13 @@ export class ChatPage extends LitElement {
     const accountTab = new AccountTab();
     accountTab.sessionId = this.sessionId;
     accountTab.sessionToken = this.sessionToken;
+    accountTab.studentToken = this.auth.token;
+    accountTab.auth = this.auth;
     accountTab.onLogout = () => this.handleLogout();
+    accountTab.onProfileUpdate = (updatedAuth: LoginResponse) => {
+      this.auth = updatedAuth;
+      SessionManager.saveAuth(updatedAuth);
+    };
 
     MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 2);
   }

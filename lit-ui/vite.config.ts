@@ -49,6 +49,14 @@ export default defineConfig(({ mode }) => {
           target: backendTarget,
           changeOrigin: true,
         },
+        "/me": {
+          target: backendTarget,
+          changeOrigin: true,
+        },
+        "/cohorts": {
+          target: backendTarget,
+          changeOrigin: true,
+        },
       },
     },
   };

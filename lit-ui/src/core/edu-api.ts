@@ -1,11 +1,15 @@
 import type {
+  Cohort,
   LoginResponse,
+  MeResponse,
   Session,
   SessionListItem,
   ForkThreadResult,
   ImportThreadResult,
   SessionModels,
   TokenUsage,
+  UpdateMeRequest,
+  UpdateMeResponse,
 } from "./edu-types";
 
 const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
@@ -49,6 +53,31 @@ export const eduApi = {
       method: "POST",
       body: JSON.stringify({ secret }),
     });
+  },
+
+  /** Student self-registration */
+  async register(
+    displayName: string,
+    username: string,
+    password: string,
+    confirmPassword: string,
+    cohortId?: string,
+  ): Promise<LoginResponse> {
+    return request<LoginResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        display_name: displayName,
+        username,
+        password,
+        confirm_password: confirmPassword,
+        cohort_id: cohortId || "",
+      }),
+    });
+  },
+
+  /** List all available cohorts (public) */
+  async listCohorts(): Promise<Cohort[]> {
+    return request<Cohort[]>("/cohorts");
   },
 
   /** Create a new chat session */
@@ -263,5 +292,24 @@ export const eduApi = {
     if (!res.ok) {
       throw new Error(`Failed to delete file: ${res.status}`);
     }
+  },
+
+  /** Get current student's profile */
+  async getMe(token: string): Promise<MeResponse> {
+    return request<MeResponse>("/me", {
+      headers: authHeader(token),
+    });
+  },
+
+  /** Update current student's profile (cohort, display name, password) */
+  async updateMe(
+    token: string,
+    body: UpdateMeRequest,
+  ): Promise<UpdateMeResponse> {
+    return request<UpdateMeResponse>("/me", {
+      method: "PATCH",
+      headers: authHeader(token),
+      body: JSON.stringify(body),
+    });
   },
 };

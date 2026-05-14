@@ -108,3 +108,38 @@ export interface WsTextFrame extends WsFrame {
   type: "assistant_text" | "user_text";
   text: string;
 }
+
+// Cohort
+export interface Cohort {
+  id: string;
+  title: string;
+  created_at: string;
+}
+
+// GET /me response
+export interface MeResponse {
+  id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  cohort_id: string;
+  cohort_title?: string | null;
+  token_balance: number;
+  available_cohorts: Cohort[];
+}
+
+// PATCH /me request
+export interface UpdateMeRequest {
+  display_name?: string;
+  cohort_id?: string;
+  current_password?: string;
+  new_password?: string;
+}
+
+// PATCH /me response
+export interface UpdateMeResponse {
+  token: string;
+  display_name: string;
+  cohort_id: string;
+  subject_ids: string[];
+}

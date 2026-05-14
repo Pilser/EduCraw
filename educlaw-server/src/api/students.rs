@@ -3,7 +3,9 @@
 // POST /students        — create student (admin)
 // GET  /students        — list all students (admin)
 // GET  /students/:id    — get one student by id (admin)
-// GET  /me/token-balance — get current student's token balance (auth required)
+// GET  /me              — get current student's profile
+// PATCH /me             — update current student's profile (cohort, password, etc.)
+// GET  /me/token-balance — get current student's token balance
 
 use std::path::PathBuf;
 
@@ -11,14 +13,14 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::{self, bearer_token};
-use crate::db::students::{self, Student};
+use crate::db::{cohorts, students::{self, Student}, subjects};
 use crate::error::{AppError, Result};
 
 use super::AppState;
@@ -28,6 +30,8 @@ pub fn routes() -> Router<AppState> {
         .route("/students", post(create_student))
         .route("/students", get(list_students))
         .route("/students/:id", get(get_student))
+        .route("/me", get(get_me))
+        .route("/me", patch(update_me))
         .route("/me/token-balance", get(get_my_token_balance))
 }
 
@@ -168,4 +172,141 @@ async fn get_my_token_balance(
     Ok(Json(TokenBalanceResponse {
         balance: student.token_balance,
     }))
+}
+
+// ── GET /me ────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct MeResponse {
+    id: String,
+    username: String,
+    display_name: String,
+    role: String,
+    cohort_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cohort_title: Option<String>,
+    token_balance: i64,
+    available_cohorts: Vec<cohorts::Cohort>,
+}
+
+async fn get_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let claims = state.auth.verify(token)?;
+
+    let student = students::get_student(&state.pool, &claims.sub)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
+
+    let cohort_title = if student.cohort_id.is_empty() {
+        None
+    } else {
+        cohorts::get_cohort(&state.pool, &student.cohort_id)
+            .await?
+            .map(|c| c.title)
+    };
+
+    let available_cohorts = cohorts::list_cohorts(&state.pool).await?;
+
+    Ok(Json(MeResponse {
+        id: student.id,
+        username: student.username,
+        display_name: student.display_name,
+        role: student.role,
+        cohort_id: student.cohort_id,
+        cohort_title,
+        token_balance: student.token_balance,
+        available_cohorts,
+    }))
+}
+
+// ── PATCH /me ──────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct UpdateMeBody {
+    display_name: Option<String>,
+    cohort_id: Option<String>,
+    current_password: Option<String>,
+    new_password: Option<String>,
+}
+
+async fn update_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateMeBody>,
+) -> Result<impl IntoResponse> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let claims = state.auth.verify(token)?;
+
+    let student = students::get_student(&state.pool, &claims.sub)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
+
+    // Password change: verify current first
+    let new_hash = if let Some(ref new_pw) = body.new_password {
+        if new_pw.len() < 6 {
+            return Err(AppError::BadRequest("New password must be at least 6 characters".into()));
+        }
+        let current_pw = body.current_password
+            .ok_or_else(|| AppError::BadRequest("Current password is required to change password".into()))?;
+        if !auth::verify_password(&current_pw, &student.password_hash)? {
+            return Err(AppError::BadRequest("Current password is incorrect".into()));
+        }
+        Some(auth::hash_password(new_pw)?)
+    } else {
+        None
+    };
+
+    // Validate cohort if changing
+    if let Some(ref cid) = body.cohort_id {
+        if !cid.is_empty() {
+            if cohorts::get_cohort(&state.pool, cid).await?.is_none() {
+                return Err(AppError::BadRequest(format!("Cohort '{}' not found", cid)));
+            }
+        }
+    }
+
+    students::update_student(
+        &state.pool,
+        &claims.sub,
+        body.display_name.as_deref(),
+        body.cohort_id.as_deref(),
+        new_hash.as_deref(),
+    )
+    .await?;
+
+    // Re-read updated student
+    let updated = students::get_student(&state.pool, &claims.sub)
+        .await?
+        .unwrap();
+
+    // Resolve fresh subject_ids
+    let subject_ids: Vec<String> = if updated.cohort_id.is_empty() {
+        vec![]
+    } else {
+        subjects::list_subjects(&state.pool, &updated.cohort_id)
+            .await?
+            .into_iter()
+            .map(|s| s.slug)
+            .collect()
+    };
+
+    // Issue fresh JWT with new cohort/subject_ids
+    let token = state.auth.sign_student_token(
+        &updated.id,
+        &updated.role,
+        &updated.cohort_id,
+        subject_ids.clone(),
+    )?;
+
+    tracing::info!(student_id = %updated.id, "student updated own profile");
+
+    Ok(Json(serde_json::json!({
+        "token":        token,
+        "display_name": updated.display_name,
+        "cohort_id":    updated.cohort_id,
+        "subject_ids":  subject_ids,
+    })))
 }

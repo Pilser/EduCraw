@@ -7,13 +7,15 @@ import { customElement, state } from "lit/decorators.js";
 import { AlertCircle, GraduationCap, LogIn, User, UserPlus } from "lucide";
 import { eduApi } from "../core/edu-api";
 import { SessionManager } from "../core/session-manager";
-import type { LoginResponse } from "../core/edu-types";
+import type { Cohort, LoginResponse } from "../core/edu-types";
 
 @customElement("login-page")
 export class LoginPage extends LitElement {
   @state() private loading = false;
   @state() private error = "";
   @state() private showCreateAccount = false;
+  @state() private cohorts: Cohort[] = [];
+  @state() private cohortsLoaded = false;
 
   protected createRenderRoot() {
     return this;
@@ -48,6 +50,60 @@ export class LoginPage extends LitElement {
         this.error = "Account not found. Create an account below.";
       } else if (msg.includes("401") || msg.includes("invalid")) {
         this.error = "Invalid username or password.";
+      } else {
+        this.error = msg;
+      }
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async loadCohorts() {
+    if (this.cohortsLoaded) return;
+    try {
+      this.cohorts = await eduApi.listCohorts();
+      this.cohortsLoaded = true;
+    } catch {
+      // Non-fatal — cohort list is optional
+    }
+  }
+
+  private async handleCreateAccount(e: Event) {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const displayName = (form.querySelector('[name="display_name"]') as HTMLInputElement).value.trim();
+    const username = (form.querySelector('[name="username"]') as HTMLInputElement).value.trim();
+    const password = (form.querySelector('[name="password"]') as HTMLInputElement).value;
+    const confirmPassword = (form.querySelector('[name="confirm_password"]') as HTMLInputElement).value;
+    const cohortEl = form.querySelector('[name="cohort_id"]') as HTMLSelectElement;
+    const cohortId = cohortEl?.value || "";
+
+    if (password !== confirmPassword) {
+      this.error = "Passwords do not match";
+      return;
+    }
+    if (!displayName || !username || !password) {
+      this.error = "All fields are required";
+      return;
+    }
+
+    this.error = "";
+    this.loading = true;
+
+    try {
+      const auth = await eduApi.register(displayName, username, password, confirmPassword, cohortId);
+      SessionManager.saveAuth(auth);
+      this.dispatchEvent(
+        new CustomEvent("login-success", {
+          detail: auth,
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Registration failed";
+      if (msg.includes("409") || msg.includes("taken")) {
+        this.error = "Username already taken. Choose another.";
       } else {
         this.error = msg;
       }
@@ -166,9 +222,10 @@ export class LoginPage extends LitElement {
                 children: html`<span class="flex items-center justify-center gap-2"
                   >${icon(UserPlus, "sm")} Create Account</span
                 >`,
-                onClick: () => {
+                onClick: async () => {
                   this.showCreateAccount = true;
                   this.error = "";
+                  await this.loadCohorts();
                 },
               })}
             </div>
@@ -214,7 +271,7 @@ export class LoginPage extends LitElement {
               Create Account
             </h2>
 
-            <form class="space-y-4" autocomplete="off">
+            <form class="space-y-4" autocomplete="off" @submit=${this.handleCreateAccount}>
               <div>
                 <label class="block text-sm font-medium text-foreground mb-1.5"
                   >Full Name</label
@@ -271,20 +328,46 @@ export class LoginPage extends LitElement {
                 })}
               </div>
 
-              <div
-                class="bg-secondary rounded-lg p-3 text-sm text-muted-foreground"
-              >
-                Account creation is not yet wired to the backend.
-                Your administrator will set up your account.
-              </div>
+              ${this.cohorts.length > 0
+                ? html`
+                    <div>
+                      <label class="block text-sm font-medium text-foreground mb-1.5"
+                        >Cohort (optional)</label
+                      >
+                      <select
+                        name="cohort_id"
+                        class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary"
+                      >
+                        <option value="">I'll decide later</option>
+                        ${this.cohorts.map(
+                          (c) => html`<option value=${c.id}>${c.title}</option>`,
+                        )}
+                      </select>
+                    </div>
+                  `
+                : ""}
 
+              ${this.error
+                ? html`
+                    <div
+                      class="flex items-start gap-2 bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2.5 text-sm text-destructive"
+                    >
+                      ${icon(AlertCircle, "sm")}
+                      <span>${this.error}</span>
+                    </div>
+                  `
+                : ""}
               ${Button({
-                type: "button",
+                type: "submit",
                 variant: "default",
                 size: "lg",
-                className: "w-full opacity-50 cursor-not-allowed",
-                disabled: true,
-                children: html`<span class="flex items-center gap-2">Create Account</span>`,
+                className: "w-full",
+                disabled: this.loading,
+                children: this.loading
+                  ? html`<span class="flex items-center gap-2">Creating account…</span>`
+                  : html`<span class="flex items-center gap-2"
+                      >Create Account</span
+                    >`,
               })}
             </form>
 
