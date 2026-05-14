@@ -241,13 +241,17 @@ async fn create_student(
 
     let password_hash = hash_password(&body.password)?;
 
+    let id = Uuid::new_v4().to_string();
+    let home_dir = format!("{}_{}", body.username, &id[..8]);
+
     let student = students::Student {
-        id: Uuid::new_v4().to_string(),
+        id,
         username: body.username,
         password_hash,
         display_name: body.display_name,
         role: body.role.unwrap_or_else(|| "student".to_string()),
         cohort_id: body.cohort_id.unwrap_or_default(),
+        home_dir: Some(home_dir),
         uid_slot: None,
         created_at: String::new(),
         last_seen: None,

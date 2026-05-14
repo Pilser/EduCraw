@@ -73,13 +73,17 @@ async fn create_student(
 ) -> Result<impl IntoResponse> {
     let password_hash = auth::hash_password(&body.password)?;
 
+    let id = Uuid::new_v4().to_string();
+    let home_dir = format!("{}_{}", body.username, &id[..8]);
+
     let student = Student {
-        id: Uuid::new_v4().to_string(),
+        id,
         username: body.username,
         password_hash,
         display_name: body.display_name,
         role: body.role.unwrap_or_else(|| "student".to_string()),
         cohort_id: body.cohort_id.unwrap_or_default(),
+        home_dir: Some(home_dir),
         uid_slot: None,
         created_at: String::new(), // set by DB DEFAULT
         last_seen: None,
@@ -93,7 +97,7 @@ async fn create_student(
     students::insert_student(&state.pool, &student).await?;
 
     // Copy goose config template to student's persistent directory
-    let student_dir = PathBuf::from(&state.students_root).join(&student.username);
+    let student_dir = students::student_home_path(&state.students_root, &student);
     let goose_template = PathBuf::from("/srv/educraw/templates/goose-config/config");
     let goose_dst = student_dir.join("config");
 

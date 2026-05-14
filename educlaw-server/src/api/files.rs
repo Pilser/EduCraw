@@ -193,13 +193,13 @@ fn mime_guess(path: &Path) -> &'static str {
 
 // ── Student home dir resolver ────────────────────────────────────────────
 
-/// Resolve `{students_root}/{username}` from the JWT `sub` claim (student UUID).
+/// Resolve `{students_root}/{home_dir}` from the JWT `sub` claim (student UUID).
 /// This is the OverlayFS upper layer — the student's persistent home.
 async fn student_home_dir(state: &AppState, student_id: &str) -> Result<PathBuf> {
     let student = students::get_student(&state.pool, student_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {student_id} not found")))?;
-    Ok(PathBuf::from(&state.students_root).join(&student.username))
+    Ok(students::student_home_path(&state.students_root, &student))
 }
 
 // ── Subject routes ────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@
 //   created_at, last_seen
 
 use sqlx::SqlitePool;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Student {
@@ -18,6 +19,9 @@ pub struct Student {
     pub role: String,
     /// ID of the cohort this student belongs to (e.g. "primary-2b").
     pub cohort_id: String,
+    /// Filesystem directory name for this student under students_root.
+    /// Defaults to username for existing students; new registrations use username_uuidPrefix.
+    pub home_dir: Option<String>,
     /// Host uid mapping while a session is active; NULL when idle.
     pub uid_slot: Option<i64>,
     /// Total token budget. NULL = unlimited.
@@ -39,8 +43,8 @@ pub struct Student {
 pub async fn insert_student(pool: &SqlitePool, s: &Student) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO students
-             (id, username, password_hash, display_name, role, cohort_id)
-         VALUES (?, ?, ?, ?, ?, ?)",
+             (id, username, password_hash, display_name, role, cohort_id, home_dir)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&s.id)
     .bind(&s.username)
@@ -48,6 +52,7 @@ pub async fn insert_student(pool: &SqlitePool, s: &Student) -> Result<(), sqlx::
     .bind(&s.display_name)
     .bind(&s.role)
     .bind(&s.cohort_id)
+    .bind(&s.home_dir)
     .execute(pool)
     .await?;
     Ok(())
@@ -223,5 +228,12 @@ pub async fn topup_tokens(
     .await?;
     
     get_token_balance(pool, id).await
+}
+
+/// Resolve the disk path for a student's persistent home directory.
+/// Uses `home_dir` if set, otherwise falls back to `username`.
+pub fn student_home_path(students_root: &str, s: &Student) -> PathBuf {
+    let component = s.home_dir.as_deref().unwrap_or(&s.username);
+    PathBuf::from(students_root).join(component)
 }
 

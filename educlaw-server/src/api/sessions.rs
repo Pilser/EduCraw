@@ -85,7 +85,7 @@ async fn create_session(
     } else {
         std::path::PathBuf::from(&state.subjects_root).join(&student.cohort_id)
     };
-    let upper = std::path::PathBuf::from(&state.students_root).join(&student.username);
+    let upper = students::student_home_path(&state.students_root, &student);
 
     let dirs = SessionDirs::new(&state.workspace_root, &session_id, lower, upper);
 

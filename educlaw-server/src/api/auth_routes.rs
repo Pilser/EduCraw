@@ -156,13 +156,17 @@ async fn student_register(
 
     let password_hash = auth::hash_password(&body.password)?;
 
+    let id = Uuid::new_v4().to_string();
+    let home_dir = format!("{}_{}", username, &id[..8]);
+
     let student = students::Student {
-        id: Uuid::new_v4().to_string(),
+        id,
         username: username.to_string(),
         password_hash,
         display_name: display_name.to_string(),
         role: "student".to_string(),
         cohort_id: cohort_id.clone(),
+        home_dir: Some(home_dir),
         uid_slot: None,
         created_at: String::new(),
         last_seen: None,

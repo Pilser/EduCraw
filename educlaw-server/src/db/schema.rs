@@ -78,6 +78,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             display_name     TEXT NOT NULL,
             role             TEXT NOT NULL DEFAULT 'student',
             cohort_id        TEXT NOT NULL DEFAULT '',
+            home_dir         TEXT,
             uid_slot         INTEGER,
             token_limit      INTEGER,
             token_balance    INTEGER NOT NULL DEFAULT 0,
@@ -97,6 +98,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         "ALTER TABLE students ADD COLUMN token_block_banner TEXT",
         "ALTER TABLE students ADD COLUMN token_blocked_at TEXT",
         "ALTER TABLE students ADD COLUMN last_model TEXT",
+        "ALTER TABLE students ADD COLUMN home_dir TEXT",
         "ALTER TABLE models ADD COLUMN multiplier REAL NOT NULL DEFAULT 1.0",
         "ALTER TABLE models ADD COLUMN provider TEXT",
         "ALTER TABLE models ADD COLUMN think_mode INTEGER",
@@ -106,6 +108,13 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     ] {
         let _ = sqlx::query(col).execute(pool).await;
     }
+
+    // Migrate existing students: set home_dir = username for those without one
+    let _ = sqlx::query(
+        "UPDATE students SET home_dir = username WHERE home_dir IS NULL",
+    )
+    .execute(pool)
+    .await;
 
     // ── sessions ──────────────────────────────────────────────────────────────
     sqlx::query(
