@@ -27,6 +27,7 @@ import { MenuDialog } from "../dialogs/MenuDialog.js";
 import { FilesTab } from "../dialogs/FilesTab.js";
 import { SessionsTab } from "../dialogs/SessionsTab.js";
 import { AccountTab } from "../dialogs/AccountTab.js";
+import "../dialogs/LandingBanner.js";
 
 @customElement("chat-page")
 export class ChatPage extends LitElement {
@@ -37,6 +38,7 @@ export class ChatPage extends LitElement {
   @state() private _error = "";
   @state() private currentTitle = "";
   @state() private isEditingTitle = false;
+  @state() private showLanding = true;
 
   private agent?: Agent;
   private chatPanel?: ChatPanel;
@@ -200,6 +202,12 @@ export class ChatPage extends LitElement {
       streamFn: createWsStreamFn({
         sessionId: this.sessionId,
         authToken: this.sessionToken,
+        onStreamStart: () => {
+          if (this.showLanding) {
+            this.showLanding = false;
+            this.requestUpdate();
+          }
+        },
       }),
       convertToLlm: defaultConvertToLlm,
     });
@@ -465,6 +473,7 @@ export class ChatPage extends LitElement {
 
             if (this.agent) {
               this.agent.state.messages = replayedMessages;
+              this.showLanding = false;
 
               if (replayedMessages.length > 0 && !this.currentTitle) {
                 this.currentTitle = this.generateTitle(replayedMessages);
@@ -538,6 +547,7 @@ export class ChatPage extends LitElement {
         }
         if (this.agent) {
           this.agent.state.messages = replayedMessages;
+          this.showLanding = false;
           const agentInterface = this.querySelector("agent-interface");
           if (agentInterface) {
             (agentInterface as LitElement).requestUpdate();
@@ -640,6 +650,27 @@ export class ChatPage extends LitElement {
     MenuDialog.open([filesTab, sessionsTab, accountTab]);
   }
 
+  private openMenuWithAccount() {
+    const filesTab = new FilesTab();
+    filesTab.sessionId = this.sessionId;
+    filesTab.sessionToken = this.sessionToken;
+    filesTab.studentToken = this.auth.token;
+    filesTab.subjectIds = this.auth.subject_ids;
+
+    const sessionsTab = new SessionsTab();
+    sessionsTab.sessionId = this.sessionId;
+    sessionsTab.sessionToken = this.sessionToken;
+    sessionsTab.onLoadSession = (sessionId: string) => this.loadSessionById(sessionId);
+    sessionsTab.onNewSession = () => this.newSession();
+
+    const accountTab = new AccountTab();
+    accountTab.sessionId = this.sessionId;
+    accountTab.sessionToken = this.sessionToken;
+    accountTab.onLogout = () => this.handleLogout();
+
+    MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 2);
+  }
+
   private async newSession() {
     try {
       const { thread_id } = await eduApi.createThread(this.sessionId, this.sessionToken);
@@ -649,6 +680,7 @@ export class ChatPage extends LitElement {
         this.agent.state.messages = [];
         this.currentTitle = "";
         this.lastLoadedThreadId = thread_id;
+        this.showLanding = false;
 
         const agentInterface = this.querySelector("agent-interface");
         if (agentInterface) {
@@ -770,14 +802,17 @@ export class ChatPage extends LitElement {
           </div>
         </div>
 
-        <!-- Chat Panel -->
-        ${this._ready
-          ? html`<div class="flex-1 min-h-0 chat-container"></div>`
-          : html`
-              <div class="w-full h-full flex items-center justify-center">
-                <p class="text-muted-foreground">Initializing chat…</p>
-              </div>
-            `}
+        <!-- Chat Area -->
+        <div class="flex-1 flex flex-col min-h-0">
+          ${this.showLanding && this._ready
+            ? html`<landing-banner
+                .onNewChat=${() => this.newSession()}
+                .onContinueRecent=${() => this.loadMostRecentSession()}
+                .onCheckBalance=${() => this.openMenuWithAccount()}
+              ></landing-banner>`
+            : ''}
+          <div class="flex-1 min-h-0 chat-container" style="${this.showLanding && this._ready ? 'display:none' : ''}"></div>
+        </div>
       </div>
     `;
   }
