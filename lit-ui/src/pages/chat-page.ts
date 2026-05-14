@@ -462,19 +462,14 @@ export class ChatPage extends LitElement {
             console.log(
               `[replay] Session replay complete — ${replayedMessages.length} messages restored`,
             );
-            console.log(
-              "[replay] Message order:",
-              replayedMessages.map((m: AgentMessage) => m.role),
-            );
 
-            if (replayedMessages.length > 0 && this.agent) {
+            if (this.agent) {
               this.agent.state.messages = replayedMessages;
-              
-              // Auto-generate title if not set
-              if (!this.currentTitle) {
+
+              if (replayedMessages.length > 0 && !this.currentTitle) {
                 this.currentTitle = this.generateTitle(replayedMessages);
               }
-              
+
               const agentInterface = this.querySelector("agent-interface");
               if (agentInterface) {
                 (agentInterface as LitElement).requestUpdate();
@@ -541,7 +536,7 @@ export class ChatPage extends LitElement {
         if (currentAssistant) {
           this.flushAssistant(replayedMessages, currentAssistant);
         }
-        if (replayedMessages.length > 0 && this.agent) {
+        if (this.agent) {
           this.agent.state.messages = replayedMessages;
           const agentInterface = this.querySelector("agent-interface");
           if (agentInterface) {
@@ -654,6 +649,12 @@ export class ChatPage extends LitElement {
         this.agent.state.messages = [];
         this.currentTitle = "";
         this.lastLoadedThreadId = thread_id;
+
+        const agentInterface = this.querySelector("agent-interface");
+        if (agentInterface) {
+          (agentInterface as LitElement).requestUpdate();
+        }
+        this.chatPanel?.requestUpdate();
         this.requestUpdate();
       }
     } catch (err) {
