@@ -645,8 +645,20 @@ export class ChatPage extends LitElement {
     MenuDialog.open([filesTab, sessionsTab, accountTab]);
   }
 
-  private newSession() {
-    window.location.reload();
+  private async newSession() {
+    try {
+      const { thread_id } = await eduApi.createThread(this.sessionId, this.sessionToken);
+      console.log("[chat-page] New thread created:", thread_id);
+
+      if (this.agent) {
+        this.agent.state.messages = [];
+        this.currentTitle = "";
+        this.lastLoadedThreadId = thread_id;
+        this.requestUpdate();
+      }
+    } catch (err) {
+      console.error("[chat-page] Failed to create new thread:", err);
+    }
   }
 
   // ── Logout ──

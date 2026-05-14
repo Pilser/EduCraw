@@ -27,6 +27,7 @@ This documentation covers all backend API endpoints exposed by `educlaw-server` 
 | `/sessions/:id/token-usage` | GET | Get token usage |
 | `/sessions/:id/broadcast` | POST | Push message to PTY |
 | `/sessions/:id/threads` | GET | List threads for a session |
+| `/sessions/:id/threads/new` | POST | Create a new empty thread |
 | `/sessions/:id/threads/:thread_id/fork` | POST | Fork thread into new session |
 | `/sessions/:id/threads/:thread_id/export` | GET | Export thread as JSON |
 | `/sessions/:id/threads/import` | POST | Import thread from JSON |
