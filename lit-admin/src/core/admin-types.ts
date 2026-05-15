@@ -17,8 +17,8 @@ export interface AdminStudent {
   has_active_session: boolean;
   token_limit: number | null;
   token_balance: number;
-  token_blocked_at: string | null;
-  token_block_banner: string | null;
+  restriction_status: string | null;
+  restriction_message: string | null;
 }
 
 export interface CreateStudentBody {
@@ -37,10 +37,14 @@ export interface UpdateStudentBody {
 
 export interface TokenDeduction {
   id: string;
-  student_id: string;
-  amount: number;
-  reason: string;
-  created_at: string;
+  session_id: string;
+  model_name: string;
+  multiplier: number;
+  tokens_used: number;
+  tokens_deducted: number;
+  balance_before: number;
+  balance_after: number;
+  recorded_at: string;
 }
 
 export interface StudentTokenUsage {

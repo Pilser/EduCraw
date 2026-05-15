@@ -48,6 +48,14 @@ async fn student_login(
         return Err(AppError::Unauthorized);
     }
 
+    if student.restriction_status.is_some() {
+        let msg = student.restriction_message.unwrap_or_else(|| {
+            "Your account has been restricted. Please contact your administrator.".into()
+        });
+        tracing::warn!(username = %body.username, student_id = %student.id, "login: restricted account");
+        return Err(AppError::Restricted(msg));
+    }
+
     // Resolve subject slugs for this cohort so they go into the JWT.
     let subject_ids: Vec<String> = if student.cohort_id.is_empty() {
         vec![]
@@ -172,8 +180,8 @@ async fn student_register(
         last_seen: None,
         token_limit: None,
         token_balance: 0,
-        token_block_banner: None,
-        token_blocked_at: None,
+        restriction_message: None,
+        restriction_status: None,
         last_model: None,
     };
 

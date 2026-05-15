@@ -388,26 +388,26 @@ async fn handle_client_message(
         } => {
             tracing::info!(session_id = %session_id, "📥 [INPUT] Processing input message (len={}, has_image={})", data.len(), image.is_some());
 
-            // ── Token-block gate ──────────────────────────────────────
-            let blocked = db_students::get_student(pool, student_id)
+            // ── Restriction gate ───────────────────────────────────────
+            let restricted = db_students::get_student(pool, student_id)
                 .await
                 .ok()
                 .flatten()
-                .map(|s| s.token_blocked_at.is_some())
+                .map(|s| s.restriction_status.is_some())
                 .unwrap_or(false);
 
-            if blocked {
-                let banner = db_students::get_student(pool, student_id)
+            if restricted {
+                let message = db_students::get_student(pool, student_id)
                     .await
                     .ok()
                     .flatten()
-                    .and_then(|s| s.token_block_banner)
+                    .and_then(|s| s.restriction_message)
                     .unwrap_or_else(|| {
-                        "Your token allowance has been reached. \
-                         Please contact your administrator to continue."
+                        "Your account has been restricted. \
+                         Please contact your administrator."
                             .to_string()
                     });
-                let frame = serde_json::json!({"type": "token_limit_reached", "banner": banner})
+                let frame = serde_json::json!({"type": "restriction", "message": message})
                     .to_string();
                 let _ = ctrl_tx.send(frame).await;
                 return;

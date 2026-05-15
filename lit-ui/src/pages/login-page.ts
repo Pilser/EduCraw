@@ -51,6 +51,13 @@ export class LoginPage extends LitElement {
         this.error = "Account not found. Create an account below.";
       } else if (msg.includes("401") || msg.includes("invalid")) {
         this.error = "Invalid username or password.";
+      } else if (msg.includes("403")) {
+        try {
+          const body = JSON.parse(msg.replace(/^\d+:\s*/, ""));
+          this.error = body.error || "Your account has been restricted.";
+        } catch {
+          this.error = "Your account has been restricted. Please contact your administrator.";
+        }
       } else {
         this.error = msg;
       }

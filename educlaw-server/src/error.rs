@@ -31,6 +31,9 @@ pub enum AppError {
     #[error("session error: {0}")]
     Session(String),
 
+    #[error("restricted: {0}")]
+    Restricted(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -46,6 +49,8 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden".to_string()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            AppError::Session(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AppError::Restricted(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::Db(e) => {
                 tracing::error!("db error: {e}");
                 (

@@ -54,8 +54,12 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/students", get(list_students).post(create_student))
         // Students - specific sub-routes (MUST come before generic /:id)
         .route(
-            "/admin/students/:id/token-limit",
-            put(set_token_limit).delete(clear_token_limit),
+            "/admin/students/:id/ban",
+            post(ban_student_handler),
+        )
+        .route(
+            "/admin/students/:id/unban",
+            post(unban_student_handler),
         )
         .route("/admin/students/:id/token-usage", get(student_token_usage))
         .route("/admin/students/:id/token-balance", get(get_token_balance))
@@ -174,8 +178,8 @@ struct StudentView {
     has_active_session: bool,
     token_limit: Option<i64>,
     token_balance: i64,
-    token_blocked_at: Option<String>,
-    token_block_banner: Option<String>,
+    restriction_status: Option<String>,
+    restriction_message: Option<String>,
 }
 
 async fn list_students(
@@ -213,8 +217,8 @@ async fn list_students(
             last_seen: s.last_seen,
             token_limit: s.token_limit,
             token_balance: s.token_balance,
-            token_blocked_at: s.token_blocked_at.clone(),
-            token_block_banner: s.token_block_banner.clone(),
+            restriction_status: s.restriction_status.clone(),
+            restriction_message: s.restriction_message.clone(),
         })
         .collect();
 
@@ -257,8 +261,8 @@ async fn create_student(
         last_seen: None,
         token_limit: None,
         token_balance: 0,
-        token_block_banner: None,
-        token_blocked_at: None,
+        restriction_message: None,
+        restriction_status: None,
         last_model: None,
     };
 
@@ -1080,44 +1084,39 @@ async fn provider_schema_handler(
     }))
 }
 
-// ── PUT /admin/students/:id/token-limit ──────────────────────────────────
+// ── POST /admin/students/:id/ban ────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct SetTokenLimitBody {
-    /// Total token budget (input + output summed). `null` = remove limit.
-    limit: Option<i64>,
-    /// Custom banner shown to the student when the limit is exceeded.
-    /// `null` = use the system default message.
-    banner: Option<String>,
+struct BanStudentBody {
+    /// Optional message shown to the student when they are restricted.
+    message: Option<String>,
 }
 
-async fn set_token_limit(
+async fn ban_student_handler(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
-    Json(body): Json<SetTokenLimitBody>,
+    Json(body): Json<BanStudentBody>,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
     students::get_student(&state.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
-    students::set_token_limit(&state.pool, &id, body.limit, body.banner.as_deref()).await?;
-    // Also clear any existing block so the new limit takes effect from zero.
-    students::clear_token_block(&state.pool, &id).await?;
-    tracing::info!(student_id = %id, limit = ?body.limit, "admin: token limit updated");
+    students::ban_student(&state.pool, &id, body.message.as_deref()).await?;
+    tracing::info!(student_id = %id, has_message = body.message.is_some(), "admin: student banned");
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── DELETE /admin/students/:id/token-limit ────────────────────────────────
-/// Clear the token block flag (unblock the student manually).
-async fn clear_token_limit(
+// ── POST /admin/students/:id/unban ────────────────────────────────────────
+
+async fn unban_student_handler(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    students::clear_token_block(&state.pool, &id).await?;
-    tracing::info!(student_id = %id, "admin: token block cleared");
+    students::unban_student(&state.pool, &id).await?;
+    tracing::info!(student_id = %id, "admin: student unbanned");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1176,8 +1175,8 @@ async fn student_token_usage(
         "student_id": id,
         "total_tokens_used": total,
         "token_limit": student.token_limit,
-        "token_blocked_at": student.token_blocked_at,
-        "token_block_banner": student.token_block_banner,
+        "restriction_status": student.restriction_status,
+        "restriction_message": student.restriction_message,
     })))
 }
 

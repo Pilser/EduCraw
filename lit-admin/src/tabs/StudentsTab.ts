@@ -3,7 +3,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { Edit3, Loader2, Plus, Save, Trash2, X, Coins, Settings, ShieldAlert, ShieldCheck } from "lucide";
+import { Ban, Edit3, Loader2, Plus, Save, Trash2, X, Coins, Settings, ShieldCheck } from "lucide";
 import { adminApi } from "../core/admin-api";
 import type { AdminStudent, Cohort, Model, TokenDeduction, StudentTokenUsage } from "../core/admin-types";
 
@@ -45,10 +45,9 @@ export class StudentsTab extends LitElement {
   @state() private modelPanelStudentId = "";
   @state() private assignedModels: string[] = [];
 
-  // Token limit
-  @state() private blockStudentId = "";
-  @state() private blockLimit = "";
-  @state() private blockBanner = "";
+  // Ban / Unban
+  @state() private banStudentId = "";
+  @state() private banMessage = "";
 
   protected createRenderRoot() {
     return this;
@@ -173,7 +172,7 @@ export class StudentsTab extends LitElement {
     }
     this.tokenPanelStudentId = id;
     this.modelPanelStudentId = "";
-    this.blockStudentId = "";
+    this.banStudentId = "";
     await Promise.all([
       this.loadTokenBalance(id),
       this.loadTokenDeductions(id),
@@ -244,7 +243,7 @@ export class StudentsTab extends LitElement {
     }
     this.modelPanelStudentId = id;
     this.tokenPanelStudentId = "";
-    this.blockStudentId = "";
+    this.banStudentId = "";
     try {
       const res = await adminApi.getStudentModels(this.token, id);
       this.assignedModels = res.models;
@@ -273,48 +272,46 @@ export class StudentsTab extends LitElement {
     }
   }
 
-  // ── Token limit ──────────────────────────────────
+  // ── Ban / Unban ────────────────────────────────
 
-  private startBlock(s: AdminStudent) {
-    this.blockStudentId = s.id;
-    this.blockLimit = s.token_limit != null ? String(s.token_limit) : "";
-    this.blockBanner = s.token_block_banner || "";
+  private startBan(s: AdminStudent) {
+    this.banStudentId = s.id;
+    this.banMessage = s.restriction_message || "";
     this.tokenPanelStudentId = "";
     this.modelPanelStudentId = "";
   }
 
-  private cancelBlock() {
-    this.blockStudentId = "";
+  private cancelBan() {
+    this.banStudentId = "";
   }
 
-  private async saveBlock() {
-    const limit = parseInt(this.blockLimit);
-    if (!limit || limit <= 0) return;
+  private async doBan() {
     this.loading = true;
     try {
-      await adminApi.setTokenLimit(this.token, this.blockStudentId, limit, this.blockBanner);
-      this.success = "Token limit set";
-      this.blockStudentId = "";
+      await adminApi.banStudent(this.token, this.banStudentId, this.banMessage || undefined);
+      this.success = "Student banned";
+      this.banStudentId = "";
       await this.loadStudents();
     } catch (err) {
-      this.error = err instanceof Error ? err.message : "Set limit failed";
+      this.error = err instanceof Error ? err.message : "Ban failed";
     } finally {
       this.loading = false;
     }
   }
 
-  private async clearBlock(studentId: string) {
+  private async doUnban(studentId: string) {
     this.loading = true;
     try {
-      await adminApi.clearTokenBlock(this.token, studentId);
-      this.success = "Token block cleared";
+      await adminApi.unbanStudent(this.token, studentId);
+      this.success = "Student unbanned";
       await this.loadStudents();
     } catch (err) {
-      this.error = err instanceof Error ? err.message : "Clear block failed";
+      this.error = err instanceof Error ? err.message : "Unban failed";
     } finally {
       this.loading = false;
     }
   }
+
 
   // ── Render ───────────────────────────────────────
 
@@ -403,7 +400,7 @@ export class StudentsTab extends LitElement {
                         <th class="py-2.5 px-3 font-medium">Name</th>
                         <th class="py-2.5 px-3 font-medium">Role</th>
                         <th class="py-2.5 px-3 font-medium">Cohort</th>
-                        <th class="py-2.5 px-3 font-medium">Token Budget</th>
+                        <th class="py-2.5 px-3 font-medium">Restriction</th>
                         <th class="py-2.5 px-3 font-medium">Status</th>
                         ${isAdmin ? html`<th class="py-2.5 px-3 font-medium">Actions</th>` : ""}
                       </tr>
@@ -437,11 +434,12 @@ export class StudentsTab extends LitElement {
                               : html`<code class="text-xs bg-muted px-1.5 py-0.5 rounded">${s.cohort_id || "—"}</code>`}
                           </td>
                           <td class="py-2 px-3">
-                            ${s.token_blocked_at
-                              ? html`<span class="text-xs text-destructive font-medium">Blocked</span>`
-                              : s.token_limit != null
-                                ? html`<span class="text-xs">Limit: ${s.token_limit.toLocaleString()} | Balance: ${s.token_balance.toLocaleString()}</span>`
-                                : html`<span class="text-xs">Bal: ${s.token_balance.toLocaleString()}</span>`}
+                            ${s.restriction_status
+                              ? html`<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                  ${icon(Ban, "xs")} Banned
+                                  ${s.restriction_message ? html`<span class="opacity-70 ml-1">— ${s.restriction_message.slice(0, 30)}</span>` : ""}
+                                </span>`
+                              : html`<span class="text-xs text-muted-foreground">Bal: ${s.token_balance.toLocaleString()}</span>`}
                           </td>
                           <td class="py-2 px-3">
                             <span class="inline-flex items-center gap-1.5 text-xs">
@@ -466,7 +464,9 @@ export class StudentsTab extends LitElement {
                                           ${Button({ variant: "ghost", size: "sm", children: html`${icon(Edit3, "xs")}`, onClick: () => this.startEdit(s) })}
                                           ${Button({ variant: "ghost", size: "sm", children: html`${icon(Coins, "xs")}`, onClick: () => this.toggleTokenPanel(s.id) })}
                                           ${Button({ variant: "ghost", size: "sm", children: html`${icon(Settings, "xs")}`, onClick: () => this.toggleModelPanel(s.id) })}
-                                          ${Button({ variant: "ghost", size: "sm", children: html`${icon(ShieldAlert, "xs")}`, onClick: () => this.startBlock(s) })}
+                                          ${s.restriction_status
+                                            ? Button({ variant: "ghost", size: "sm", children: html`${icon(ShieldCheck, "xs")}`, onClick: () => this.doUnban(s.id), title: "Unban" })
+                                            : Button({ variant: "ghost", size: "sm", children: html`${icon(Ban, "xs")}`, onClick: () => this.startBan(s), title: "Ban" })}
                                           ${Button({ variant: "ghost", size: "sm", children: html`${icon(Trash2, "xs")}`, onClick: () => this.deleteStudent(s.id) })}
                                         `}
                                   </div>
@@ -514,9 +514,9 @@ export class StudentsTab extends LitElement {
                                                 <tbody>
                                                   ${this.tokenDeductions.map((d) => html`
                                                     <tr class="border-t border-border">
-                                                      <td class="py-1 text-destructive">-${d.amount.toLocaleString()}</td>
-                                                      <td class="py-1">${d.reason}</td>
-                                                      <td class="py-1 text-muted-foreground">${new Date(d.created_at).toLocaleString()}</td>
+                                                      <td class="py-1 text-destructive">-${d.tokens_deducted.toLocaleString()}</td>
+                                                      <td class="py-1">${d.model_name}</td>
+                                                      <td class="py-1 text-muted-foreground">${new Date(d.recorded_at).toLocaleString()}</td>
                                                     </tr>
                                                   `)}
                                                 </tbody>
@@ -569,29 +569,28 @@ export class StudentsTab extends LitElement {
                             `
                           : ""}
 
-                        <!-- Token limit block panel -->
-                        ${this.blockStudentId === s.id
+                        <!-- Ban / Unban panel -->
+                        ${this.banStudentId === s.id
                           ? html`
                               <tr class="bg-muted/10">
                                 <td colspan="7" class="p-4">
                                   <div class="space-y-3 max-w-md">
-                                    <h4 class="text-sm font-semibold text-foreground flex items-center gap-1">${icon(ShieldAlert, "xs")} Token Limit</h4>
+                                    <h4 class="text-sm font-semibold text-foreground flex items-center gap-1">${icon(Ban, "xs")} ${s.restriction_status ? "Edit Ban" : "Ban Student"}</h4>
                                     <div>
-                                      <label class="block text-xs text-muted-foreground mb-1">Token Limit</label>
-                                      ${Input({ type: "number", value: this.blockLimit, placeholder: "e.g. 10000", className: "w-full",
-                                        onChange: (e: Event) => { this.blockLimit = (e.target as HTMLInputElement).value; } })}
-                                    </div>
-                                    <div>
-                                      <label class="block text-xs text-muted-foreground mb-1">Block Banner</label>
-                                      ${Input({ type: "text", value: this.blockBanner, placeholder: "Message shown to student", className: "w-full",
-                                        onChange: (e: Event) => { this.blockBanner = (e.target as HTMLInputElement).value; } })}
+                                      <label class="block text-xs text-muted-foreground mb-1">Message (shown to student)</label>
+                                      ${Input({ type: "text", value: this.banMessage, placeholder: "Reason or message shown to student", className: "w-full",
+                                        onChange: (e: Event) => { this.banMessage = (e.target as HTMLInputElement).value; } })}
                                     </div>
                                     <div class="flex gap-2">
-                                      ${Button({ variant: "default", size: "sm", children: "Set Limit", onClick: () => this.saveBlock(), disabled: this.loading })}
-                                      ${s.token_blocked_at
-                                        ? Button({ variant: "destructive", size: "sm", children: "Clear Block", onClick: () => this.clearBlock(s.id) })
-                                        : ""}
-                                      ${Button({ variant: "ghost", size: "sm", children: "Cancel", onClick: () => this.cancelBlock() })}
+                                      ${s.restriction_status
+                                        ? html`
+                                            ${Button({ variant: "destructive", size: "sm", children: "Unban", onClick: () => this.doUnban(s.id), disabled: this.loading })}
+                                            ${Button({ variant: "default", size: "sm", children: "Update Message", onClick: () => this.doBan(), disabled: this.loading })}
+                                          `
+                                        : html`
+                                            ${Button({ variant: "destructive", size: "sm", children: "Ban", onClick: () => this.doBan(), disabled: this.loading })}
+                                          `}
+                                      ${Button({ variant: "ghost", size: "sm", children: "Cancel", onClick: () => this.cancelBan() })}
                                     </div>
                                   </div>
                                 </td>

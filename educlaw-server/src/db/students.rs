@@ -24,14 +24,14 @@ pub struct Student {
     pub home_dir: Option<String>,
     /// Host uid mapping while a session is active; NULL when idle.
     pub uid_slot: Option<i64>,
-    /// Total token budget. NULL = unlimited.
+    /// Total token budget. NULL = unlimited (deprecated, use token_balance instead).
     pub token_limit: Option<i64>,
     /// Current token balance (can be negative until topped up).
     pub token_balance: i64,
-    /// Banner shown to the student when limit is reached. NULL = default message.
-    pub token_block_banner: Option<String>,
-    /// Timestamp when the student was first blocked; NULL = not blocked.
-    pub token_blocked_at: Option<String>,
+    /// Restriction status: NULL = not restricted, else timestamp when banned.
+    pub restriction_status: Option<String>,
+    /// Message shown to the student when they are restricted.
+    pub restriction_message: Option<String>,
     /// Last model used by the student (persisted across sessions).
     pub last_model: Option<String>,
     pub created_at: String,
@@ -134,41 +134,25 @@ pub async fn list_students(pool: &SqlitePool) -> Result<Vec<Student>, sqlx::Erro
         .await
 }
 
-/// Set the token budget and optional custom block banner for a student.
-/// Pass `None` to remove the limit (unlimited).
-pub async fn set_token_limit(
+/// Ban a student: set restriction_status to now() and optionally store a message.
+pub async fn ban_student(
     pool: &SqlitePool,
     id: &str,
-    limit: Option<i64>,
-    banner: Option<&str>,
+    message: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE students SET token_limit = ?, token_block_banner = ? WHERE id = ?",
+        "UPDATE students SET restriction_status = datetime('now'), restriction_message = ? WHERE id = ?",
     )
-    .bind(limit)
-    .bind(banner)
+    .bind(message)
     .bind(id)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-/// Stamp `token_blocked_at = now()` when a student first exceeds their limit.
-/// Does nothing if they are already blocked.
-pub async fn mark_token_blocked(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE students SET token_blocked_at = datetime('now')
-         WHERE id = ? AND token_blocked_at IS NULL",
-    )
-    .bind(id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Clear the block so a student can chat again (admin resets it).
-pub async fn clear_token_block(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE students SET token_blocked_at = NULL WHERE id = ?")
+/// Unban a student: clear restriction_status and restriction_message.
+pub async fn unban_student(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE students SET restriction_status = NULL, restriction_message = NULL WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;

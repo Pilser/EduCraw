@@ -89,8 +89,8 @@ async fn create_student(
         last_seen: None,
         token_limit: None,
         token_balance: 0,
-        token_block_banner: None,
-        token_blocked_at: None,
+        restriction_message: None,
+        restriction_status: None,
         last_model: None,
     };
 

@@ -110,10 +110,11 @@ export const adminApi = {
     token: string,
     studentId: string,
   ): Promise<{ balance: number }> {
-    return request<{ balance: number }>(
+    const res = await request<{ token_balance: number }>(
       `/admin/students/${studentId}/token-balance`,
       { headers: authHeader(token) },
     );
+    return { balance: res.token_balance };
   },
 
   async topupTokens(
@@ -150,31 +151,31 @@ export const adminApi = {
     token: string,
     studentId: string,
   ): Promise<TokenDeduction[]> {
-    return request<TokenDeduction[]>(
+    const res = await request<{ deductions: TokenDeduction[] }>(
       `/admin/students/${studentId}/token-deductions`,
       { headers: authHeader(token) },
     );
+    return res.deductions;
   },
 
-  async setTokenLimit(
+  async banStudent(
     token: string,
     studentId: string,
-    token_limit: number,
-    banner: string,
+    message?: string,
   ): Promise<void> {
-    return requestNoContent(`/admin/students/${studentId}/token-limit`, {
-      method: "PUT",
+    return requestNoContent(`/admin/students/${studentId}/ban`, {
+      method: "POST",
       headers: authHeader(token),
-      body: JSON.stringify({ token_limit, banner }),
+      body: JSON.stringify({ message: message || null }),
     });
   },
 
-  async clearTokenBlock(
+  async unbanStudent(
     token: string,
     studentId: string,
   ): Promise<void> {
-    return requestNoContent(`/admin/students/${studentId}/token-limit`, {
-      method: "DELETE",
+    return requestNoContent(`/admin/students/${studentId}/unban`, {
+      method: "POST",
       headers: authHeader(token),
     });
   },

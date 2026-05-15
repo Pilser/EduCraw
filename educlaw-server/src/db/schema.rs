@@ -80,10 +80,10 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             cohort_id        TEXT NOT NULL DEFAULT '',
             home_dir         TEXT,
             uid_slot         INTEGER,
-            token_limit      INTEGER,
-            token_balance    INTEGER NOT NULL DEFAULT 0,
-            token_block_banner TEXT,
-            token_blocked_at TEXT,
+            token_limit          INTEGER,
+            token_balance        INTEGER NOT NULL DEFAULT 0,
+            restriction_message  TEXT,
+            restriction_status   TEXT,
             created_at       TEXT NOT NULL DEFAULT (datetime('now')),
             last_seen        TEXT
         )",
@@ -97,6 +97,8 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         "ALTER TABLE students ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE students ADD COLUMN token_block_banner TEXT",
         "ALTER TABLE students ADD COLUMN token_blocked_at TEXT",
+        "ALTER TABLE students ADD COLUMN restriction_status TEXT",
+        "ALTER TABLE students ADD COLUMN restriction_message TEXT",
         "ALTER TABLE students ADD COLUMN last_model TEXT",
         "ALTER TABLE students ADD COLUMN home_dir TEXT",
         "ALTER TABLE models ADD COLUMN multiplier REAL NOT NULL DEFAULT 1.0",
@@ -112,6 +114,18 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     // Migrate existing students: set home_dir = username for those without one
     let _ = sqlx::query(
         "UPDATE students SET home_dir = username WHERE home_dir IS NULL",
+    )
+    .execute(pool)
+    .await;
+
+    // Migrate token_blocked_at/banner → restriction_status/message
+    let _ = sqlx::query(
+        "UPDATE students SET restriction_status = token_blocked_at WHERE restriction_status IS NULL AND token_blocked_at IS NOT NULL",
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE students SET restriction_message = token_block_banner WHERE restriction_message IS NULL AND token_block_banner IS NOT NULL",
     )
     .execute(pool)
     .await;

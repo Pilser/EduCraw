@@ -77,7 +77,6 @@ pub async fn session_totals(
 }
 
 /// Sum ALL token usage across every session belonging to a student.
-/// Used to check against the admin-configured token_limit.
 pub async fn student_total_tokens(
     pool: &SqlitePool,
     student_id: &str,
