@@ -10,7 +10,7 @@ import type { EduModel } from "./edu-types";
  */
 export function eduModelToPiModel(eduModel: EduModel): Model<any> {
   return {
-    id: eduModel.id,
+    id: eduModel.name,
     name: eduModel.display_name || eduModel.name,
     api: "unknown", // Server handles this
     provider: eduModel.provider || "unknown",
