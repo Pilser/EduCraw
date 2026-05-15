@@ -21,8 +21,11 @@ goose-workspace/crates/goose-test-support/src/test_assets/test_image.png
 goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/FinancialSample.xlsx
 goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/test_image.pdf
 goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/sample.docx
+
 goose-workspace/crates/goose-mcp/src/computercontroller/tests/data/test.pdf
+session-c4c7e8ad-4c90-4627-8da9-1ff2bf5dfd33.json
 goose-workspace/goose
+
 
 open-design/
 bin

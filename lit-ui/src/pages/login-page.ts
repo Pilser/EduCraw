@@ -2,6 +2,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
+import "../components/MatrixToggle.js";
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { AlertCircle, GraduationCap, LogIn, User, UserPlus } from "lucide";
@@ -123,7 +124,8 @@ export class LoginPage extends LitElement {
       <div
         class="min-h-screen bg-background flex items-center justify-center p-6"
       >
-        <div class="fixed top-4 right-4 z-50">
+        <div class="fixed top-4 right-4 z-50 flex items-center gap-1">
+          <matrix-toggle></matrix-toggle>
           <theme-toggle></theme-toggle>
         </div>
 
@@ -244,7 +246,8 @@ export class LoginPage extends LitElement {
       <div
         class="min-h-screen bg-background flex items-center justify-center p-6"
       >
-        <div class="fixed top-4 right-4 z-50">
+        <div class="fixed top-4 right-4 z-50 flex items-center gap-1">
+          <matrix-toggle></matrix-toggle>
           <theme-toggle></theme-toggle>
         </div>
 

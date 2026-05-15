@@ -71,3 +71,45 @@ body {
     backdrop-filter: blur(10px);
     max-width: 100%;
 }
+
+/* ── Matrix Theme ───────────────────────────────────────────────── */
+
+.matrix {
+  --background: #0a0a0a;
+  --foreground: #00ff41;
+  --card: #0c0c0c;
+  --card-foreground: #00ff41;
+  --popover: #0c0c0c;
+  --popover-foreground: #00ff41;
+  --primary: #00ff41;
+  --primary-foreground: #0a0a0a;
+  --secondary: #111;
+  --secondary-foreground: #00ff41;
+  --muted: #111;
+  --muted-foreground: #00992a;
+  --accent: #111;
+  --accent-foreground: #00ff41;
+  --destructive: #ff4444;
+  --destructive-foreground: #ffffff;
+  --border: #1a3a1a;
+  --input: #1a2a1a;
+  --ring: #00ff41;
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #00ff41;
+  --sidebar-primary: #00ff41;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #111;
+  --sidebar-accent-foreground: #00ff41;
+  --sidebar-border: #1a3a1a;
+  --sidebar-ring: #00ff41;
+}
+
+/* Exclude inputs and user chat from matrix green */
+.matrix input:not([type="submit"]):not([type="button"]),
+.matrix textarea,
+.matrix [contenteditable],
+.matrix .user-message-container,
+.matrix .user-message-container *,
+.matrix assistant-message markdown-block {
+  color: #e0e0e0;
+}

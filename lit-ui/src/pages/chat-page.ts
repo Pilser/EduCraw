@@ -23,6 +23,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { Menu, Plus } from "lucide";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
+import "../components/MatrixToggle.js";
 import { MenuDialog } from "../dialogs/MenuDialog.js";
 import { FilesTab } from "../dialogs/FilesTab.js";
 import { SessionsTab } from "../dialogs/SessionsTab.js";
@@ -810,6 +811,7 @@ export class ChatPage extends LitElement {
             }
           </div>
           <div class="flex items-center gap-1 px-2">
+            <matrix-toggle></matrix-toggle>
             <theme-toggle></theme-toggle>
           </div>
         </div>
