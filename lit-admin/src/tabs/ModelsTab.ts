@@ -96,7 +96,7 @@ export class ModelsTab extends LitElement {
   // ── Enable / Disable ───────────────────────────────
 
   private async toggleEnabled(model: Model) {
-    const newVal = model.enabled === 1 ? 0 : 1;
+    const newVal = model.enabled !== 1;
     this.loading = true;
     try {
       await adminApi.setModelEnabled(this.token, model.id, newVal);

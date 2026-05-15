@@ -360,7 +360,7 @@ export const adminApi = {
   async setModelEnabled(
     token: string,
     id: string,
-    enabled: number,
+    enabled: boolean,
   ): Promise<void> {
     return requestNoContent(`/admin/models/${id}`, {
       method: "PUT",
