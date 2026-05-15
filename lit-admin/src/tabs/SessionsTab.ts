@@ -55,7 +55,10 @@ export class SessionsTab extends LitElement {
     return html`
       <div class="space-y-4">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-foreground">Live Sessions</h2>
+          <h2 class="text-lg font-semibold text-foreground">
+            Live Sessions
+            <span class="text-sm text-muted-foreground font-normal ml-2">${this.sessions.length} active</span>
+          </h2>
           ${Button({
             variant: "ghost",
             size: "sm",

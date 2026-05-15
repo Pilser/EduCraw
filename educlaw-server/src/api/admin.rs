@@ -356,6 +356,7 @@ async fn list_sessions(
     let now = now_secs();
     let views: Vec<SessionView> = db_sessions
         .into_iter()
+        .filter(|s| live.contains_key(&s.id))
         .map(|s| {
             let idle_secs = live.get(&s.id).map(|&last| now.saturating_sub(last));
             SessionView {

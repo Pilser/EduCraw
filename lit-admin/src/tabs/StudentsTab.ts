@@ -320,7 +320,12 @@ export class StudentsTab extends LitElement {
     return html`
       <div class="space-y-4">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-foreground">Students</h2>
+          <h2 class="text-lg font-semibold text-foreground">
+            Students
+            <span class="text-sm text-muted-foreground font-normal ml-2">
+              ${this.students.filter(s => s.has_active_session).length} online / ${this.students.length} total
+            </span>
+          </h2>
           <div class="flex gap-2">
             ${Button({ variant: "ghost", size: "sm", children: "Refresh", onClick: () => this.loadStudents() })}
             ${isAdmin

@@ -242,5 +242,11 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     .await?;
 
     tracing::info!("database schema initialised");
+
+    // On restart, mark any leftover "active" sessions as ended (no broker entries survive restart).
+    let _ = sqlx::query("UPDATE sessions SET state = 'ended', ended_at = datetime('now') WHERE state = 'active'")
+        .execute(pool)
+        .await;
+
     Ok(())
 }
