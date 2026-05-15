@@ -146,6 +146,21 @@ export class AccountTab extends MenuTab {
     }
 
     // Redeem code helpers
+    private handleCodePaste(e: ClipboardEvent) {
+        e.preventDefault();
+        const pasted = e.clipboardData?.getData("text") || "";
+        let clean = pasted.replace(/^EDU[-]?/i, "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+        clean = clean.slice(0, 12);
+        const inputs = [
+            this.querySelector("#code-s1") as HTMLInputElement,
+            this.querySelector("#code-s2") as HTMLInputElement,
+            this.querySelector("#code-s3") as HTMLInputElement,
+        ];
+        for (let i = 0; i < 3; i++) {
+            if (inputs[i]) inputs[i].value = clean.slice(i * 4, i * 4 + 4);
+        }
+        this.requestUpdate();
+    }
     private handleCodeKeydown(e: KeyboardEvent) {
         if (e.ctrlKey || e.metaKey || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab' || e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Enter') return;
         if (!/^[A-Za-z0-9]$/.test(e.key)) e.preventDefault();
@@ -229,11 +244,11 @@ export class AccountTab extends MenuTab {
                         <div class="flex items-center gap-1 justify-center">
                             <span class="font-mono text-sm font-semibold bg-muted px-3 py-2 rounded-md border border-border text-foreground">EDU</span>
                             <span class="text-muted-foreground font-mono">-</span>
-                            <input id="code-s1" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @input=${(e: Event) => this.handleCodeSegment(e, "code-s2")} @keydown=${(e: KeyboardEvent) => this.handleCodeKeydown(e)} />
+                            <input id="code-s1" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @paste=${(e: ClipboardEvent) => this.handleCodePaste(e)} @input=${(e: Event) => this.handleCodeSegment(e, "code-s2")} @keydown=${(e: KeyboardEvent) => this.handleCodeKeydown(e)} />
                             <span class="text-muted-foreground font-mono">-</span>
-                            <input id="code-s2" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @input=${(e: Event) => this.handleCodeSegment(e, "code-s3")} @keydown=${(e: KeyboardEvent) => this.handleCodeKeydown(e)} />
+                            <input id="code-s2" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @paste=${(e: ClipboardEvent) => this.handleCodePaste(e)} @input=${(e: Event) => this.handleCodeSegment(e, "code-s3")} @keydown=${(e: KeyboardEvent) => this.handleCodeKeydown(e)} />
                             <span class="text-muted-foreground font-mono">-</span>
-                            <input id="code-s3" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @input=${(e: Event) => this.handleCodeSegment(e, null)} @keydown=${(e: KeyboardEvent) => { this.handleCodeKeydown(e); if (e.key === "Enter") this.doRedeemCode(); }} />
+                            <input id="code-s3" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @paste=${(e: ClipboardEvent) => this.handleCodePaste(e)} @input=${(e: Event) => this.handleCodeSegment(e, null)} @keydown=${(e: KeyboardEvent) => { this.handleCodeKeydown(e); if (e.key === "Enter") this.doRedeemCode(); }} />
                         </div>
                         ${Button({
                             variant: "default",
