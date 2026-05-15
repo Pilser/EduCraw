@@ -156,65 +156,22 @@ pub async fn get_model_multiplier(pool: &SqlitePool, name: &str) -> Result<f64, 
 // ── Per-student model assignments ─────────────────────────────────────────
 
 /// Returns the model names this student is allowed to use.
-/// Falls back to all enabled models (with default first) if no specific
-/// assignment has been made.
+/// All enabled models are available to every student.
 pub async fn models_for_student(
     pool: &SqlitePool,
-    student_id: &str,
+    _student_id: &str,
 ) -> Result<Vec<String>, sqlx::Error> {
-    // Check if any specific assignment exists.
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM student_models WHERE student_id = ?")
-        .bind(student_id)
-        .fetch_one(pool)
-        .await?;
-
-    if count == 0 {
-        // No assignment → return all enabled models, default first.
-        let all = list_enabled(pool).await?;
-        return Ok(all.into_iter().map(|m| m.name).collect());
-    }
-
-    // Return only the explicitly assigned models that are still enabled, default first.
-    sqlx::query_scalar::<_, String>(
-        "SELECT sm.model_name FROM student_models sm
-         JOIN models m ON m.name = sm.model_name AND m.enabled = 1
-         WHERE sm.student_id = ?
-         ORDER BY CASE WHEN sm.model_name = 'grok-4-1-fast-reasoning' THEN 0 ELSE 1 END,
-                  sm.model_name",
-    )
-    .bind(student_id)
-    .fetch_all(pool)
-    .await
+    let all = list_enabled(pool).await?;
+    Ok(all.into_iter().map(|m| m.name).collect())
 }
 
 /// Returns the full Model objects this student is allowed to use (with specs).
-/// Falls back to all enabled models if no specific assignment.
+/// All enabled models are available to every student.
 pub async fn full_models_for_student(
     pool: &SqlitePool,
-    student_id: &str,
+    _student_id: &str,
 ) -> Result<Vec<Model>, sqlx::Error> {
-    // Check if any specific assignment exists.
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM student_models WHERE student_id = ?")
-        .bind(student_id)
-        .fetch_one(pool)
-        .await?;
-
-    if count == 0 {
-        // No assignment → return all enabled models.
-        return list_enabled(pool).await;
-    }
-
-    // Return only the explicitly assigned models that are still enabled.
-    sqlx::query_as::<_, Model>(
-        "SELECT m.* FROM student_models sm
-         JOIN models m ON m.name = sm.model_name AND m.enabled = 1
-         WHERE sm.student_id = ?
-         ORDER BY CASE WHEN sm.model_name = 'grok-4-1-fast-reasoning' THEN 0 ELSE 1 END,
-                  sm.model_name",
-    )
-    .bind(student_id)
-    .fetch_all(pool)
-    .await
+    list_enabled(pool).await
 }
 
 /// Returns ONLY what is explicitly stored in student_models (no fallback),
