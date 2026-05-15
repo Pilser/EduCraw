@@ -121,3 +121,12 @@ export interface ConfigParamDef {
   max?: number;
   description?: string;
 }
+
+export interface TokenCode {
+  id: string;
+  code: string;
+  tokens: number;
+  used_by: string | null;
+  used_at: string | null;
+  created_at: string;
+}

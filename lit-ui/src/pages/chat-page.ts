@@ -40,6 +40,7 @@ export class ChatPage extends LitElement {
   @state() private currentTitle = "";
   @state() private isEditingTitle = false;
   @state() private showLanding = true;
+  @state() private tokenBalance = 0;
 
   private agent?: Agent;
   private chatPanel?: ChatPanel;
@@ -88,6 +89,7 @@ export class ChatPage extends LitElement {
     try {
       await this.initChat();
       this._ready = true;
+      this.loadBalance();
       // Wait for re-render so .chat-container exists in DOM, then append
       await this.updateComplete;
       this.appendChatPanel();
@@ -654,7 +656,7 @@ export class ChatPage extends LitElement {
       SessionManager.saveAuth(updatedAuth);
     };
 
-    MenuDialog.open([filesTab, sessionsTab, accountTab]);
+    MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 0, this.tokenBalance);
   }
 
   private openMenuWithAccount() {
@@ -681,7 +683,16 @@ export class ChatPage extends LitElement {
       SessionManager.saveAuth(updatedAuth);
     };
 
-    MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 2);
+    MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 2, this.tokenBalance);
+  }
+
+  private async loadBalance() {
+    try {
+      const profile = await eduApi.getMe(this.auth.token);
+      this.tokenBalance = profile.token_balance;
+    } catch {
+      // non-fatal
+    }
   }
 
   private async newSession() {

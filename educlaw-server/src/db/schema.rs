@@ -232,6 +232,33 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    // ── token_codes ───────────────────────────────────────────────────────────
+    // Redeemable codes that grant tokens to a student.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS token_codes (
+            id         TEXT PRIMARY KEY,
+            code       TEXT NOT NULL UNIQUE,
+            tokens     INTEGER NOT NULL,
+            used_by    TEXT,
+            used_at    TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_token_codes_tokens ON token_codes(tokens)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_token_codes_used ON token_codes(used_by)",
+    )
+    .execute(pool)
+    .await?;
+
     // ── seed default model ────────────────────────────────────────────────────
     // Ensure grok-4-1-fast-reasoning is always present and is the first/default.
     sqlx::query(

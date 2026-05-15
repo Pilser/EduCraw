@@ -17,6 +17,7 @@ export abstract class MenuTab extends LitElement {
 @customElement("menu-dialog")
 export class MenuDialog extends LitElement {
 	@property({ type: Array, attribute: false }) tabs: MenuTab[] = [];
+	@property({ type: Number }) balance = 0;
 	@state() private isOpen = false;
 	@state() private activeTabIndex = 0;
 
@@ -26,12 +27,13 @@ export class MenuDialog extends LitElement {
 
 	private onCloseCallback?: () => void;
 
-	static async open(tabs: MenuTab[], onClose?: () => void, defaultTabIndex: number = 0) {
+	static async open(tabs: MenuTab[], onClose?: () => void, defaultTabIndex: number = 0, balance: number = 0) {
 		console.log("[MenuDialog] Opening with tabs:", tabs.length, "defaultTabIndex:", defaultTabIndex);
 		const dialog = new MenuDialog();
 		dialog.tabs = tabs;
 		dialog.onCloseCallback = onClose;
 		dialog.activeTabIndex = defaultTabIndex;
+		dialog.balance = balance;
 		dialog.isOpen = true;
 		
 		// Give each tab a way to close the dialog
@@ -102,7 +104,12 @@ export class MenuDialog extends LitElement {
 					children: html`
 						<div class="flex flex-col h-full overflow-hidden">
 							<!-- Header -->
-							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: "Menu" })}</div>
+							<div class="pb-4 flex-shrink-0 flex items-center justify-between">
+								${DialogHeader({ title: "Menu" })}
+								<span class="text-sm text-muted-foreground">
+									Balance: <span class="text-amber-500 font-semibold">${this.balance.toLocaleString()}</span> tokens
+								</span>
+							</div>
 
 							<!-- Mobile Tabs -->
 							<div class="md:hidden flex flex-shrink-0 pb-4 overflow-x-auto">

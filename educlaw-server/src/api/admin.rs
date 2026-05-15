@@ -38,7 +38,7 @@ use uuid::Uuid;
 use crate::auth::{bearer_token, hash_password, Claims};
 use crate::db::{
     assignments as db_assign, cohorts as db_cohorts, models as db_models, sessions as db_sess,
-    students, subjects as db_subjects, token_usage as db_tokens,
+    students, subjects as db_subjects, token_codes, token_usage as db_tokens,
 };
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
@@ -117,6 +117,19 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/admin/provider-schema/:provider",
             get(provider_schema_handler),
+        )
+        // Token codes
+        .route(
+            "/admin/token-codes/export",
+            get(export_token_codes),
+        )
+        .route(
+            "/admin/token-codes",
+            get(list_token_codes).post(generate_token_codes),
+        )
+        .route(
+            "/admin/token-codes/:id",
+            delete(delete_token_code_handler),
         )
 }
 
@@ -1380,4 +1393,84 @@ async fn get_token_deductions(
         "deductions": rows,
         "count": rows.len(),
     })))
+}
+
+// ── POST /admin/token-codes ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GenerateTokenCodesBody {
+    tokens: i64,
+    count: i64,
+}
+
+async fn generate_token_codes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<GenerateTokenCodesBody>,
+) -> Result<impl IntoResponse> {
+    require_admin(&state, &headers)?;
+    if body.tokens <= 0 {
+        return Err(AppError::BadRequest("tokens must be positive".into()));
+    }
+    if body.count <= 0 || body.count > 500 {
+        return Err(AppError::BadRequest("count must be 1-500".into()));
+    }
+    let codes = token_codes::generate_codes(&state.pool, body.tokens, body.count).await?;
+    tracing::info!(tokens = body.tokens, count = body.count, "admin: generated token codes");
+    Ok(Json(serde_json::json!({ "codes": codes })))
+}
+
+// ── GET /admin/token-codes ──────────────────────────────────────────────
+
+async fn list_token_codes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse> {
+    require_staff(&state, &headers)?;
+    let tokens = params.get("tokens").and_then(|v| v.parse::<i64>().ok());
+    let used = params.get("used").and_then(|v| match v.as_str() {
+        "true" | "1" => Some(true),
+        "false" | "0" => Some(false),
+        _ => None,
+    });
+    let codes = token_codes::list_codes(&state.pool, tokens, used).await?;
+    Ok(Json(codes))
+}
+
+// ── DELETE /admin/token-codes/:id ───────────────────────────────────────
+
+async fn delete_token_code_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    require_admin(&state, &headers)?;
+    token_codes::delete_code(&state.pool, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── GET /admin/token-codes/export?tokens= ───────────────────────────────
+
+async fn export_token_codes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse> {
+    require_staff(&state, &headers)?;
+    let tokens = params
+        .get("tokens")
+        .and_then(|v| v.parse::<i64>().ok())
+        .ok_or_else(|| AppError::BadRequest("tokens query param required".into()))?;
+    let codes = token_codes::export_codes(&state.pool, tokens).await?;
+    let output = codes
+        .into_iter()
+        .map(|c| format!("{},{},{},{}", c.code, c.tokens, c.used_by.as_deref().unwrap_or("unused"), c.used_at.as_deref().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok((
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8")],
+        format!("code,tokens,used_by,used_at\n{output}"),
+    ))
 }

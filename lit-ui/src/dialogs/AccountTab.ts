@@ -4,7 +4,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
-import type { Cohort, LoginResponse, MeResponse, TokenUsage } from "../core/edu-types.js";
+import type { Cohort, LoginResponse, MeResponse } from "../core/edu-types.js";
 
 @customElement("account-tab")
 export class AccountTab extends MenuTab {
@@ -15,7 +15,6 @@ export class AccountTab extends MenuTab {
     @property({ type: Function }) onLogout?: () => void;
     @property({ type: Function, attribute: false }) onProfileUpdate?: (auth: LoginResponse) => void;
 
-    @state() private tokenUsage?: TokenUsage;
     @state() private profile?: MeResponse;
     @state() private loading = false;
     @state() private error = "";
@@ -30,31 +29,21 @@ export class AccountTab extends MenuTab {
     @state() private editNewPassword = "";
     @state() private editConfirmPassword = "";
 
+    // Redeem code
+    @state() private redeemLoading = false;
+    @state() private redeemError = "";
+    @state() private redeemSuccess = "";
+
     async updated(changedProperties: Map<string, any>) {
         super.updated(changedProperties);
 
         if (!this.initialized && this.sessionId && this.sessionToken && this.studentToken) {
             console.log("[AccountTab] Loading account data");
             this.initialized = true;
-            await Promise.all([this.loadTokenUsage(), this.loadProfile()]);
+            await Promise.all([this.loadProfile()]);
         }
     }
 
-    private async loadTokenUsage() {
-        if (!this.sessionId || !this.sessionToken) return;
-        this.loading = true;
-        try {
-            this.tokenUsage = await eduApi.getSessionTokenUsage(
-                this.sessionId,
-                this.sessionToken
-            );
-        } catch (err) {
-            console.error("[AccountTab] Failed to load token usage:", err);
-        } finally {
-            this.loading = false;
-            this.requestUpdate();
-        }
-    }
 
     private async loadProfile() {
         if (!this.studentToken) return;
@@ -156,6 +145,56 @@ export class AccountTab extends MenuTab {
         }
     }
 
+    // Redeem code helpers
+    private handleCodeKeydown(e: KeyboardEvent) {
+        if (e.ctrlKey || e.metaKey || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab' || e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Enter') return;
+        if (!/^[A-Za-z0-9]$/.test(e.key)) e.preventDefault();
+    }
+    private handleCodeSegment(e: Event, nextId: string | null) {
+        const input = e.target as HTMLInputElement;
+        input.value = input.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4);
+        if (input.value.length === 4 && nextId) {
+            (this.querySelector('#' + nextId) as HTMLInputElement)?.focus();
+        }
+        this.requestUpdate();
+    }
+    private buildRedeemCode(): string {
+        const s1 = (this.querySelector('#code-s1') as HTMLInputElement)?.value || '';
+        const s2 = (this.querySelector('#code-s2') as HTMLInputElement)?.value || '';
+        const s3 = (this.querySelector('#code-s3') as HTMLInputElement)?.value || '';
+        return 'EDU-' + s1 + '-' + s2 + '-' + s3;
+    }
+    private clearRedeemInputs() {
+        ['code-s1', 'code-s2', 'code-s3'].forEach(id => {
+            const el = this.querySelector('#' + id) as HTMLInputElement;
+            if (el) el.value = '';
+        });
+    }
+    private async doRedeemCode() {
+        const code = this.buildRedeemCode();
+        if (code.length < 18 || !this.studentToken) return;
+        this.redeemError = '';
+        this.redeemSuccess = '';
+        this.redeemLoading = true;
+        try {
+            const res = await fetch('/me/redeem-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.studentToken },
+                body: JSON.stringify({ code }),
+            });
+            const data = await res.json().catch(() => ({ error: 'Invalid code' }));
+            if (!res.ok) throw new Error(data.error || 'Redeem failed');
+            this.redeemSuccess = '+' + data.tokens_added.toLocaleString() + ' tokens! Balance: ' + data.new_balance.toLocaleString();
+            this.clearRedeemInputs();
+            await this.loadProfile();
+        } catch (err) {
+            this.redeemError = err instanceof Error ? err.message : 'Redeem failed';
+        } finally {
+            this.redeemLoading = false;
+            this.requestUpdate();
+        }
+    }
+
     private handleLogout() {
         if (this.onLogout) {
             this.onLogout();
@@ -175,6 +214,43 @@ export class AccountTab extends MenuTab {
                 ${this.success
                     ? html`<div class="text-sm text-green-600 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-3 py-2">${this.success}</div>`
                     : ""}
+
+                <!-- Token Balance & Redeem -->
+                <div class="space-y-4 text-center">
+                    ${this.profile
+                        ? html`
+                            <div>
+                                <span class="text-sm text-muted-foreground">Available Balance</span>
+                                <div class="text-3xl font-bold text-amber-500">${this.profile.token_balance.toLocaleString()}</div>
+                            </div>
+                        `
+                        : ""}
+                    <div class="space-y-3">
+                        <div class="flex items-center gap-1 justify-center">
+                            <span class="font-mono text-sm font-semibold bg-muted px-3 py-2 rounded-md border border-border text-foreground">EDU</span>
+                            <span class="text-muted-foreground font-mono">-</span>
+                            <input id="code-s1" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @input=${(e: Event) => this.handleCodeSegment(e, "code-s2")} @keydown=${(e: KeyboardEvent) => this.handleCodeKeydown(e)} />
+                            <span class="text-muted-foreground font-mono">-</span>
+                            <input id="code-s2" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @input=${(e: Event) => this.handleCodeSegment(e, "code-s3")} @keydown=${(e: KeyboardEvent) => this.handleCodeKeydown(e)} />
+                            <span class="text-muted-foreground font-mono">-</span>
+                            <input id="code-s3" type="text" class="w-16 font-mono uppercase text-center rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary" maxlength="4" @input=${(e: Event) => this.handleCodeSegment(e, null)} @keydown=${(e: KeyboardEvent) => { this.handleCodeKeydown(e); if (e.key === "Enter") this.doRedeemCode(); }} />
+                        </div>
+                        ${Button({
+                            variant: "default",
+                            size: "lg",
+                            children: this.redeemLoading ? "Adding..." : "Add Token",
+                            disabled: this.redeemLoading || this.buildRedeemCode().length < 18,
+                            onClick: () => this.doRedeemCode(),
+                            className: "w-full max-w-xs mx-auto",
+                        })}
+                        ${this.redeemError
+                            ? html`<div class="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">${this.redeemError}</div>`
+                            : ""}
+                        ${this.redeemSuccess
+                            ? html`<div class="text-sm text-green-600 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-3 py-2">${this.redeemSuccess}</div>`
+                            : ""}
+                    </div>
+                </div>
 
                 <!-- Profile Section -->
                 <div class="space-y-3">
@@ -314,56 +390,6 @@ export class AccountTab extends MenuTab {
                                 </div>
                             `
                         : html`<div class="text-sm text-muted-foreground">Loading profile...</div>`}
-                </div>
-
-                <!-- Token Usage Section -->
-                <div class="space-y-3 pt-4 border-t border-border">
-                    <h3 class="text-lg font-semibold text-foreground">Token Usage</h3>
-
-                    ${this.loading && !this.tokenUsage
-                        ? html`<div class="text-sm text-muted-foreground">Loading...</div>`
-                        : this.tokenUsage
-                            ? html`
-                                <div class="grid grid-cols-2 gap-4">
-                                    <div class="flex flex-col gap-1 p-4 border border-border rounded-lg bg-secondary/30">
-                                        <span class="text-sm text-muted-foreground">Total Tokens</span>
-                                        <span class="text-2xl font-bold text-foreground">${(this.tokenUsage.total_input_tokens + this.tokenUsage.total_output_tokens).toLocaleString()}</span>
-                                    </div>
-                                    <div class="flex flex-col gap-1 p-4 border border-border rounded-lg bg-secondary/30">
-                                        <span class="text-sm text-muted-foreground">Turns</span>
-                                        <span class="text-2xl font-bold text-foreground">${this.tokenUsage.turn_count}</span>
-                                    </div>
-                                    <div class="flex flex-col gap-1 p-4 border border-border rounded-lg bg-secondary/30">
-                                        <span class="text-sm text-muted-foreground">Input Tokens</span>
-                                        <span class="text-lg font-semibold text-foreground">${this.tokenUsage.total_input_tokens.toLocaleString()}</span>
-                                    </div>
-                                    <div class="flex flex-col gap-1 p-4 border border-border rounded-lg bg-secondary/30">
-                                        <span class="text-sm text-muted-foreground">Output Tokens</span>
-                                        <span class="text-lg font-semibold text-foreground">${this.tokenUsage.total_output_tokens.toLocaleString()}</span>
-                                    </div>
-                                    <div class="flex flex-col gap-1 p-4 border border-border rounded-lg bg-secondary/30">
-                                        <span class="text-sm text-muted-foreground">Cache Creation</span>
-                                        <span class="text-lg font-semibold text-foreground">${this.tokenUsage.total_cache_creation_tokens.toLocaleString()}</span>
-                                    </div>
-                                    <div class="flex flex-col gap-1 p-4 border border-border rounded-lg bg-secondary/30">
-                                        <span class="text-sm text-muted-foreground">Cache Read</span>
-                                        <span class="text-lg font-semibold text-foreground">${this.tokenUsage.total_cache_read_tokens.toLocaleString()}</span>
-                                    </div>
-                                </div>
-                            `
-                            : html`<div class="text-sm text-muted-foreground">No usage data available</div>`
-                    }
-
-                    ${!this.loading && this.tokenUsage
-                        ? Button({
-                            variant: "ghost",
-                            size: "sm",
-                            children: "Refresh",
-                            onClick: () => this.loadTokenUsage(),
-                            className: "mt-2",
-                        })
-                        : ""
-                    }
                 </div>
 
                 <!-- Logout Section -->

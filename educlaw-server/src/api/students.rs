@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::{self, bearer_token};
-use crate::db::{cohorts, students::{self, Student}, subjects};
+use crate::db::{cohorts, students::{self, Student}, subjects, token_codes};
 use crate::error::{AppError, Result};
 
 use super::AppState;
@@ -33,6 +33,7 @@ pub fn routes() -> Router<AppState> {
         .route("/me", get(get_me))
         .route("/me", patch(update_me))
         .route("/me/token-balance", get(get_my_token_balance))
+        .route("/me/redeem-code", post(redeem_code_handler))
 }
 
 // Recursively copy directory and all contents
@@ -313,4 +314,42 @@ async fn update_me(
         "cohort_id":    updated.cohort_id,
         "subject_ids":  subject_ids,
     })))
+}
+
+// ── POST /me/redeem-code ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RedeemCodeBody {
+    code: String,
+}
+
+async fn redeem_code_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RedeemCodeBody>,
+) -> Result<impl IntoResponse> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let claims = state.auth.verify(token)?;
+
+    let code = body.code.trim().to_uppercase();
+    if code.is_empty() {
+        return Err(AppError::BadRequest("code is required".into()));
+    }
+
+    let result = token_codes::redeem_code(&state.pool, &code, &claims.sub).await?;
+    match result {
+        token_codes::RedeemResult::NotFound => {
+            return Err(AppError::BadRequest("Code not found. Please check and try again.".into()));
+        }
+        token_codes::RedeemResult::AlreadyUsed => {
+            return Err(AppError::BadRequest("This code has already been used.".into()));
+        }
+        token_codes::RedeemResult::Success { tokens, new_balance } => {
+            tracing::info!(student_id = %claims.sub, code = %code, tokens, "student redeemed token code");
+            Ok(Json(serde_json::json!({
+                "tokens_added": tokens,
+                "new_balance": new_balance,
+            })))
+        }
+    }
 }

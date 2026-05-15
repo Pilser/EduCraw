@@ -10,6 +10,7 @@ import type {
   ProviderSchema,
   StudentTokenUsage,
   Subject,
+  TokenCode,
   TokenDeduction,
   UpdateStudentBody,
 } from "./admin-types";
@@ -419,5 +420,48 @@ export const adminApi = {
     return request<ProviderSchema>(
       `/admin/provider-schema/${encodeURIComponent(provider)}`,
     );
+  },
+
+  // ── Token Codes ──────────────────────────────────────
+
+  async generateTokenCodes(
+    token: string,
+    tokens: number,
+    count: number,
+  ): Promise<{ codes: string[] }> {
+    return request<{ codes: string[] }>("/admin/token-codes", {
+      method: "POST",
+      headers: authHeader(token),
+      body: JSON.stringify({ tokens, count }),
+    });
+  },
+
+  async listTokenCodes(
+    token: string,
+    tokens?: number,
+    used?: boolean,
+  ): Promise<TokenCode[]> {
+    const params = new URLSearchParams();
+    if (tokens != null) params.set("tokens", String(tokens));
+    if (used != null) params.set("used", used ? "true" : "false");
+    const qs = params.toString();
+    return request<TokenCode[]>(`/admin/token-codes${qs ? "?" + qs : ""}`, {
+      headers: authHeader(token),
+    });
+  },
+
+  async deleteTokenCode(token: string, id: string): Promise<void> {
+    return requestNoContent(`/admin/token-codes/${id}`, {
+      method: "DELETE",
+      headers: authHeader(token),
+    });
+  },
+
+  async exportTokenCodes(token: string, tokens: number): Promise<string> {
+    const res = await fetch(`${BASE}/admin/token-codes/export?tokens=${tokens}`, {
+      headers: authHeader(token),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+    return res.text();
   },
 };

@@ -7,4 +7,5 @@ pub mod schema;
 pub mod sessions;
 pub mod students;
 pub mod subjects;
+pub mod token_codes;
 pub mod token_usage;

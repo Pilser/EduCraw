@@ -9,6 +9,7 @@ import "../tabs/SubjectsTab.js";
 import "../tabs/AssignmentsTab.js";
 import "../tabs/SessionsTab.js";
 import "../tabs/ModelsTab.js";
+import "../tabs/TokenCodesTab.js";
 
 type TabName =
   | "students"
@@ -16,7 +17,9 @@ type TabName =
   | "subjects"
   | "assignments"
   | "sessions"
-  | "models";
+  | "models"
+  | "token-codes";
+
 
 interface TabDef {
   id: TabName;
@@ -30,6 +33,7 @@ const TABS: TabDef[] = [
   { id: "assignments", label: "Assignments" },
   { id: "sessions", label: "Live Sessions" },
   { id: "models", label: "AI Models" },
+  { id: "token-codes", label: "Token Codes" },
 ];
 
 @customElement("admin-dashboard")
@@ -129,6 +133,8 @@ export class AdminDashboard extends LitElement {
         return html`<sessions-tab .token=${t} .role=${r}></sessions-tab>`;
       case "models":
         return html`<models-tab .token=${t} .role=${r}></models-tab>`;
+      case "token-codes":
+        return html`<token-codes-tab .token=${t} .role=${r}></token-codes-tab>`;
     }
   }
 }
