@@ -15,6 +15,7 @@ use sacp::schema::{
     RequestPermissionRequest, SessionId, SessionNotification, SessionUpdate,
 };
 use sacp::{Agent as SacpAgent, ByteStreams, Client, ConnectionTo};
+use serde_json::Value;
 use sqlx::SqlitePool;
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, Mutex};
@@ -33,6 +34,7 @@ pub async fn spawn_sacp_client(
     child_stdout: ChildStdout,
     workspace: PathBuf,
     model: Option<String>,
+    provider: Option<String>,
     notif_tx: Arc<Mutex<mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,
     pool: SqlitePool,
     student_id: String,
@@ -233,8 +235,14 @@ pub async fn spawn_sacp_client(
                 }
 
                 // ── Create ACP session ─────────────────────────────────
+                let mut nsr = NewSessionRequest::new(&workspace);
+                if let Some(ref provider) = provider {
+                    let mut meta = serde_json::Map::new();
+                    meta.insert("provider".to_string(), Value::String(provider.clone()));
+                    nsr = nsr.meta(meta);
+                }
                 let sess_resp = match cx
-                    .send_request(NewSessionRequest::new(&workspace))
+                    .send_request(nsr)
                     .block_task()
                     .await
                 {

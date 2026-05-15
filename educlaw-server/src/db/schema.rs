@@ -9,12 +9,16 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     // ── available models (admin-managed list) ────────────────────────────────
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS models (
-            id           TEXT PRIMARY KEY,
-            name         TEXT NOT NULL UNIQUE,
-            display_name TEXT NOT NULL,
-            enabled      INTEGER NOT NULL DEFAULT 1,
-            multiplier   REAL NOT NULL DEFAULT 1.0,
-            created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            id              TEXT PRIMARY KEY,
+            name            TEXT NOT NULL UNIQUE,
+            display_name    TEXT NOT NULL,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            multiplier      REAL NOT NULL DEFAULT 1.0,
+            provider        TEXT,
+            think_mode      INTEGER,
+            visual_support  INTEGER NOT NULL DEFAULT 0,
+            thinking_params TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )",
     )
     .execute(pool)
@@ -84,6 +88,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             token_balance        INTEGER NOT NULL DEFAULT 0,
             restriction_message  TEXT,
             restriction_status   TEXT,
+            last_model       TEXT,
             created_at       TEXT NOT NULL DEFAULT (datetime('now')),
             last_seen        TEXT
         )",
@@ -92,21 +97,10 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     .await?;
 
     // Idempotent column additions for existing databases.
+    // Columns already present in CREATE TABLE above are omitted here.
     for col in &[
-        "ALTER TABLE students ADD COLUMN token_limit INTEGER",
-        "ALTER TABLE students ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE students ADD COLUMN token_block_banner TEXT",
         "ALTER TABLE students ADD COLUMN token_blocked_at TEXT",
-        "ALTER TABLE students ADD COLUMN restriction_status TEXT",
-        "ALTER TABLE students ADD COLUMN restriction_message TEXT",
-        "ALTER TABLE students ADD COLUMN last_model TEXT",
-        "ALTER TABLE students ADD COLUMN home_dir TEXT",
-        "ALTER TABLE models ADD COLUMN multiplier REAL NOT NULL DEFAULT 1.0",
-        "ALTER TABLE models ADD COLUMN provider TEXT",
-        "ALTER TABLE models ADD COLUMN think_mode INTEGER",
-        "ALTER TABLE models ADD COLUMN visual_support INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE models ADD COLUMN thinking_params TEXT",
-        "ALTER TABLE sessions ADD COLUMN last_token_checkpoint INTEGER NOT NULL DEFAULT 0",
     ] {
         let _ = sqlx::query(col).execute(pool).await;
     }

@@ -30,7 +30,7 @@ use sacp::{Agent as SacpAgent, ConnectionTo};
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, Mutex};
 
-use crate::db::students as db_students;
+use crate::db::{models as db_models, sessions as db_sess, students as db_students};
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 use crate::session::registry::{ManagedSession, SessionRegistry};
@@ -181,11 +181,25 @@ pub async fn run_acp_session(
             let notif_tx_shared = Arc::new(Mutex::new(notif_tx_new));
 
             tracing::info!(session_id = %session_id, "🔗 [GOOSE-ACP] Initializing ACP handshake...");
+
+            // Resolve provider from the initial model so the goose agent
+            // can initialize with a valid provider from the start.
+            let provider = match &model {
+                Some(model_name) => {
+                    match db_models::get_model_by_name(&pool, model_name).await {
+                        Ok(Some(m)) => m.provider,
+                        _ => None,
+                    }
+                }
+                None => None,
+            };
+
             let (cx, acp_session_id_holder, available_models_from_goose) = spawn_sacp_client(
                 child_stdin,
                 child_stdout,
                 workspace.clone(),
                 model.clone(),
+                provider,
                 notif_tx_shared.clone(),
                 pool.clone(),
                 student_id.clone(),
@@ -452,6 +466,7 @@ async fn handle_client_message(
             let turn_tx_prompt = turn_tx.clone();
             let session_id_for_prompt = session_id.to_string();
             let workspace_for_prompt = workspace.clone();
+            let pool_for_prompt = pool.clone();
             tokio::spawn(async move {
                 // Ensure we have an active ACP session - create NewSession if needed
                 let sid_prompt = {
@@ -466,8 +481,33 @@ async fn handle_client_message(
                     } else {
                         // First prompt - create NewSession now
                         tracing::info!(session_id = %session_id_for_prompt, "🆕 [ACP] No session yet - creating NewSession for first prompt");
+
+                        // Resolve provider from current model
+                        let provider = {
+                            let model_name = db_sess::get_session(&pool_for_prompt, &session_id_for_prompt)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.model);
+                            match model_name {
+                                Some(ref model_name) => {
+                                    db_models::get_model_by_name(&pool_for_prompt, model_name)
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .and_then(|m| m.provider)
+                                }
+                                None => None,
+                            }
+                        };
+                        let mut nsr = NewSessionRequest::new(&workspace_for_prompt);
+                        if let Some(ref provider) = provider {
+                            let mut meta = serde_json::Map::new();
+                            meta.insert("provider".to_string(), serde_json::Value::String(provider.clone()));
+                            nsr = nsr.meta(meta);
+                        }
                         match cx_prompt
-                            .send_request(NewSessionRequest::new(&workspace_for_prompt))
+                            .send_request(nsr)
                             .block_task()
                             .await
                         {
