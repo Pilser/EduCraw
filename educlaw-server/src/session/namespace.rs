@@ -4,6 +4,7 @@
 // Uses the unshare(mount+pid) approach — no Docker, sub-100ms startup.
 
 use std::path::Path;
+use std::time::Duration;
 
 use tokio::process::Command;
 
@@ -36,13 +37,100 @@ pub async fn mount_overlay(dirs: &SessionDirs) -> Result<()> {
     Ok(())
 }
 
-/// Unmount fuse-overlayfs (best-effort — does not propagate errors).
-pub async fn umount_overlay(merged: &Path) {
-    let _ = Command::new("fusermount")
-        .arg("-u")
-        .arg(merged.display().to_string())
+/// Unmount fuse-overlayfs.
+///
+/// Uses lazy unmount (`fusermount -uz`) which always succeeds — it detaches
+/// the mount from the filesystem tree immediately. The kernel cleans up the
+/// actual mount when all processes (e.g. goose) release their references.
+///
+/// Retries a few times in case the mount is momentarily busy.
+/// Returns `true` if the unmount was initiated successfully, `false` otherwise.
+pub async fn umount_overlay(merged: &Path) -> bool {
+    let mount_path = merged.display().to_string();
+
+    // Try normal unmount first (clean, fails if busy)
+    for attempt in 1..=3 {
+        let output = Command::new("fusermount")
+            .arg("-u")
+            .arg(&mount_path)
+            .output()
+            .await;
+
+        if let Ok(o) = output {
+            if o.status.success() {
+                tracing::debug!(path = %mount_path, "overlay unmounted (normal)");
+                return true;
+            }
+        }
+
+        if attempt < 3 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    // Normal unmount failed after retries — use lazy unmount.
+    // -z: lazy, detaches from filesystem tree immediately.
+    // The kernel cleans up the mount when all processes release references.
+    tracing::debug!(path = %mount_path, "normal unmount busy, using lazy unmount");
+    let output = Command::new("fusermount")
+        .arg("-uz")
+        .arg(&mount_path)
         .output()
         .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            tracing::debug!(path = %mount_path, "overlay unmounted (lazy)");
+            true
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            tracing::warn!(path = %mount_path, stderr = %stderr, "lazy fusermount failed");
+            false
+        }
+        Err(e) => {
+            tracing::warn!(path = %mount_path, error = %e, "lazy fusermount command failed");
+            false
+        }
+    }
+}
+
+/// Kill a process and all its children, then wait for it to exit.
+///
+/// Uses `kill -9` on the process group to ensure all child processes
+/// (claw, subshells, tools spawned by claw) are terminated.
+/// Then waits up to `timeout_secs` for the process to be reaped.
+pub async fn kill_process_tree(pid: i64, timeout_secs: u64) {
+    // Send SIGKILL to the entire process group (-pid means process group)
+    let _ = Command::new("kill")
+        .args(["-9", &format!("-{}", pid)])
+        .output()
+        .await;
+
+    // Also send to the individual PID in case it's not a process group leader
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .output()
+        .await;
+
+    // Wait for the process to actually exit
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+    while std::time::Instant::now() < deadline {
+        let output = Command::new("kill")
+            .arg("-0")
+            .arg(&pid.to_string())
+            .output()
+            .await;
+        if let Ok(o) = output {
+            if !o.status.success() {
+                // Process is gone
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    tracing::warn!(pid, "kill_process_tree: process did not exit within timeout");
 }
 
 
@@ -66,6 +154,11 @@ pub struct SpawnParams {
 
 /// Spawn `claw` inside `unshare --mount --pid --fork`.
 /// Returns the OS PID of the outer wrapper process.
+///
+/// **Process group isolation:** The spawned process tree is placed in its own
+/// session/process group via `setsid()`. This means `kill -9 -{pid}` kills
+/// ONLY this session's claw process and all its children — never other sessions
+/// or the server itself.
 pub async fn spawn_claw_session(params: &SpawnParams) -> Result<u32> {
     let mut claw_args = vec![params.claw_bin.clone()];
     if let Some(ref model) = params.model {
@@ -86,18 +179,24 @@ pub async fn spawn_claw_session(params: &SpawnParams) -> Result<u32> {
     }
 
     // Apply seccomp BPF deny-list in the child process (Linux only).
-    // Built once here in the parent, serial-copied into the pre_exec closure.
+    // Also calls setsid() to create a dedicated process group so that
+    // kill -9 -{pid} kills ONLY this session's tree.
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt as _;
-        
+
         match crate::security::seccomp::build_student_filter() {
             Ok(filter) => {
                 // SAFETY: pre_exec runs in the child after fork(), single-threaded,
-                // before exec(). seccompiler::apply_filter is async-signal-safe
-                // (only calls prctl).
+                // before exec(). Both setsid() and seccompiler::apply_filter are
+                // async-signal-safe (setsid = syscall, apply_filter = prctl).
                 unsafe {
                     cmd.pre_exec(move || {
+                        // Create a new session so this process tree gets its own
+                        // process group. PID becomes the PGID, making kill -9 -PID
+                        // target ONLY this session's claw + all descendants.
+                        libc::setsid();
+
                         seccompiler::apply_filter(&filter)
                             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                         Ok(())

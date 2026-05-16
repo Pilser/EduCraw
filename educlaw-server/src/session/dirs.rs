@@ -103,3 +103,56 @@ impl SessionDirs {
         Ok(())
     }
 }
+
+/// Remove the ephemeral session directory tree after the session has ended.
+///
+/// This deletes `{workspace_root}/{session_id}/` which contains only:
+///   `work/`, `merged/`, `config/` — all created fresh per session.
+///
+/// It does NOT touch persistent paths (`upper` / student home, `lower` / cohort content).
+///
+/// **Must be called AFTER `umount_overlay`** — the merged mount must be gone
+/// before the directory can be removed.
+///
+/// Best-effort: logs a warning on failure but never propagates errors,
+/// since the session is already terminated at this point.
+pub fn cleanup_session_dir(workspace_root: &str, session_id: &str) {
+    let root = std::path::PathBuf::from(workspace_root).join(session_id);
+    if !root.exists() {
+        return;
+    }
+
+    // Give the kernel a moment to release mount references after lazy unmount.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    // Retry a few times — the kernel may need a moment to fully release the mount.
+    for attempt in 1..=5 {
+        match std::fs::remove_dir_all(&root) {
+            Ok(()) => {
+                tracing::info!(
+                    session_id = %session_id,
+                    path = %root.display(),
+                    "cleanup: session directory removed"
+                );
+                return;
+            }
+            Err(e) if attempt < 5 => {
+                tracing::debug!(
+                    session_id = %session_id,
+                    attempt,
+                    error = %e,
+                    "cleanup: remove_dir_all failed, retrying in 500ms"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    path = %root.display(),
+                    error = %e,
+                    "cleanup: failed to remove session directory after 5 attempts"
+                );
+            }
+        }
+    }
+}

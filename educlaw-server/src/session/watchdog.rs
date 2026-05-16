@@ -21,7 +21,9 @@ use tokio::time::sleep;
 use crate::db::sessions;
 use crate::session::{
     broker::{now_secs, SessionBroker},
-    namespace::umount_overlay,
+    dirs::cleanup_session_dir,
+    namespace::{kill_process_tree, umount_overlay},
+    registry::SessionRegistry,
 };
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -30,8 +32,13 @@ pub struct WatchdogConfig {
     pub session_id: String,
     /// Path to the OverlayFS merged mount (for umount on timeout).
     pub overlay_mount: PathBuf,
+    /// Base directory for ephemeral session dirs (e.g. `/var/lib/educraw/sessions`).
+    pub workspace_root: String,
     pub idle_timeout: Duration,
     pub warn_before: Duration,
+    /// Registry entry for the session's goose subprocess (may be None if goose
+    /// hasn't been spawned yet or this is a headless session).
+    pub registry: Option<Arc<SessionRegistry>>,
 }
 
 // ── Task ──────────────────────────────────────────────────────────────────
@@ -67,7 +74,34 @@ pub async fn run_watchdog(
                 .await;
 
             broker.remove_entry(&config.session_id).await;
-            umount_overlay(&config.overlay_mount).await;
+
+            // Kill claw's process tree (if it exists)
+            if let Ok(Some(sess)) = sessions::get_session(&pool, &config.session_id).await {
+                if let Some(pid) = sess.namespace_pid {
+                    kill_process_tree(pid, 5).await;
+                }
+            }
+
+            // Kill goose subprocess (if registered) — bypasses grace period
+            if let Some(ref registry) = config.registry {
+                if let Some(managed) = registry.get(&config.session_id).await {
+                    let mut child_guard = managed.child.lock().await;
+                    if let Some(ref mut child) = *child_guard {
+                        let _ = child.kill().await;
+                        tracing::info!(session_id = %config.session_id, "watchdog: goose subprocess killed");
+                    }
+                    *child_guard = None;
+                    registry.remove(&config.session_id).await;
+                }
+            }
+
+            if !umount_overlay(&config.overlay_mount).await {
+                tracing::warn!(
+                    session_id = %config.session_id,
+                    "watchdog: overlay umount failed — cleanup may fail"
+                );
+            }
+            cleanup_session_dir(&config.workspace_root, &config.session_id);
 
             tracing::info!(
                 session_id = %config.session_id,

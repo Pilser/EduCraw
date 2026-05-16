@@ -407,16 +407,17 @@ async fn terminate_session(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {id}")))?;
 
+    // Kill the process tree and wait for it to exit BEFORE unmounting
     if let Some(pid) = session.namespace_pid {
-        let _ = tokio::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output()
-            .await;
+        crate::session::namespace::kill_process_tree(pid, 5).await;
     }
 
-    crate::session::namespace::umount_overlay(std::path::Path::new(&session.overlay_mount)).await;
+    if !crate::session::namespace::umount_overlay(std::path::Path::new(&session.overlay_mount)).await {
+        tracing::warn!(session_id = %id, "admin: overlay umount failed — cleanup may fail");
+    }
     db_sess::set_session_state(&state.pool, &id, "ended").await?;
     state.broker.remove_entry(&id).await;
+    crate::session::dirs::cleanup_session_dir(&state.workspace_root, &id);
     crate::security::cgroups::teardown_session_cgroup(&id).await;
 
     tracing::info!(session_id = %id, "admin: session force-terminated");

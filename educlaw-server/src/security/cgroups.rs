@@ -17,10 +17,13 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-const CGROUP_ROOT: &str = "/sys/fs/cgroup/educlaw";
+fn cgroup_root() -> String {
+    std::env::var("EDUCRAW_CGROUP_ROOT")
+        .expect("EDUCRAW_CGROUP_ROOT must be set in .env (e.g. /sys/fs/cgroup/educraw)")
+}
 
 fn session_cgroup(session_id: &str) -> PathBuf {
-    Path::new(CGROUP_ROOT).join(format!("session-{session_id}"))
+    Path::new(&cgroup_root()).join(format!("session-{session_id}"))
 }
 
 /// Create a cgroup for the session and add `pid` to it.
@@ -32,7 +35,7 @@ pub async fn setup_session_cgroup(session_id: &str, pid: u32) {
         // cgroups v2 delegation requires CAP_SYS_ADMIN or a pre-delegated
         // /sys/fs/cgroup/educlaw/ dir owned by the server user.
         // This is best-effort — log at debug so it doesn't pollute normal runs.
-        tracing::debug!(session_id, %e, "cgroup: skipping (no write permission — pre-create /sys/fs/cgroup/educlaw/ or run with CAP_SYS_ADMIN)");
+        tracing::debug!(session_id, %e, "cgroup: skipping (no write permission — pre-create {} or run with CAP_SYS_ADMIN)", cgroup_root());
         return;
     }
 

@@ -275,8 +275,10 @@ async fn create_session(
         WatchdogConfig {
             session_id: session_id.clone(),
             overlay_mount: dirs.merged.clone(),
+            workspace_root: state.workspace_root.clone(),
             idle_timeout: Duration::from_secs(idle_secs),
             warn_before: Duration::from_secs(warn_secs),
+            registry: Some(Arc::clone(&state.registry)),
         },
         Arc::clone(&state.broker),
         state.pool.clone(),
@@ -491,19 +493,20 @@ async fn terminate_session(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
-    // SIGTERM the namespace init process
+    // Kill the process tree and wait for it to exit BEFORE unmounting
     if let Some(pid) = session.namespace_pid {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output();
+        crate::session::namespace::kill_process_tree(pid, 5).await;
     }
 
     // Best-effort overlay unmount
     let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-    umount_overlay(&dirs.merged).await;
+    if !umount_overlay(&dirs.merged).await {
+        tracing::warn!(session_id = %session_id, "overlay umount failed — cleanup may fail");
+    }
 
     db_sess::set_session_state(&state.pool, &session_id, "ended").await?;
     state.broker.remove_entry(&session_id).await;
+    crate::session::dirs::cleanup_session_dir(&state.workspace_root, &session_id);
     crate::security::cgroups::teardown_session_cgroup(&session_id).await;
 
     tracing::info!(session_id = %session_id, "session terminated");
