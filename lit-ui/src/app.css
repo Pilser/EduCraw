@@ -113,3 +113,28 @@ body {
 .matrix assistant-message markdown-block {
   color: #e0e0e0;
 }
+
+/* ── Fix mini-lit Select dropdown menu background ──────────────────── */
+
+/* The Select component renders dropdown into a portal container */
+.select-portal-container {
+  z-index: 9999 !important;
+}
+
+/* Target the actual dropdown listbox */
+.select-portal-container [role="listbox"] {
+  background-color: var(--popover) !important;
+  border-color: var(--border) !important;
+  color: var(--popover-foreground) !important;
+}
+
+/* Ensure options are visible */
+.select-portal-container [role="option"] {
+  color: var(--popover-foreground) !important;
+}
+
+/* Hover state */
+.select-portal-container [role="option"]:hover {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}

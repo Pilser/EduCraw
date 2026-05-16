@@ -53,10 +53,21 @@ export class MessageEditor extends LitElement {
 		return this;
 	}
 
+	private autoResize = () => {
+		const textarea = this.textareaRef.value;
+		if (!textarea) return;
+		
+		// Reset height to auto to get accurate scrollHeight
+		textarea.style.height = 'auto';
+		// Set height to scrollHeight, capped at max-height (200px)
+		textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+	};
+
 	private handleTextareaInput = (e: Event) => {
 		const textarea = e.target as HTMLTextAreaElement;
 		this.value = textarea.value;
 		this.onInput?.(this.value);
+		this.autoResize();
 	};
 
 	private handleKeyDown = (e: KeyboardEvent) => {
@@ -232,6 +243,7 @@ export class MessageEditor extends LitElement {
 		const textarea = this.textareaRef.value;
 		if (textarea) {
 			textarea.focus();
+			this.autoResize();
 		}
 	}
 
@@ -278,10 +290,10 @@ export class MessageEditor extends LitElement {
 				}
 
 				<textarea
-					class="w-full bg-transparent p-4 text-foreground placeholder-muted-foreground outline-none resize-none overflow-y-auto"
+					class="w-full bg-transparent p-4 text-foreground placeholder-muted-foreground outline-none resize-none overflow-y-hidden"
 					placeholder=${i18n("Type a message...")}
 					rows="1"
-					style="max-height: 200px; field-sizing: content; min-height: 1lh; height: auto;"
+					style="max-height: 200px; min-height: 44px; height: 44px;"
 					.value=${this.value}
 					@input=${this.handleTextareaInput}
 					@keydown=${this.handleKeyDown}
@@ -368,7 +380,7 @@ export class MessageEditor extends LitElement {
 										},
 										children: html`
 											${icon(Sparkles, "sm")}
-											<span class="ml-1">${this.currentModel.id}</span>
+											<span class="ml-1">${this.currentModel.name}</span>
 										`,
 										className: "h-8 text-xs truncate",
 									})}

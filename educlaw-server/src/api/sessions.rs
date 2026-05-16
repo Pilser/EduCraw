@@ -415,6 +415,9 @@ async fn set_model(
     // Persist new model in DB.
     db_sess::set_session_model(&state.pool, &session_id, &model).await?;
 
+    // Also update student's last_model preference for persistence across sessions
+    students::set_last_model(&state.pool, &session.student_id, &model).await?;
+
     // Signal the running pty_bridge by writing a side-channel file.
     // pty_bridge watches for this file and injects `/model <name>\n` into
     // claw's stdin, then removes the file.

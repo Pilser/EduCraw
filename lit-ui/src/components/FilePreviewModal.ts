@@ -65,6 +65,18 @@ export class FilePreviewModal extends LitElement {
 		if ((changedProperties.has("open") || changedProperties.has("fileNode")) && this.open && this.fileNode) {
 			await this.loadFile();
 		}
+
+		// Render PDF/DOCX/XLSX after DOM is ready
+		if (changedProperties.has("content") && this.content && !this.loading) {
+			await this.updateComplete;
+			if (this.fileType === "pdf") {
+				await this.renderPdf();
+			} else if (this.fileType === "docx") {
+				await this.renderDocx();
+			} else if (this.fileType === "xlsx") {
+				this.renderXlsx();
+			}
+		}
 	}
 
 	private detectFileType(fileName: string): FileType {
@@ -99,18 +111,10 @@ export class FilePreviewModal extends LitElement {
 			if (this.fileType === "image") {
 				const url = URL.createObjectURL(blob);
 				this.content = url;
-			} else if (this.fileType === "pdf") {
+			} else if (this.fileType === "pdf" || this.fileType === "docx" || this.fileType === "xlsx") {
 				const arrayBuffer = await blob.arrayBuffer();
 				this.content = new Uint8Array(arrayBuffer);
-				await this.renderPdf();
-			} else if (this.fileType === "docx") {
-				const arrayBuffer = await blob.arrayBuffer();
-				this.content = new Uint8Array(arrayBuffer);
-				await this.renderDocx();
-			} else if (this.fileType === "xlsx") {
-				const arrayBuffer = await blob.arrayBuffer();
-				this.content = new Uint8Array(arrayBuffer);
-				this.renderXlsx();
+				// Rendering will be triggered in updated() lifecycle after DOM is ready
 			} else {
 				// Text-based files
 				const text = await blob.text();

@@ -162,11 +162,19 @@ export class ChatPage extends LitElement {
         this.sessionId,
         this.auth.token,
       );
+      
+      // Backend returns 'active' as the model NAME (not id)
+      // Priority: student.last_model → session.model → "grok-4-1-fast-reasoning"
       const activeModel = sessionModels.models.find(
-        (m: EduModel) => m.id === sessionModels.active,
+        (m: EduModel) => m.name === sessionModels.active,
       );
+      
       if (activeModel) {
         model = eduModelToPiModel(activeModel);
+      } else if (sessionModels.models.length > 0) {
+        // Fallback to first available model if active not found
+        console.warn("[chat-page] Active model not found in list, using first available");
+        model = eduModelToPiModel(sessionModels.models[0]);
       }
     } catch (err) {
       // Check if this is an authentication error (session expired)
@@ -176,6 +184,23 @@ export class ChatPage extends LitElement {
       }
       // Will use default model for other errors
       console.error("Failed to fetch session models:", err);
+    }
+
+    // Ensure we always have a model (fallback to default)
+    if (!model) {
+      console.warn("No model found, using default grok-4-1-fast-reasoning");
+      model = {
+        id: "grok-4-1-fast-reasoning",
+        name: "Grok 4.1 Fast Reasoning",
+        api: "unknown",
+        provider: "xai",
+        baseUrl: "",
+        reasoning: true,
+        input: ["text"],
+        contextWindow: 200000,
+        maxTokens: 8192,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      };
     }
 
     // IMPORTANT: Create WsManager BEFORE creating Agent
@@ -209,7 +234,7 @@ export class ChatPage extends LitElement {
     // Pass onReconnected handler to reload session on reconnection
     this.agent = new Agent({
       initialState: {
-        model: model!,
+        model: model,
         thinkingLevel: "off",
       },
       streamFn: createWsStreamFn({
@@ -232,6 +257,12 @@ export class ChatPage extends LitElement {
         const { ModelSelector } = await import("../dialogs/ModelSelector.js");
         ModelSelector.open(this.agent!.state.model, async (newModel) => {
           this.agent!.state.model = newModel;
+          
+          // Force UI update to show new model immediately
+          if (this.chatPanel?.agentInterface) {
+            this.chatPanel.agentInterface.requestUpdate();
+          }
+          
           try {
             await eduApi.setSessionModel(
               this.sessionId,
