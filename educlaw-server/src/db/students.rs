@@ -89,10 +89,40 @@ pub async fn update_student(
 }
 
 pub async fn delete_student(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    // Delete in reverse FK dependency order to avoid constraint violations.
+
+    // 1. Delete token_usage for all sessions of this student
+    sqlx::query(
+        "DELETE FROM token_usage WHERE session_id IN (SELECT id FROM sessions WHERE student_id = ?)",
+    )
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    // 2. Delete all sessions for this student
+    sqlx::query("DELETE FROM sessions WHERE student_id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    // 3. Delete student model restrictions
+    sqlx::query("DELETE FROM student_models WHERE student_id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    // 4. Delete token_codes used by this student (if table exists)
+    let _ = sqlx::query("DELETE FROM token_codes WHERE used_by = ?")
+        .bind(id)
+        .execute(pool)
+        .await;
+
+    // 5. Finally delete the student
     sqlx::query("DELETE FROM students WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
+
     Ok(())
 }
 

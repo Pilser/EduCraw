@@ -336,9 +336,26 @@ async fn delete_student(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    students::get_student(&state.pool, &id)
+    let student = students::get_student(&state.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
+
+    // Remove student's persistent directories from disk
+    let home_path = students::student_home_path(&state.students_root, &student);
+    if home_path.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&home_path) {
+            tracing::warn!(student_id = %id, path = %home_path.display(), error = %e, "failed to remove student home directory");
+        }
+    }
+
+    // Also remove the UUID-based directory (created by goose/session init)
+    let uuid_path = std::path::PathBuf::from(&state.students_root).join(&student.id);
+    if uuid_path.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&uuid_path) {
+            tracing::warn!(student_id = %id, path = %uuid_path.display(), error = %e, "failed to remove student UUID directory");
+        }
+    }
+
     students::delete_student(&state.pool, &id).await?;
     tracing::info!(student_id = %id, "admin: student deleted");
     Ok(StatusCode::NO_CONTENT)
