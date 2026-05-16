@@ -11,7 +11,10 @@ pub struct Model {
     pub name: String,
     pub display_name: String,
     pub enabled: i64,    // 1 = enabled, 0 = disabled
-    pub multiplier: f64, // Token deduction multiplier (e.g., 1.0, 2.5, 3.33)
+    #[serde(default = "default_multiplier_value")]
+    pub input_multiplier: f64,  // Input token deduction multiplier
+    #[serde(default = "default_multiplier_value")]
+    pub output_multiplier: f64, // Output token deduction multiplier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>, // Provider ID (e.g., "xai", "deepseek", "openai")
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -22,6 +25,10 @@ pub struct Model {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_params: Option<String>,
     pub created_at: String,
+}
+
+fn default_multiplier_value() -> f64 {
+    1.0
 }
 
 impl Model {
@@ -41,16 +48,21 @@ pub async fn insert_model(
     pool: &SqlitePool,
     name: &str,
     display_name: &str,
-    multiplier: f64,
+    input_multiplier: f64,
+    output_multiplier: f64,
 ) -> Result<String, sqlx::Error> {
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO models (id, name, display_name, multiplier) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(name)
-        .bind(display_name)
-        .bind(multiplier)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "INSERT INTO models (id, name, display_name, input_multiplier, output_multiplier)
+         VALUES (?, ?, ?, ?, ?)"
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(display_name)
+    .bind(input_multiplier)
+    .bind(output_multiplier)
+    .execute(pool)
+    .await?;
     Ok(id)
 }
 
@@ -63,16 +75,20 @@ pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<(
     Ok(())
 }
 
-pub async fn set_multiplier(
+pub async fn set_multipliers(
     pool: &SqlitePool,
     name: &str,
-    multiplier: f64,
+    input_multiplier: f64,
+    output_multiplier: f64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE models SET multiplier = ? WHERE name = ?")
-        .bind(multiplier)
-        .bind(name)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE models SET input_multiplier = ?, output_multiplier = ? WHERE name = ?"
+    )
+    .bind(input_multiplier)
+    .bind(output_multiplier)
+    .bind(name)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -145,12 +161,20 @@ pub async fn get_model_by_name(
         .await
 }
 
-pub async fn get_model_multiplier(pool: &SqlitePool, name: &str) -> Result<f64, sqlx::Error> {
-    let row: (f64,) = sqlx::query_as("SELECT COALESCE(multiplier, 1.0) FROM models WHERE name = ?")
-        .bind(name)
-        .fetch_one(pool)
-        .await?;
-    Ok(row.0)
+pub async fn get_model_multipliers(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<(f64, f64), sqlx::Error> {
+    let row: (f64, f64) = sqlx::query_as(
+        "SELECT
+            COALESCE(input_multiplier, 1.0),
+            COALESCE(output_multiplier, 1.0)
+         FROM models WHERE name = ?"
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
 }
 
 // ── Per-student model assignments ─────────────────────────────────────────

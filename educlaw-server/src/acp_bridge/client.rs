@@ -23,7 +23,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::error::{AppError, Result};
 
-use super::notifications::{notification_to_frames, spawn_token_accounting};
+use super::notifications::notification_to_frames;
 use super::permissions::auto_approve;
 
 /// Spawns the sacp Client task, performs the ACP handshake (Initialize only).
@@ -113,15 +113,17 @@ pub async fn spawn_sacp_client(
                                         tokens_used = usage.used,
                                         cost = ?usage.cost,
                                         model = %model_name,
-                                        "💰 [TOKEN] Usage update from goose"
+                                        "💰 [TOKEN] Usage update from goose (NOTE: token accounting now handled in PromptResponse)"
                                     );
-                                    spawn_token_accounting(
-                                        pool.clone(),
-                                        educlaw_session_id.clone(),
-                                        student_id.clone(),
-                                        model_name,
-                                        usage.used as i64,
-                                    );
+                                    // Token accounting now triggered from PromptResponse in session.rs
+                                    // to ensure we get accurate input/output breakdown.
+                                    // spawn_token_accounting(
+                                    //     pool.clone(),
+                                    //     educlaw_session_id.clone(),
+                                    //     student_id.clone(),
+                                    //     model_name,
+                                    //     usage.used as i64,
+                                    // );
                                 }
                             }
                             SessionUpdate::Plan(plan) => {

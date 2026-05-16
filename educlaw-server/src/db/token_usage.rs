@@ -93,31 +93,54 @@ pub async fn student_total_tokens(
     Ok(row.0)
 }
 
-/// Record a token deduction with model multiplier applied (audit trail).
+/// Record a token deduction with separate input/output multipliers applied (audit trail).
 pub async fn record_deduction(
     pool: &SqlitePool,
     student_id: &str,
     session_id: &str,
     model_name: &str,
-    multiplier: f64,
-    tokens_used: i64,
+    input_multiplier: f64,
+    output_multiplier: f64,
+    input_tokens_used: i64,
+    output_tokens_used: i64,
+    input_tokens_deducted: i64,
+    output_tokens_deducted: i64,
     tokens_deducted: i64,
     balance_before: i64,
     balance_after: i64,
 ) -> Result<(), sqlx::Error> {
     let id = Uuid::new_v4().to_string();
+    // Calculate average multiplier for legacy 'multiplier' column (weighted by token count)
+    let total_tokens = input_tokens_used + output_tokens_used;
+    let avg_multiplier = if total_tokens > 0 {
+        ((input_tokens_used as f64 * input_multiplier) + (output_tokens_used as f64 * output_multiplier)) 
+            / total_tokens as f64
+    } else {
+        1.0
+    };
+    
     sqlx::query(
         "INSERT INTO token_deductions
-            (id, student_id, session_id, model_name, multiplier,
-             tokens_used, tokens_deducted, balance_before, balance_after)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, student_id, session_id, model_name,
+             multiplier, input_multiplier, output_multiplier,
+             input_tokens_used, output_tokens_used,
+             input_tokens_deducted, output_tokens_deducted,
+             tokens_used, tokens_deducted,
+             balance_before, balance_after)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(student_id)
     .bind(session_id)
     .bind(model_name)
-    .bind(multiplier)
-    .bind(tokens_used)
+    .bind(avg_multiplier)
+    .bind(input_multiplier)
+    .bind(output_multiplier)
+    .bind(input_tokens_used)
+    .bind(output_tokens_used)
+    .bind(input_tokens_deducted)
+    .bind(output_tokens_deducted)
+    .bind(total_tokens)
     .bind(tokens_deducted)
     .bind(balance_before)
     .bind(balance_after)

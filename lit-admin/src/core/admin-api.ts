@@ -350,12 +350,13 @@ export const adminApi = {
     token: string,
     name: string,
     display_name: string,
-    multiplier?: number,
+    input_multiplier: number,
+    output_multiplier: number,
   ): Promise<Model> {
     return request<Model>("/admin/models", {
       method: "POST",
       headers: authHeader(token),
-      body: JSON.stringify({ name, display_name, multiplier }),
+      body: JSON.stringify({ name, display_name, input_multiplier, output_multiplier }),
     });
   },
 
@@ -371,15 +372,16 @@ export const adminApi = {
     });
   },
 
-  async setModelMultiplier(
+  async setModelMultipliers(
     token: string,
     name: string,
-    multiplier: number,
+    input_multiplier: number,
+    output_multiplier: number,
   ): Promise<void> {
-    return requestNoContent(`/admin/models/${name}/multiplier`, {
+    return requestNoContent(`/admin/models/${name}/multipliers`, {
       method: "PUT",
       headers: authHeader(token),
-      body: JSON.stringify({ multiplier }),
+      body: JSON.stringify({ input_multiplier, output_multiplier }),
     });
   },
 

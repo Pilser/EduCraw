@@ -22,14 +22,16 @@ export class ModelsTab extends LitElement {
   @state() private newName = "";
   @state() private newDisplayName = "";
   @state() private newProvider = "";
-  @state() private newMultiplier = "1.0";
+  @state() private newInputMultiplier = "1.0";
+  @state() private newOutputMultiplier = "1.0";
   @state() private newThinkMode = "";
   @state() private newVisualSupport = false;
 
   // Inline multiplier edit
   @state() private multEditId = "";
   @state() private multEditName = "";
-  @state() private multEditValue = "";
+  @state() private multEditInputValue = "";
+  @state() private multEditOutputValue = "";
 
   // Specs editor
   @state() private specsEditId = "";
@@ -75,13 +77,15 @@ export class ModelsTab extends LitElement {
     this.success = "";
     this.loading = true;
     try {
-      const mult = parseFloat(this.newMultiplier) || 1.0;
-      await adminApi.createModel(this.token, this.newName.trim(), this.newDisplayName.trim(), mult);
+      const inMult = parseFloat(this.newInputMultiplier) || 1.0;
+      const outMult = parseFloat(this.newOutputMultiplier) || 1.0;
+      await adminApi.createModel(this.token, this.newName.trim(), this.newDisplayName.trim(), inMult, outMult);
       this.success = "Model created";
       this.newName = "";
       this.newDisplayName = "";
       this.newProvider = "";
-      this.newMultiplier = "1.0";
+      this.newInputMultiplier = "1.0";
+      this.newOutputMultiplier = "1.0";
       this.newThinkMode = "";
       this.newVisualSupport = false;
       this.creating = false;
@@ -113,7 +117,8 @@ export class ModelsTab extends LitElement {
   private startMultEdit(m: Model) {
     this.multEditId = m.id;
     this.multEditName = m.name;
-    this.multEditValue = String(m.multiplier);
+    this.multEditInputValue = String(m.input_multiplier);
+    this.multEditOutputValue = String(m.output_multiplier);
     this.specsEditId = "";
     this.thinkingEditId = "";
   }
@@ -123,11 +128,12 @@ export class ModelsTab extends LitElement {
   }
 
   private async saveMultEdit() {
-    const val = parseFloat(this.multEditValue);
-    if (isNaN(val)) return;
+    const inVal = parseFloat(this.multEditInputValue);
+    const outVal = parseFloat(this.multEditOutputValue);
+    if (isNaN(inVal) || isNaN(outVal)) return;
     this.loading = true;
     try {
-      await adminApi.setModelMultiplier(this.token, this.multEditName, val);
+      await adminApi.setModelMultipliers(this.token, this.multEditName, inVal, outVal);
       this.multEditId = "";
       await this.load();
     } catch (err) {
@@ -346,9 +352,14 @@ export class ModelsTab extends LitElement {
                     </select>
                   </div>
                   <div>
-                    <label class="block text-xs text-muted-foreground mb-1">Token Multiplier</label>
-                    ${Input({ type: "number", value: this.newMultiplier, placeholder: "1.0", className: "w-full",
-                      onChange: (e: Event) => { this.newMultiplier = (e.target as HTMLInputElement).value; } })}
+                    <label class="block text-xs text-muted-foreground mb-1">Input Token Multiplier</label>
+                    ${Input({ type: "number", value: this.newInputMultiplier, placeholder: "1.0", className: "w-full",
+                      onChange: (e: Event) => { this.newInputMultiplier = (e.target as HTMLInputElement).value; } })}
+                  </div>
+                  <div>
+                    <label class="block text-xs text-muted-foreground mb-1">Output Token Multiplier</label>
+                    ${Input({ type: "number", value: this.newOutputMultiplier, placeholder: "1.0", className: "w-full",
+                      onChange: (e: Event) => { this.newOutputMultiplier = (e.target as HTMLInputElement).value; } })}
                   </div>
                   <div>
                     <label class="block text-xs text-muted-foreground mb-1">Thinking Mode</label>
@@ -413,14 +424,22 @@ export class ModelsTab extends LitElement {
                           </td>
                           <td class="py-2 px-3">
                             ${this.multEditId === m.id && isAdmin
-                              ? html`<div class="flex gap-1 items-center">
-                                  ${Input({ type: "number", value: this.multEditValue, className: "w-20 text-xs",
-                                    onChange: (e: Event) => { this.multEditValue = (e.target as HTMLInputElement).value; } })}
+                              ? html`<div class="flex gap-1 items-center flex-wrap">
+                                  <div class="flex items-center gap-1">
+                                    <span class="text-xs text-muted-foreground">In:</span>
+                                    ${Input({ type: "number", value: this.multEditInputValue, className: "w-16 text-xs",
+                                      onChange: (e: Event) => { this.multEditInputValue = (e.target as HTMLInputElement).value; } })}
+                                  </div>
+                                  <div class="flex items-center gap-1">
+                                    <span class="text-xs text-muted-foreground">Out:</span>
+                                    ${Input({ type: "number", value: this.multEditOutputValue, className: "w-16 text-xs",
+                                      onChange: (e: Event) => { this.multEditOutputValue = (e.target as HTMLInputElement).value; } })}
+                                  </div>
                                   ${Button({ variant: "default", size: "sm", children: html`${icon(Save, "xs")}`, onClick: () => this.saveMultEdit() })}
                                   ${Button({ variant: "ghost", size: "sm", children: html`${icon(X, "xs")}`, onClick: () => this.cancelMultEdit() })}
                                 </div>`
-                              : html`<span class="cursor-pointer hover:underline" @click=${() => isAdmin && this.startMultEdit(m)}>
-                                  x${m.multiplier}
+                              : html`<span class="cursor-pointer hover:underline text-xs" @click=${() => isAdmin && this.startMultEdit(m)}>
+                                  In: x${m.input_multiplier} / Out: x${m.output_multiplier}
                                 </span>`}
                           </td>
                           <td class="py-2 px-3">

@@ -96,7 +96,7 @@ pub fn routes() -> Router<AppState> {
         )
         // Models
         .route("/admin/models", get(list_models).post(create_model))
-        .route("/admin/models/:name/multiplier", put(set_model_multiplier))
+        .route("/admin/models/:name/multipliers", put(set_model_multipliers))
         .route("/admin/models/:id/specs", put(update_model_specs_handler))
         .route(
             "/admin/models/:id/thinking",
@@ -830,9 +830,12 @@ struct CreateModelBody {
     name: String,
     /// Human-readable label shown in the UI, e.g. "Claude Opus 4.6".
     display_name: String,
-    /// Token deduction multiplier (e.g., 1.0, 2.5, 3.33). Defaults to 1.0 if absent.
+    /// Input token deduction multiplier (e.g., 1.0, 2.5, 3.33). Defaults to 1.0 if absent.
     #[serde(default = "default_multiplier")]
-    multiplier: f64,
+    input_multiplier: f64,
+    /// Output token deduction multiplier (e.g., 1.0, 2.5, 3.33). Defaults to 1.0 if absent.
+    #[serde(default = "default_multiplier")]
+    output_multiplier: f64,
 }
 
 fn default_multiplier() -> f64 {
@@ -848,21 +851,33 @@ async fn create_model(
     if body.name.is_empty() {
         return Err(AppError::BadRequest("model name must not be empty".into()));
     }
-    if body.multiplier < 0.0 {
+    if body.input_multiplier < 0.0 || body.output_multiplier < 0.0 {
         return Err(AppError::BadRequest(
-            "multiplier must be non-negative".into(),
+            "multipliers must be non-negative".into(),
         ));
     }
-    let id = db_models::insert_model(&state.pool, &body.name, &body.display_name, body.multiplier)
-        .await?;
-    tracing::info!(model_name = %body.name, multiplier = body.multiplier, "admin: model created");
+    let id = db_models::insert_model(
+        &state.pool,
+        &body.name,
+        &body.display_name,
+        body.input_multiplier,
+        body.output_multiplier,
+    )
+    .await?;
+    tracing::info!(
+        model_name = %body.name,
+        input_multiplier = body.input_multiplier,
+        output_multiplier = body.output_multiplier,
+        "admin: model created"
+    );
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({
             "id": id,
             "name": body.name,
             "display_name": body.display_name,
-            "multiplier": body.multiplier,
+            "input_multiplier": body.input_multiplier,
+            "output_multiplier": body.output_multiplier,
             "enabled": 1,
         })),
     ))
@@ -1202,25 +1217,27 @@ async fn student_token_usage(
     })))
 }
 
-// ── PUT /admin/models/:name/multiplier ─────────────────────────────────
+// ── PUT /admin/models/:name/multipliers ────────────────────────────────
 
 #[derive(Deserialize)]
-struct SetMultiplierBody {
-    /// Token deduction multiplier (e.g., 1.0, 2.5, 3.33)
-    multiplier: f64,
+struct SetMultipliersBody {
+    /// Input token deduction multiplier (e.g., 1.0, 2.5, 3.33)
+    input_multiplier: f64,
+    /// Output token deduction multiplier (e.g., 1.0, 2.5, 3.33)
+    output_multiplier: f64,
 }
 
-async fn set_model_multiplier(
+async fn set_model_multipliers(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
     headers: HeaderMap,
-    Json(body): Json<SetMultiplierBody>,
+    Json(body): Json<SetMultipliersBody>,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    if body.multiplier < 0.0 {
+    if body.input_multiplier < 0.0 || body.output_multiplier < 0.0 {
         return Err(AppError::BadRequest(
-            "multiplier must be non-negative".into(),
+            "multipliers must be non-negative".into(),
         ));
     }
 
@@ -1229,11 +1246,24 @@ async fn set_model_multiplier(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("model {name}")))?;
 
-    db_models::set_multiplier(&state.pool, &name, body.multiplier).await?;
-    tracing::info!(model = %name, multiplier = body.multiplier, "admin: model multiplier updated");
-    Ok(Json(
-        serde_json::json!({ "name": name, "multiplier": body.multiplier }),
-    ))
+    db_models::set_multipliers(
+        &state.pool,
+        &name,
+        body.input_multiplier,
+        body.output_multiplier,
+    )
+    .await?;
+    tracing::info!(
+        model = %name,
+        input_multiplier = body.input_multiplier,
+        output_multiplier = body.output_multiplier,
+        "admin: model multipliers updated"
+    );
+    Ok(Json(serde_json::json!({
+        "name": name,
+        "input_multiplier": body.input_multiplier,
+        "output_multiplier": body.output_multiplier
+    })))
 }
 
 // ── GET /admin/students/:id/token-balance ──────────────────────────────

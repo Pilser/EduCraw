@@ -39,8 +39,12 @@ export interface TokenDeduction {
   id: string;
   session_id: string;
   model_name: string;
-  multiplier: number;
-  tokens_used: number;
+  input_multiplier: number;
+  output_multiplier: number;
+  input_tokens_used: number;
+  output_tokens_used: number;
+  input_tokens_deducted: number;
+  output_tokens_deducted: number;
   tokens_deducted: number;
   balance_before: number;
   balance_after: number;
@@ -99,7 +103,8 @@ export interface Model {
   name: string;
   display_name: string;
   enabled: number;
-  multiplier: number;
+  input_multiplier: number;
+  output_multiplier: number;
   provider?: string | null;
   think_mode?: number | null;
   visual_support: number;

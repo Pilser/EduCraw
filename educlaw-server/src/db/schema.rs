@@ -24,6 +24,18 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    // Migrate existing multiplier → input_multiplier, add output_multiplier
+    let _ = sqlx::query("ALTER TABLE models ADD COLUMN input_multiplier REAL NOT NULL DEFAULT 1.0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE models ADD COLUMN output_multiplier REAL NOT NULL DEFAULT 1.0")
+        .execute(pool)
+        .await;
+    // Backfill: copy existing multiplier to both new columns
+    let _ = sqlx::query("UPDATE models SET input_multiplier = multiplier, output_multiplier = multiplier WHERE input_multiplier = 1.0 AND output_multiplier = 1.0")
+        .execute(pool)
+        .await;
+
     // ── cohorts ───────────────────────────────────────────────────────────────
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS cohorts (
@@ -200,6 +212,26 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+
+    // Add new columns for separate input/output tracking
+    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN input_tokens_used INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN output_tokens_used INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN input_multiplier REAL NOT NULL DEFAULT 1.0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN output_multiplier REAL NOT NULL DEFAULT 1.0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN input_tokens_deducted INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN output_tokens_deducted INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
 
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_token_deductions_student ON token_deductions(student_id)",

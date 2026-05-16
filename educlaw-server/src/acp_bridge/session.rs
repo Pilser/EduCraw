@@ -555,18 +555,84 @@ async fn handle_client_message(
 
                 let frame = match resp {
                     Ok(r) => {
-                        // Log full token usage including cache tokens from PromptResponse
+                        // Extract token usage from PromptResponse and trigger token accounting
                         if let Some(usage) = &r.usage {
+                            let input_tokens = usage.input_tokens as i64;
+                            let output_tokens = usage.output_tokens as i64;
+                            
                             tracing::info!(
                                 session_id = %session_id_for_prompt,
                                 total_tokens = usage.total_tokens,
-                                input_tokens = usage.input_tokens,
-                                output_tokens = usage.output_tokens,
+                                input_tokens,
+                                output_tokens,
                                 cached_read_tokens = ?usage.cached_read_tokens,
                                 cached_write_tokens = ?usage.cached_write_tokens,
                                 "📊 [GOOSE PROMPT RESPONSE] Full token usage from PromptResponse"
                             );
+
+                            // Spawn token accounting task with input/output breakdown
+                            let pool_clone = pool_for_prompt.clone();
+                            let session_id_clone = session_id_for_prompt.clone();
+                            let student_id_clone = {
+                                // Get student_id from session
+                                match db_sess::get_session(&pool_for_prompt, &session_id_for_prompt).await {
+                                    Ok(Some(s)) => s.student_id,
+                                    _ => {
+                                        tracing::warn!(
+                                            session_id = %session_id_for_prompt,
+                                            "failed to get session for token accounting"
+                                        );
+                                        String::new()
+                                    }
+                                }
+                            };
+                            let model_name_clone = {
+                                // Get model from session
+                                match db_sess::get_session(&pool_for_prompt, &session_id_for_prompt).await {
+                                    Ok(Some(s)) => s.model.unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string()),
+                                    _ => "grok-4-1-fast-reasoning".to_string(),
+                                }
+                            };
+
+                            if !student_id_clone.is_empty() && input_tokens + output_tokens > 0 {
+                                tokio::spawn(async move {
+                                    // Record the raw token usage (per-turn values from Goose)
+                                    use crate::db::token_usage as db_tokens;
+                                    let tokens = db_tokens::TurnTokens {
+                                        model: model_name_clone.clone(),
+                                        input_tokens,
+                                        output_tokens,
+                                        cache_creation_input_tokens: 0,
+                                        cache_read_input_tokens: 0,
+                                    };
+                                    if let Err(e) = db_tokens::record_turn(&pool_clone, &session_id_clone, &tokens).await {
+                                        tracing::warn!(
+                                            session_id = %session_id_clone,
+                                            error = %e,
+                                            "failed to record token usage turn"
+                                        );
+                                    }
+
+                                    // Calculate and deduct tokens with multipliers
+                                    use super::token_calculator;
+                                    if let Err(e) = token_calculator::calculate_and_deduct(
+                                        &pool_clone,
+                                        &student_id_clone,
+                                        &session_id_clone,
+                                        &model_name_clone,
+                                        input_tokens,  // Pass per-turn values directly
+                                        output_tokens, // Pass per-turn values directly
+                                    ).await {
+                                        tracing::error!(
+                                            session_id = %session_id_clone,
+                                            error = %e,
+                                            "❌ [TOKEN ACCOUNTING] Failed to calculate and deduct tokens"
+                                        );
+                                    }
+                                });
+                            }
                         }
+                        
                         tracing::info!(session_id = %session_id_for_prompt, "✓ [ACP] Response OK, stop_reason: {:?}", r.stop_reason);
                         match r.stop_reason {
                             StopReason::EndTurn | StopReason::Cancelled => {

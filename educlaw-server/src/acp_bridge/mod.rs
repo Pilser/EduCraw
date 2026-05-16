@@ -22,6 +22,7 @@ mod notifications;
 // pub mod stats;  // Deferred: tables to be planned later
 mod permissions;
 mod session;
+mod token_calculator;
 
 pub use commands::{
     handle_export_session, handle_fork_session, handle_import_session, handle_list_sessions,

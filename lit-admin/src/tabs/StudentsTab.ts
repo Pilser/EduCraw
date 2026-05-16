@@ -515,13 +515,29 @@ export class StudentsTab extends LitElement {
                                         : html`
                                             <div class="max-h-40 overflow-y-auto text-xs">
                                               <table class="w-full">
-                                                <thead><tr class="text-muted-foreground"><th class="pr-2 text-left">Amount</th><th class="pr-2 text-left">Reason</th><th class="text-left">Date</th></tr></thead>
+                                                <thead>
+                                                  <tr class="text-muted-foreground">
+                                                    <th class="pr-2 text-left">Model</th>
+                                                    <th class="pr-2 text-left">Input</th>
+                                                    <th class="pr-2 text-left">Output</th>
+                                                    <th class="pr-2 text-left">Total</th>
+                                                    <th class="text-left">Date</th>
+                                                  </tr>
+                                                </thead>
                                                 <tbody>
                                                   ${this.tokenDeductions.map((d) => html`
                                                     <tr class="border-t border-border">
-                                                      <td class="py-1 text-destructive">-${d.tokens_deducted.toLocaleString()}</td>
                                                       <td class="py-1">${d.model_name}</td>
-                                                      <td class="py-1 text-muted-foreground">${new Date(d.recorded_at).toLocaleString()}</td>
+                                                      <td class="py-1 text-blue-600 dark:text-blue-400">
+                                                        ${d.input_tokens_used?.toLocaleString() || '—'}
+                                                        ${d.input_tokens_used ? html`<span class="text-xs text-muted-foreground">(×${d.input_multiplier})</span>` : ''}
+                                                      </td>
+                                                      <td class="py-1 text-purple-600 dark:text-purple-400">
+                                                        ${d.output_tokens_used?.toLocaleString() || '—'}
+                                                        ${d.output_tokens_used ? html`<span class="text-xs text-muted-foreground">(×${d.output_multiplier})</span>` : ''}
+                                                      </td>
+                                                      <td class="py-1 text-destructive font-medium">-${d.tokens_deducted.toLocaleString()}</td>
+                                                      <td class="py-1 text-muted-foreground">${new Date(d.recorded_at).toLocaleDateString()}</td>
                                                     </tr>
                                                   `)}
                                                 </tbody>
