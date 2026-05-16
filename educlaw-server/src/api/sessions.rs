@@ -29,7 +29,7 @@ use crate::error::{AppError, Result};
 use crate::session::{
     broker::now_secs,
     dirs::SessionDirs,
-    namespace::{mount_overlay, spawn_claw_session, umount_overlay, SpawnParams},
+    namespace::{mount_overlay, umount_overlay, kill_process_tree},
     watchdog::{run_watchdog, WatchdogConfig},
 };
 
@@ -284,59 +284,6 @@ async fn create_session(
         state.pool.clone(),
     ));
 
-    // Spawn claw inside an unshare namespace; record the PID for Shell MCP nsenter.
-    let mcp_socket =
-        std::env::var("EDUCLAW_MCP_SOCKET").unwrap_or_else(|_| "127.0.0.1:9000".to_string());
-
-    // Detect if student has a prior session to resume
-    let mut env_vars = vec![
-        ("EDUCLAW_MCP_SOCKET".to_string(), mcp_socket),
-        (
-            "EDUCLAW_SYSTEM_PROMPT".to_string(),
-            system_prompt_b64.clone(),
-        ),
-        ("EDUCLAW_STRUCTURED_OUTPUT".to_string(), "1".to_string()), // Enable OSC diagnostics
-        // Force matplotlib to use the non-interactive Agg backend so plt.show()
-        // never blocks waiting for a GUI display that doesn't exist.
-        ("MPLBACKEND".to_string(), "Agg".to_string()),
-    ];
-
-    if let Some(latest_session_id) = detect_latest_student_session(&dirs.upper) {
-        env_vars.push(("CLAW_LOAD_SESSION".to_string(), latest_session_id.clone()));
-        tracing::info!(
-            session_id = %session_id,
-            student_id = %student.id,
-            latest_session_id = %latest_session_id,
-            "detected latest student session; will be resumed"
-        );
-    } else {
-        tracing::info!(
-            session_id = %session_id,
-            student_id = %student.id,
-            "no prior session found; will create new"
-        );
-    }
-
-    let spawn_params = SpawnParams {
-        session_id: session_id.clone(),
-        student_json: student_json.clone(),
-        dirs: dirs.clone(),
-        claw_bin: std::env::var("CLAW_BIN").unwrap_or_else(|_| "claw".to_string()),
-        model: effective_model,
-        env: env_vars,
-    };
-    match spawn_claw_session(&spawn_params).await {
-        Ok(pid) => {
-            let _ = db_sess::set_namespace_pid(&state.pool, &session_id, pid as i64).await;
-            // Apply cgroups v2 resource caps (best-effort; logs on failure).
-            crate::security::cgroups::setup_session_cgroup(&session_id, pid).await;
-            tracing::info!(session_id = %session_id, pid = pid, "claw namespace spawned");
-        }
-        Err(e) => {
-            tracing::warn!(session_id = %session_id, error = %e, "claw spawn failed (PTY bridge will retry)");
-        }
-    }
-
     // Session-scoped JWT for the WebSocket handshake
     let token = state.auth.sign_session_token(
         &student.id,
@@ -493,9 +440,18 @@ async fn terminate_session(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
-    // Kill the process tree and wait for it to exit BEFORE unmounting
+    // Kill goose process tree via registry (unshare wrapper PID)
+    if let Some(managed) = state.registry.get(&session_id).await {
+        kill_process_tree(managed.pid as i64, 5).await;
+        let mut child_guard = managed.child.lock().await;
+        *child_guard = None;
+        state.registry.remove(&session_id).await;
+        tracing::info!(session_id = %session_id, pid = managed.pid, "goose process tree killed via registry");
+    }
+
+    // Kill the process tree via namespace_pid (legacy claw path) and wait for it to exit BEFORE unmounting
     if let Some(pid) = session.namespace_pid {
-        crate::session::namespace::kill_process_tree(pid, 5).await;
+        kill_process_tree(pid, 5).await;
     }
 
     // Best-effort overlay unmount

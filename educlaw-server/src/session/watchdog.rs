@@ -82,13 +82,20 @@ pub async fn run_watchdog(
                 }
             }
 
-            // Kill goose subprocess (if registered) — bypasses grace period
+            // Kill goose process tree via its unshare process group
             if let Some(ref registry) = config.registry {
                 if let Some(managed) = registry.get(&config.session_id).await {
+                    // Kill the entire process group first (unshare wrapper + goose + all children)
+                    // kill_process_tree uses kill -9 -pid which hits the whole process group,
+                    // then polls kill -0 until the process is gone or 5s timeout passes.
+                    let group_pid = managed.pid as i64;
+                    kill_process_tree(group_pid, 5).await;
+                    tracing::info!(session_id = %config.session_id, pid = managed.pid, "watchdog: goose process group killed");
+
+                    // Fallback kill via tokio child handle, then drop it
                     let mut child_guard = managed.child.lock().await;
                     if let Some(ref mut child) = *child_guard {
                         let _ = child.kill().await;
-                        tracing::info!(session_id = %config.session_id, "watchdog: goose subprocess killed");
                     }
                     *child_guard = None;
                     registry.remove(&config.session_id).await;

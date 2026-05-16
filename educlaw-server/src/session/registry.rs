@@ -21,6 +21,9 @@ pub struct ManagedSession {
     // Goose subprocess — kept alive during grace period, killed when expired
     pub child: Arc<Mutex<Option<tokio::process::Child>>>,
 
+    // Pid of the unshare wrapper process — used for process-group kill during cleanup
+    pub pid: u32,
+
     // Replaceable notification sender — swapped to a new channel on each WS reconnect
     // The sacp client callback holds an Arc clone and always sends to the current Sender.
     pub notif_tx_shared: Arc<Mutex<Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,
@@ -51,6 +54,7 @@ impl ManagedSession {
     pub fn new(
         cx: sacp::ConnectionTo<sacp::Agent>,
         child: tokio::process::Child,
+        pid: u32,
         // The SAME Arc that was passed to spawn_sacp_client — must be shared so
         // swapping the inner Sender on reconnect reaches the sacp callback.
         notif_tx_shared: Arc<Mutex<Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,
@@ -66,6 +70,7 @@ impl ManagedSession {
         Self {
             cx,
             child: Arc::new(Mutex::new(Some(child))),
+            pid,
             notif_tx_shared,
             acp_session_id,
             model_arc,

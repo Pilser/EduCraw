@@ -70,6 +70,27 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# ── Step 0: Kernel settings for namespace isolation ───────────
+echo "[0/5] Configuring kernel sysctls..."
+
+# Allow unprivileged user namespaces (required for unshare --user --map-root-user)
+if [ "$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null)" != "1" ]; then
+    sysctl -w kernel.unprivileged_userns_clone=1
+    echo "kernel.unprivileged_userns_clone=1" > /etc/sysctl.d/99-educraw.conf
+    echo "      kernel.unprivileged_userns_clone = 1"
+else
+    echo "      kernel.unprivileged_userns_clone = 1 (already set)"
+fi
+
+# Disable AppArmor restriction on unprivileged userns (Ubuntu 24.04+)
+if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" != "0" ]; then
+    sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+    echo "kernel.apparmor_restrict_unprivileged_userns=0" > /etc/sysctl.d/99-educraw-unpriv.conf
+    echo "      kernel.apparmor_restrict_unprivileged_userns = 0"
+else
+    echo "      kernel.apparmor_restrict_unprivileged_userns = 0 (already set)"
+fi
+
 if [ ! -f "$SERVER_BIN" ]; then
     echo "ERROR: Server binary not found at $SERVER_BIN"
     echo "Run this first: cd $PROJECT_DIR && cargo build --release"
@@ -83,7 +104,7 @@ fi
 
 # ── Step 1: Create cgroup delegation directory ────────────────
 
-echo "[1/4] Creating cgroup delegation directory..."
+echo "[1/5] Creating cgroup delegation directory..."
 
 mkdir -p "$CGROUP_DIR"
 chown "$SERVER_USER:$SERVER_USER" "$CGROUP_DIR"
@@ -92,7 +113,7 @@ echo "      Created: $CGROUP_DIR (owned by $SERVER_USER)"
 
 # ── Step 2: Create systemd service file ───────────────────────
 
-echo "[2/4] Creating systemd service file..."
+echo "[2/5] Creating systemd service file..."
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -134,7 +155,7 @@ echo "      ReadWritePaths: $READ_WRITE_PATHS"
 
 # ── Step 3: Enable service on boot ────────────────────────────
 
-echo "[3/4] Enabling service on boot..."
+echo "[3/5] Enabling service on boot..."
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
@@ -143,7 +164,7 @@ echo "      Service enabled (will start on every boot)"
 
 # ── Step 4: Start the service ─────────────────────────────────
 
-echo "[4/4] Starting the service..."
+echo "[4/5] Starting the service..."
 
 systemctl start "$SERVICE_NAME"
 

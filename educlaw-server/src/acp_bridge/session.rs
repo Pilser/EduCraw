@@ -127,9 +127,18 @@ pub async fn run_acp_session(
                     .ok();
             }
 
-            // Spawn goose acp subprocess
-            let mut cmd = tokio::process::Command::new(&goose_bin);
-            cmd.arg("acp");
+            // Spawn goose inside unshare namespace for per-session isolation.
+            // When running as root (systemd), skip --user --map-root-user
+            // because root already has CAP_SYS_ADMIN for --mount and --pid.
+            let goose_cmd = format!("{} acp", goose_bin.display());
+            let mut cmd = tokio::process::Command::new("unshare");
+            let is_root = unsafe { libc::getuid() } == 0;
+            if is_root {
+                cmd.args(["--mount", "--pid", "--fork", "sh", "-c", &goose_cmd]);
+                tracing::debug!("goose spawn: running as root, skipping --user namespace");
+            } else {
+                cmd.args(["--user", "--map-root-user", "--mount", "--pid", "--fork", "sh", "-c", &goose_cmd]);
+            }
             cmd.current_dir(&workspace);
             cmd.env_clear();
             cmd.env("GOOSE_PATH_ROOT", goose_path_root.display().to_string());
@@ -140,11 +149,24 @@ pub async fn run_acp_session(
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
 
+            // setsid() creates a dedicated process group so kill -9 -pid
+            // kills only this session's goose tree.
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::process::CommandExt;
+                unsafe {
+                    cmd.pre_exec(|| {
+                        libc::setsid();
+                        Ok(())
+                    });
+                }
+            }
+
             tracing::info!(
                 session_id = %session_id,
                 model = ?model,
                 has_xai_key = env_vars.iter().any(|(k, _)| k == "XAI_API_KEY"),
-                "📦 [GOOSE] Spawning ACP subprocess..."
+                "📦 [GOOSE] Spawning ACP subprocess inside unshare namespace..."
             );
 
             let mut child = cmd.spawn().map_err(|e| {
@@ -152,7 +174,11 @@ pub async fn run_acp_session(
                 AppError::Session(format!("failed to spawn goose: {e}"))
             })?;
 
-            tracing::info!(session_id = %session_id, "✓ [GOOSE] Subprocess spawned successfully");
+            let pid = child
+                .id()
+                .ok_or_else(|| AppError::Session("goose spawn produced no PID".to_string()))?;
+
+            tracing::info!(session_id = %session_id, pid = pid, "✓ [GOOSE] Subprocess spawned in namespace");
 
             let child_stdin = child.stdin.take().expect("stdin piped");
             let child_stdout = child.stdout.take().expect("stdout piped");
@@ -233,6 +259,7 @@ pub async fn run_acp_session(
                 let managed = ManagedSession::new(
                     cx.clone(),
                     child,
+                    pid,
                     notif_tx_shared.clone(), // <-- same Arc the sacp client holds
                     acp_session_id_holder.clone(),
                     model_arc.clone(),
@@ -361,13 +388,17 @@ pub async fn run_acp_session(
         tokio::spawn(async move {
             tokio::time::sleep(timeout).await;
             if managed_kill.is_in_grace_period().await {
-                // Nobody reconnected — kill the subprocess
+                // Nobody reconnected — kill the process group first
+                let _ = tokio::process::Command::new("kill")
+                    .args(["-9", &format!("-{}", managed_kill.pid)])
+                    .output()
+                    .await;
                 let mut child_guard = managed_kill.child.lock().await;
                 if let Some(ref mut c) = *child_guard {
                     let _ = c.kill().await;
                 }
                 *child_guard = None;
-                tracing::info!(session_id = %sid_kill, "💀 [SESSION] Grace period expired — goose process killed");
+                tracing::info!(session_id = %sid_kill, pid = managed_kill.pid, "💀 [SESSION] Grace period expired — goose process group killed");
             }
             // If grace period was cleared (reconnect happened) the new run_acp_session
             // owns the session lifecycle and will spawn its own timeout task.
