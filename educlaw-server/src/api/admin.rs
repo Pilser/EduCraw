@@ -43,7 +43,7 @@ use crate::db::{
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 
-use super::AppState;
+use super::{common, AppState};
 
 // ── Router ────────────────────────────────────────────────────────────────
 
@@ -53,14 +53,8 @@ pub fn routes() -> Router<AppState> {
         // Students - base
         .route("/admin/students", get(list_students).post(create_student))
         // Students - specific sub-routes (MUST come before generic /:id)
-        .route(
-            "/admin/students/:id/ban",
-            post(ban_student_handler),
-        )
-        .route(
-            "/admin/students/:id/unban",
-            post(unban_student_handler),
-        )
+        .route("/admin/students/:id/ban", post(ban_student_handler))
+        .route("/admin/students/:id/unban", post(unban_student_handler))
         .route("/admin/students/:id/token-usage", get(student_token_usage))
         .route("/admin/students/:id/token-balance", get(get_token_balance))
         .route("/admin/students/:id/topup", post(topup_tokens_handler))
@@ -119,18 +113,12 @@ pub fn routes() -> Router<AppState> {
             get(provider_schema_handler),
         )
         // Token codes
-        .route(
-            "/admin/token-codes/export",
-            get(export_token_codes),
-        )
+        .route("/admin/token-codes/export", get(export_token_codes))
         .route(
             "/admin/token-codes",
             get(list_token_codes).post(generate_token_codes),
         )
-        .route(
-            "/admin/token-codes/:id",
-            delete(delete_token_code_handler),
-        )
+        .route("/admin/token-codes/:id", delete(delete_token_code_handler))
 }
 
 // ── Auth guard ────────────────────────────────────────────────────────────
@@ -280,6 +268,9 @@ async fn create_student(
     };
 
     students::insert_student(&state.pool, &student).await?;
+
+    // Copy goose config template to student's persistent directory
+    common::setup_goose_config(&student.id, &state.students_root);
 
     tracing::info!(student_id = %student.id, username = %student.username, "admin: student created");
     Ok((
@@ -1433,7 +1424,11 @@ async fn generate_token_codes(
         return Err(AppError::BadRequest("count must be 1-500".into()));
     }
     let codes = token_codes::generate_codes(&state.pool, body.tokens, body.count).await?;
-    tracing::info!(tokens = body.tokens, count = body.count, "admin: generated token codes");
+    tracing::info!(
+        tokens = body.tokens,
+        count = body.count,
+        "admin: generated token codes"
+    );
     Ok(Json(serde_json::json!({ "codes": codes })))
 }
 
@@ -1482,7 +1477,15 @@ async fn export_token_codes(
     let codes = token_codes::export_codes(&state.pool, tokens).await?;
     let output = codes
         .into_iter()
-        .map(|c| format!("{},{},{},{}", c.code, c.tokens, c.used_by.as_deref().unwrap_or("unused"), c.used_at.as_deref().unwrap_or("")))
+        .map(|c| {
+            format!(
+                "{},{},{},{}",
+                c.code,
+                c.tokens,
+                c.used_by.as_deref().unwrap_or("unused"),
+                c.used_at.as_deref().unwrap_or("")
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     Ok((

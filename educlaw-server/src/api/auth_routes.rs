@@ -5,7 +5,13 @@
 // POST /auth/token    — dev admin token (guarded by ADMIN_SECRET env var)
 // GET  /cohorts       — list all available cohorts (public)
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::{get, post}, Json, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -13,7 +19,7 @@ use crate::auth;
 use crate::db::{cohorts, students, subjects};
 use crate::error::{AppError, Result};
 
-use super::AppState;
+use super::{common, AppState};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -100,8 +106,7 @@ async fn dev_admin_token(
     State(state): State<AppState>,
     Json(body): Json<DevTokenRequest>,
 ) -> Result<impl IntoResponse> {
-    let expected =
-        std::env::var("ADMIN_SECRET").unwrap_or_else(|_| "dev-secret".to_string());
+    let expected = std::env::var("ADMIN_SECRET").unwrap_or_else(|_| "dev-secret".to_string());
     if body.secret != expected {
         return Err(AppError::Unauthorized);
     }
@@ -132,15 +137,22 @@ async fn student_register(
         return Err(AppError::BadRequest("Display name is required".into()));
     }
     if username.len() < 3 || username.len() > 64 {
-        return Err(AppError::BadRequest("Username must be 3-64 characters".into()));
+        return Err(AppError::BadRequest(
+            "Username must be 3-64 characters".into(),
+        ));
     }
-    if !username.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !username
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(AppError::BadRequest(
             "Username can only contain letters, numbers, underscores and dashes".into(),
         ));
     }
     if body.password.len() < 6 {
-        return Err(AppError::BadRequest("Password must be at least 6 characters".into()));
+        return Err(AppError::BadRequest(
+            "Password must be at least 6 characters".into(),
+        ));
     }
     if body.password != body.confirm_password {
         return Err(AppError::BadRequest("Passwords do not match".into()));
@@ -157,8 +169,14 @@ async fn student_register(
     // Verify cohort_id if provided
     let cohort_id = body.cohort_id.unwrap_or_default();
     if !cohort_id.is_empty() {
-        if cohorts::get_cohort(&state.pool, &cohort_id).await?.is_none() {
-            return Err(AppError::BadRequest(format!("Cohort '{}' not found", cohort_id)));
+        if cohorts::get_cohort(&state.pool, &cohort_id)
+            .await?
+            .is_none()
+        {
+            return Err(AppError::BadRequest(format!(
+                "Cohort '{}' not found",
+                cohort_id
+            )));
         }
     }
 
@@ -187,6 +205,9 @@ async fn student_register(
 
     students::insert_student(&state.pool, &student).await?;
 
+    // Copy goose config template to student's persistent directory
+    common::setup_goose_config(&student.id, &state.students_root);
+
     // Resolve subject_ids for the cohort
     let subject_ids: Vec<String> = if cohort_id.is_empty() {
         vec![]
@@ -207,21 +228,22 @@ async fn student_register(
 
     tracing::info!(username = %username, student_id = %student.id, "student self-registered");
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({
-        "token":        token,
-        "student_id":   student.id,
-        "display_name": student.display_name,
-        "role":         student.role,
-        "cohort_id":    student.cohort_id,
-        "subject_ids":  subject_ids,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "token":        token,
+            "student_id":   student.id,
+            "display_name": student.display_name,
+            "role":         student.role,
+            "cohort_id":    student.cohort_id,
+            "subject_ids":  subject_ids,
+        })),
+    ))
 }
 
 // ── Public cohort list ─────────────────────────────────────────────────────
 
-async fn list_cohorts_public(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse> {
+async fn list_cohorts_public(State(state): State<AppState>) -> Result<impl IntoResponse> {
     let rows = cohorts::list_cohorts(&state.pool).await?;
     Ok(Json(rows))
 }

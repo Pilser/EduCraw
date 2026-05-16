@@ -7,8 +7,6 @@
 // PATCH /me             — update current student's profile (cohort, password, etc.)
 // GET  /me/token-balance — get current student's token balance
 
-use std::path::PathBuf;
-
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -20,10 +18,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::{self, bearer_token};
-use crate::db::{cohorts, students::{self, Student}, subjects, token_codes};
+use crate::db::{
+    cohorts,
+    students::{self, Student},
+    subjects, token_codes,
+};
 use crate::error::{AppError, Result};
 
-use super::AppState;
+use super::{common, AppState};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -34,25 +36,6 @@ pub fn routes() -> Router<AppState> {
         .route("/me", patch(update_me))
         .route("/me/token-balance", get(get_my_token_balance))
         .route("/me/redeem-code", post(redeem_code_handler))
-}
-
-// Recursively copy directory and all contents
-fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let src_path = entry.path();
-        let file_name = entry.file_name();
-        let dst_path = dst.join(&file_name);
-        
-        if ty.is_dir() {
-            copy_dir_all(&src_path.into(), &dst_path.into())?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }
 
 // ── Create student ────────────────────────────────────────────────────────
@@ -98,32 +81,7 @@ async fn create_student(
     students::insert_student(&state.pool, &student).await?;
 
     // Copy goose config template to student's persistent directory
-    let student_dir = PathBuf::from(&state.students_root).join(&student.id);
-    let goose_template = PathBuf::from("/srv/educraw/templates/goose-config/config");
-    let goose_dst = student_dir.join("config");
-
-    if goose_template.exists() {
-        if let Err(e) = copy_dir_all(&goose_template, &goose_dst) {
-            tracing::warn!(
-                student_id = %student.id,
-                error = %e,
-                "failed to copy goose config template"
-            );
-        } else {
-            // Set file permissions: config.yaml 644, secrets.yaml 600
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(goose_dst.join("config.yaml"), std::fs::Permissions::from_mode(0o644));
-                let _ = std::fs::set_permissions(goose_dst.join("secrets.yaml"), std::fs::Permissions::from_mode(0o600));
-            }
-        }
-    } else {
-        tracing::warn!(
-            path = %goose_template.display(),
-            "goose config template not found at /srv/educraw/templates/goose-config/config"
-        );
-    }
+    common::setup_goose_config(&student.id, &state.students_root);
 
     tracing::info!(
         student_id = %student.id,
@@ -168,12 +126,12 @@ async fn get_my_token_balance(
     // Extract student ID from JWT
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
-    
+
     // Get current student's balance
     let student = students::get_student(&state.pool, &claims.sub)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
-    
+
     Ok(Json(TokenBalanceResponse {
         balance: student.token_balance,
     }))
@@ -194,10 +152,7 @@ struct MeResponse {
     available_cohorts: Vec<cohorts::Cohort>,
 }
 
-async fn get_me(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse> {
+async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Result<impl IntoResponse> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
 
@@ -252,10 +207,13 @@ async fn update_me(
     // Password change: verify current first
     let new_hash = if let Some(ref new_pw) = body.new_password {
         if new_pw.len() < 6 {
-            return Err(AppError::BadRequest("New password must be at least 6 characters".into()));
+            return Err(AppError::BadRequest(
+                "New password must be at least 6 characters".into(),
+            ));
         }
-        let current_pw = body.current_password
-            .ok_or_else(|| AppError::BadRequest("Current password is required to change password".into()))?;
+        let current_pw = body.current_password.ok_or_else(|| {
+            AppError::BadRequest("Current password is required to change password".into())
+        })?;
         if !auth::verify_password(&current_pw, &student.password_hash)? {
             return Err(AppError::BadRequest("Current password is incorrect".into()));
         }
@@ -339,12 +297,19 @@ async fn redeem_code_handler(
     let result = token_codes::redeem_code(&state.pool, &code, &claims.sub).await?;
     match result {
         token_codes::RedeemResult::NotFound => {
-            return Err(AppError::BadRequest("Code not found. Please check and try again.".into()));
+            return Err(AppError::BadRequest(
+                "Code not found. Please check and try again.".into(),
+            ));
         }
         token_codes::RedeemResult::AlreadyUsed => {
-            return Err(AppError::BadRequest("This code has already been used.".into()));
+            return Err(AppError::BadRequest(
+                "This code has already been used.".into(),
+            ));
         }
-        token_codes::RedeemResult::Success { tokens, new_balance } => {
+        token_codes::RedeemResult::Success {
+            tokens,
+            new_balance,
+        } => {
             tracing::info!(student_id = %claims.sub, code = %code, tokens, "student redeemed token code");
             Ok(Json(serde_json::json!({
                 "tokens_added": tokens,

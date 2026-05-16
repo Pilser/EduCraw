@@ -4,6 +4,7 @@
 
 mod admin;
 mod auth_routes;
+mod common;
 mod files;
 mod sessions;
 mod students;
@@ -50,7 +51,16 @@ impl AppState {
         subjects_root: String,
         students_root: String,
     ) -> Self {
-        Self { pool, auth, workspace_root, goose_bin, broker, registry, subjects_root, students_root }
+        Self {
+            pool,
+            auth,
+            workspace_root,
+            goose_bin,
+            broker,
+            registry,
+            subjects_root,
+            students_root,
+        }
     }
 }
 
