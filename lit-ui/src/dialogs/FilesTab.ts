@@ -4,7 +4,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Download, Trash2, FilePlus } from "lucide";
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Download, Trash2, FilePlus, FileText, FileCode, FileJson, Image as ImageIcon, FileSpreadsheet, FileVideo, FileAudio, Archive, FileType } from "lucide";
 
 interface FileNode {
 	name: string;
@@ -20,6 +20,7 @@ export class FilesTab extends MenuTab {
 	@property({ type: String }) sessionToken = "";
 	@property({ type: String }) studentToken = "";
 	@property({ type: Array }) subjectIds: string[] = [];
+	@property({ attribute: false }) onPreviewFile?: (node: FileNode, isSubject: boolean, subjectId?: string) => void;
 
 	@state() private subjectFiles: FileNode[] = [];
 	@state() private studentFiles: FileNode[] = [];
@@ -105,12 +106,24 @@ export class FilesTab extends MenuTab {
 		this.requestUpdate();
 	}
 
-	private async handleFileClick(node: FileNode, isStudentFile: boolean) {
+	private handleFileClick(node: FileNode, isStudentFile: boolean) {
 		if (node.kind === "dir") {
 			this.toggleExpand(node.path);
 			return;
 		}
 
+		// If preview callback is provided, use it; otherwise download
+		if (this.onPreviewFile) {
+			const subjectId = !isStudentFile && this.subjectIds.length > 0 ? this.subjectIds[0] : undefined;
+			this.onPreviewFile(node, !isStudentFile, subjectId);
+		} else {
+			this.downloadFile(node, isStudentFile);
+		}
+	}
+
+	private async downloadFile(node: FileNode, isStudentFile: boolean) {
+
+		// Open file in new tab for preview/download
 		try {
 			let blob: Blob;
 			if (isStudentFile) {
@@ -127,16 +140,19 @@ export class FilesTab extends MenuTab {
 				);
 			}
 
-			// Download the file
+			// Create object URL and open in new tab
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
 			a.href = url;
 			a.download = node.name;
+			a.target = "_blank"; // Open in new tab
 			a.click();
-			URL.revokeObjectURL(url);
+			
+			// Clean up after a delay
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
 		} catch (err) {
-			console.error("Failed to download file:", err);
-			alert(`Failed to download file: ${err instanceof Error ? err.message : "Unknown error"}`);
+			console.error("Failed to open file:", err);
+			alert(`Failed to open file: ${err instanceof Error ? err.message : "Unknown error"}`);
 		}
 	}
 
@@ -194,45 +210,88 @@ export class FilesTab extends MenuTab {
 				(node) => html`
 					<div class="select-none">
 						<div
-							class="flex items-center gap-2 px-2 py-1 hover:bg-secondary rounded cursor-pointer transition-colors"
+							class="group flex items-center gap-2 px-2 py-1.5 hover:bg-secondary rounded cursor-pointer transition-colors"
 							style="padding-left: ${level * 16 + 8}px"
 							@click=${() => this.handleFileClick(node, isStudentFile)}
 						>
 							${node.kind === "dir"
-								? html`
-									<span class="w-4 h-4 flex-shrink-0">
-										${this.expandedPaths.has(node.path)
-											? icon(ChevronDown, "xs")
-											: icon(ChevronRight, "xs")}
-									</span>
-									<span class="w-4 h-4 flex-shrink-0 text-muted-foreground">
-										${this.expandedPaths.has(node.path)
-											? icon(FolderOpen, "xs")
-											: icon(Folder, "xs")}
-									</span>
-								`
-								: html`
-									<span class="w-4 h-4 flex-shrink-0"></span>
-									<span class="w-4 h-4 flex-shrink-0 text-muted-foreground">
-										${icon(File, "xs")}
-									</span>
-								`}
-							<span class="text-sm text-foreground flex-1 truncate">${node.name}</span>
-							${node.size !== undefined
-								? html`<span class="text-xs text-muted-foreground">${this.formatFileSize(node.size)}</span>`
-								: ""}
-							${isStudentFile && node.kind === "file"
+							? html`
+								<span class="w-4 h-4 flex-shrink-0">
+									${this.expandedPaths.has(node.path)
+										? icon(ChevronDown, "xs")
+										: icon(ChevronRight, "xs")}
+								</span>
+								<span class="w-4 h-4 flex-shrink-0">
+									${this.expandedPaths.has(node.path)
+										? icon(FolderOpen, "xs", "text-yellow-500")
+										: icon(Folder, "xs", "text-yellow-600")}
+								</span>
+							`
+							: html`
+								<span class="w-4 h-4 flex-shrink-0"></span>
+								<span class="w-4 h-4 flex-shrink-0">
+									${this.getFileIcon(node.name, "xs")}
+								</span>
+							`}
+						<span class="text-sm text-foreground flex-1 truncate">${node.name}</span>
+						${node.size !== undefined
+							? html`<span class="text-xs text-muted-foreground shrink-0">${this.formatFileSize(node.size)}</span>`
+							: ""}
+						${isStudentFile && node.kind === "file"
+							? html`
+								<button
+									class="w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-destructive/20 rounded transition-all"
+									@click=${(e: Event) => {
+										e.stopPropagation();
+										this.handleDeleteFile(node);
+									}}
+									title="Delete"
+								>
+									${icon(Trash2, "xs", "text-destructive")}
+								</button>
+							`
+							: node.kind === "file"
 								? html`
 									<button
-										class="w-6 h-6 flex items-center justify-center hover:bg-destructive/20 rounded transition-colors"
+										class="w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-primary/20 rounded transition-all"
 										@click=${(e: Event) => {
 											e.stopPropagation();
-											this.handleDeleteFile(node);
+											this.downloadFile(node, isStudentFile);
 										}}
-										title="Delete"
+										title="Download"
 									>
-										${icon(Trash2, "xs")}
+										${icon(Download, "xs", "text-primary")}
 									</button>
+								`
+								: ""}
+							${node.kind === "file"
+								? html`
+									<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+										<button
+											class="w-6 h-6 flex items-center justify-center hover:bg-primary/20 rounded transition-colors"
+											@click=${(e: Event) => {
+												e.stopPropagation();
+												this.downloadFile(node, isStudentFile);
+											}}
+											title="Download"
+										>
+											${icon(Download, "xs")}
+										</button>
+										${isStudentFile
+											? html`
+												<button
+													class="w-6 h-6 flex items-center justify-center hover:bg-destructive/20 rounded transition-colors"
+													@click=${(e: Event) => {
+														e.stopPropagation();
+														this.handleDeleteFile(node);
+													}}
+													title="Delete"
+												>
+													${icon(Trash2, "xs")}
+												</button>
+											`
+											: ""}
+									</div>
 								`
 								: ""}
 						</div>
@@ -252,6 +311,48 @@ export class FilesTab extends MenuTab {
 		if (bytes < 1024) return `${bytes} B`;
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	private getFileIcon(fileName: string, size: "xs" | "sm" | "md" = "xs") {
+		const lower = fileName.toLowerCase();
+		
+		// Documents
+		if (lower.endsWith('.pdf')) return icon(FileText, size, "text-red-500");
+		if (lower.endsWith('.md')) return icon(FileText, size, "text-blue-500");
+		if (lower.match(/\.(doc|docx)$/)) return icon(FileText, size, "text-blue-600");
+		if (lower.endsWith('.txt')) return icon(FileType, size, "text-gray-500");
+		
+		// Spreadsheets
+		if (lower.match(/\.(xlsx?|csv)$/)) return icon(FileSpreadsheet, size, "text-green-600");
+		
+		// Images
+		if (lower.match(/\.(png|jpg|jpeg)$/)) return icon(ImageIcon, size, "text-purple-500");
+		if (lower.match(/\.(svg|gif|webp)$/)) return icon(ImageIcon, size, "text-purple-400");
+		
+		// Code files
+		if (lower.match(/\.(py|pyw)$/)) return icon(FileCode, size, "text-blue-400");
+		if (lower.match(/\.(js|jsx|ts|tsx)$/)) return icon(FileCode, size, "text-yellow-500");
+		if (lower.match(/\.(rs|toml)$/)) return icon(FileCode, size, "text-orange-500");
+		if (lower.match(/\.(cpp|c|h|hpp)$/)) return icon(FileCode, size, "text-blue-600");
+		if (lower.match(/\.(java|kt|scala)$/)) return icon(FileCode, size, "text-red-600");
+		if (lower.match(/\.(go|mod)$/)) return icon(FileCode, size, "text-cyan-500");
+		if (lower.match(/\.(php|rb|lua)$/)) return icon(FileCode, size, "text-purple-600");
+		if (lower.match(/\.(html|htm|xml)$/)) return icon(FileCode, size, "text-orange-600");
+		if (lower.match(/\.(css|scss|sass|less)$/)) return icon(FileCode, size, "text-blue-500");
+		
+		// Data files
+		if (lower.endsWith('.json')) return icon(FileJson, size, "text-yellow-600");
+		if (lower.match(/\.(yaml|yml)$/)) return icon(FileJson, size, "text-red-500");
+		
+		// Media
+		if (lower.match(/\.(mp4|avi|mov|mkv|webm)$/)) return icon(FileVideo, size, "text-pink-500");
+		if (lower.match(/\.(mp3|wav|ogg|flac|m4a)$/)) return icon(FileAudio, size, "text-indigo-500");
+		
+		// Archives
+		if (lower.match(/\.(zip|tar|gz|rar|7z)$/)) return icon(Archive, size, "text-yellow-700");
+		
+		// Default
+		return icon(File, size, "text-muted-foreground");
 	}
 
 	getTabName(): string {

@@ -1,0 +1,491 @@
+import { icon } from "@mariozechner/mini-lit";
+import { Button } from "@mariozechner/mini-lit/dist/Button.js";
+import { html, LitElement, type TemplateResult } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
+import { 
+	ChevronDown, 
+	ChevronRight, 
+	File, 
+	Folder, 
+	FolderOpen, 
+	Eye, 
+	Plus, 
+	X,
+	FileText,
+	FileCode,
+	FileJson,
+	Image as ImageIcon,
+	Check,
+	Upload,
+	FileSpreadsheet,
+	FileVideo,
+	FileAudio,
+	Archive,
+	FileType,
+	Loader2
+} from "lucide";
+import { eduApi } from "../core/edu-api.js";
+import { i18n } from "../utils/i18n.js";
+
+interface FileNode {
+	name: string;
+	path: string;
+	kind: "file" | "dir";
+	size?: number;
+	children?: FileNode[];
+}
+
+type Tab = "subject" | "workspace";
+
+@customElement("file-drawer")
+export class FileDrawer extends LitElement {
+	@property({ type: Boolean }) open = false;
+	@property({ type: String }) sessionId = "";
+	@property({ type: String }) sessionToken = "";
+	@property({ type: String }) studentToken = "";
+	@property({ type: Array }) subjectIds: string[] = [];
+	
+	// Callbacks
+	@property() onClose?: () => void;
+	@property() onPreviewFile?: (node: FileNode, isSubject: boolean, subjectId?: string) => void;
+	@property() onAttachFile?: (node: FileNode, isSubject: boolean, subjectId?: string) => void;
+
+	@state() private tab: Tab = "workspace";
+	@state() private subjectFiles: FileNode[] = [];
+	@state() private studentFiles: FileNode[] = [];
+	@state() private loading = false;
+	@state() private error = "";
+	@state() private expandedPaths = new Set<string>();
+	@state() private attachedFiles = new Set<string>(); // Track attached files for visual feedback
+	@state() private uploading = false;
+	@state() private uploadError = "";
+
+	protected override createRenderRoot(): HTMLElement | DocumentFragment {
+		return this;
+	}
+
+	override connectedCallback() {
+		super.connectedCallback();
+		// Position the element itself absolutely so it doesn't affect layout
+		this.style.position = "fixed";
+		this.style.top = "0";
+		this.style.right = "0";
+		this.style.bottom = "0";
+		this.style.left = "0";
+		this.style.pointerEvents = "none"; // Don't block clicks when closed
+		this.style.zIndex = "50"; // Above most content
+	}
+
+	override async updated(changedProperties: Map<string, any>) {
+		super.updated(changedProperties);
+		
+		// Update pointer events based on open state
+		if (changedProperties.has("open")) {
+			this.style.pointerEvents = this.open ? "auto" : "none";
+		}
+		
+		// Load files when drawer opens
+		if (changedProperties.has("open") && this.open && !this.loading) {
+			if (this.subjectFiles.length === 0 && this.studentFiles.length === 0) {
+				await this.loadFiles();
+			}
+		}
+	}
+
+	private async loadFiles() {
+		this.loading = true;
+		this.error = "";
+		this.requestUpdate();
+
+		try {
+			// Load subject files
+			if (this.subjectIds.length > 0 && this.studentToken) {
+				try {
+					this.subjectFiles = await eduApi.listSubjectFiles(
+						this.subjectIds[0],
+						this.studentToken
+					);
+				} catch (err) {
+					console.warn("[FileDrawer] Failed to load subject files:", err);
+				}
+			}
+
+			// Load student workspace files
+			if (this.sessionId && this.sessionToken) {
+				try {
+					this.studentFiles = await eduApi.listStudentFiles(
+						this.sessionId,
+						this.sessionToken
+					);
+				} catch (err) {
+					console.warn("[FileDrawer] Failed to load student files:", err);
+					this.error = `Failed to load workspace files`;
+				}
+			}
+		} catch (err) {
+			console.error("[FileDrawer] Failed to load files:", err);
+			this.error = err instanceof Error ? err.message : "Failed to load files";
+		} finally {
+			this.loading = false;
+			this.requestUpdate();
+		}
+	}
+
+	private toggleExpand(path: string) {
+		if (this.expandedPaths.has(path)) {
+			this.expandedPaths.delete(path);
+		} else {
+			this.expandedPaths.add(path);
+		}
+		this.requestUpdate();
+	}
+
+	private handlePreview(node: FileNode, e: Event) {
+		e.stopPropagation();
+		const isSubject = this.tab === "subject";
+		const subjectId = isSubject ? this.subjectIds[0] : undefined;
+		this.onPreviewFile?.(node, isSubject, subjectId);
+	}
+
+	private handleAttach(node: FileNode, e: Event) {
+		e.stopPropagation();
+		const isSubject = this.tab === "subject";
+		const subjectId = isSubject ? this.subjectIds[0] : undefined;
+		
+		// Add to attached set for visual feedback
+		this.attachedFiles.add(node.path);
+		this.requestUpdate();
+		
+		// Call callback
+		this.onAttachFile?.(node, isSubject, subjectId);
+		
+		// Remove visual feedback after 2 seconds
+		setTimeout(() => {
+			this.attachedFiles.delete(node.path);
+			this.requestUpdate();
+		}, 2000);
+	}
+
+	private getFileIcon(fileName: string) {
+		const lower = fileName.toLowerCase();
+		
+		// Documents
+		if (lower.endsWith('.pdf')) return icon(FileText, "sm", "text-red-500");
+		if (lower.endsWith('.md')) return icon(FileText, "sm", "text-blue-500");
+		if (lower.match(/\.(doc|docx)$/)) return icon(FileText, "sm", "text-blue-600");
+		if (lower.endsWith('.txt')) return icon(FileType, "sm", "text-gray-500");
+		
+		// Spreadsheets
+		if (lower.match(/\.(xlsx?|csv)$/)) return icon(FileSpreadsheet, "sm", "text-green-600");
+		
+		// Images
+		if (lower.match(/\.(png|jpg|jpeg)$/)) return icon(ImageIcon, "sm", "text-purple-500");
+		if (lower.match(/\.(svg|gif|webp)$/)) return icon(ImageIcon, "sm", "text-purple-400");
+		
+		// Code files
+		if (lower.match(/\.(py|pyw)$/)) return icon(FileCode, "sm", "text-blue-400");
+		if (lower.match(/\.(js|jsx|ts|tsx)$/)) return icon(FileCode, "sm", "text-yellow-500");
+		if (lower.match(/\.(rs|toml)$/)) return icon(FileCode, "sm", "text-orange-500");
+		if (lower.match(/\.(cpp|c|h|hpp)$/)) return icon(FileCode, "sm", "text-blue-600");
+		if (lower.match(/\.(java|kt|scala)$/)) return icon(FileCode, "sm", "text-red-600");
+		if (lower.match(/\.(go|mod)$/)) return icon(FileCode, "sm", "text-cyan-500");
+		if (lower.match(/\.(php|rb|lua)$/)) return icon(FileCode, "sm", "text-purple-600");
+		if (lower.match(/\.(html|htm|xml)$/)) return icon(FileCode, "sm", "text-orange-600");
+		if (lower.match(/\.(css|scss|sass|less)$/)) return icon(FileCode, "sm", "text-blue-500");
+		
+		// Data files
+		if (lower.endsWith('.json')) return icon(FileJson, "sm", "text-yellow-600");
+		if (lower.match(/\.(yaml|yml)$/)) return icon(FileJson, "sm", "text-red-500");
+		
+		// Media
+		if (lower.match(/\.(mp4|avi|mov|mkv|webm)$/)) return icon(FileVideo, "sm", "text-pink-500");
+		if (lower.match(/\.(mp3|wav|ogg|flac|m4a)$/)) return icon(FileAudio, "sm", "text-indigo-500");
+		
+		// Archives
+		if (lower.match(/\.(zip|tar|gz|rar|7z)$/)) return icon(Archive, "sm", "text-yellow-700");
+		
+		// Default
+		return icon(File, "sm", "text-muted-foreground");
+	}
+
+	private renderFileRow(node: FileNode, level = 0): TemplateResult {
+		const isSubject = this.tab === "subject";
+		const indent = level * 16;
+		const isAttached = this.attachedFiles.has(node.path);
+
+		if (node.kind === "dir") {
+			const isExpanded = this.expandedPaths.has(node.path);
+			return html`
+				<div>
+					<div
+						class="flex items-center gap-2 px-2 py-1.5 hover:bg-secondary rounded cursor-pointer transition-colors"
+						style="padding-left: ${indent + 8}px"
+						@click=${() => this.toggleExpand(node.path)}
+					>
+						<span class="w-4 h-4 flex-shrink-0 text-muted-foreground">
+							${isExpanded ? icon(ChevronDown, "xs") : icon(ChevronRight, "xs")}
+						</span>
+						<span class="w-4 h-4 flex-shrink-0 text-muted-foreground">
+							${isExpanded ? icon(FolderOpen, "xs") : icon(Folder, "xs")}
+						</span>
+						<span class="text-sm text-foreground flex-1 truncate">${node.name}</span>
+					</div>
+					${isExpanded && node.children && node.children.length > 0
+						? html`<div>${node.children.map(child => this.renderFileRow(child, level + 1))}</div>`
+						: ""}
+				</div>
+			`;
+		}
+
+		// File row - clicking anywhere opens preview
+		return html`
+			<div
+				class="group flex items-center gap-2 px-2 py-1.5 hover:bg-secondary rounded transition-colors cursor-pointer ${isAttached ? 'bg-primary/10 border-l-2 border-primary' : ''}"
+				style="padding-left: ${indent + 8}px"
+				@click=${(e: Event) => {
+					// If clicking on action buttons, don't trigger preview
+					const target = e.target as HTMLElement;
+					if (target.closest('button')) return;
+					this.handlePreview(node, e);
+				}}
+			>
+				<span class="w-4 h-4 flex-shrink-0"></span>
+				<span class="w-4 h-4 flex-shrink-0">
+					${this.getFileIcon(node.name)}
+				</span>
+				<span class="text-sm text-foreground flex-1 truncate" title="${node.name}">${node.name}</span>
+				${node.size !== undefined
+					? html`<span class="text-xs text-muted-foreground">${this.formatFileSize(node.size)}</span>`
+					: ""}
+				
+				<!-- Action buttons (show on hover, always visible on mobile) -->
+				<div class="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+					${isAttached
+						? html`
+							<div class="flex items-center gap-1 px-2 py-1 bg-primary/20 rounded text-xs text-primary font-medium">
+								${icon(Check, "xs")}
+								<span>Attached</span>
+							</div>
+						`
+						: html`
+							<button
+								class="h-7 w-7 flex items-center justify-center hover:bg-primary/20 rounded transition-colors"
+								@click=${(e: Event) => this.handlePreview(node, e)}
+								title="${i18n('Preview')}"
+							>
+								${icon(Eye, "xs")}
+							</button>
+							<button
+								class="h-7 w-7 flex items-center justify-center hover:bg-primary/20 rounded transition-colors"
+								@click=${(e: Event) => this.handleAttach(node, e)}
+								title="Attach to chat"
+							>
+								${icon(Plus, "xs")}
+							</button>
+						`}
+				</div>
+			</div>
+		`;
+	}
+
+	private formatFileSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	private async handleUploadFiles(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const files = Array.from(input.files || []);
+		if (files.length === 0) return;
+
+		this.uploading = true;
+		this.uploadError = "";
+		this.requestUpdate();
+
+		const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
+		try {
+			for (const file of files) {
+				if (file.size > MAX_FILE_SIZE) {
+					this.uploadError = `File "${file.name}" exceeds 50MB limit`;
+					continue;
+				}
+
+				const content = await file.arrayBuffer();
+				const relativePath = `uploads/${file.name}`;
+				
+				await eduApi.writeStudentFile(
+					this.sessionId,
+					relativePath,
+					new Blob([content]),
+					this.sessionToken
+				);
+			}
+
+			// Reload files after upload
+			await this.loadFiles();
+			input.value = ""; // Reset input
+		} catch (err) {
+			console.error("[FileDrawer] Upload failed:", err);
+			this.uploadError = err instanceof Error ? err.message : "Upload failed";
+		} finally {
+			this.uploading = false;
+			this.requestUpdate();
+		}
+	}
+
+	override render() {
+		const files = this.tab === "subject" ? this.subjectFiles : this.studentFiles;
+
+		return html`
+			<!-- Drawer Container -->
+			<div
+				class="absolute top-0 right-0 h-full flex flex-col bg-card border-l border-border shadow-2xl transition-transform duration-300 ease-in-out
+					${this.open ? 'translate-x-0' : 'translate-x-full'}
+					w-full md:w-1/2 max-w-2xl"
+				style="pointer-events: auto;"
+			>
+				<!-- Header -->
+				<div class="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border bg-card">
+					<h2 class="text-lg font-semibold text-foreground">Files</h2>
+					<button
+						class="h-8 w-8 flex items-center justify-center hover:bg-secondary rounded transition-colors"
+						@click=${() => {
+							this.open = false;
+							this.onClose?.();
+						}}
+						title="${i18n('Close')}"
+					>
+						${icon(X, "sm")}
+					</button>
+				</div>
+
+				<!-- Tabs -->
+				<div class="shrink-0 flex border-b border-border bg-muted/30">
+					<button
+						class="flex-1 px-4 py-3 text-sm font-medium transition-colors relative
+							${this.tab === 'subject' 
+								? 'text-primary border-b-2 border-primary bg-card' 
+								: 'text-muted-foreground hover:text-foreground hover:bg-secondary'}"
+						@click=${() => { this.tab = 'subject'; }}
+					>
+						Subject Files
+					</button>
+					<button
+						class="flex-1 px-4 py-3 text-sm font-medium transition-colors relative
+							${this.tab === 'workspace' 
+								? 'text-primary border-b-2 border-primary bg-card' 
+								: 'text-muted-foreground hover:text-foreground hover:bg-secondary'}"
+						@click=${() => { this.tab = 'workspace'; }}
+					>
+						Workspace
+					</button>
+				</div>
+
+				<!-- Upload Bar (Workspace tab only) -->
+				${this.tab === 'workspace'
+					? html`
+						<div class="shrink-0 px-3 py-2 border-b border-border bg-accent/10">
+							<input
+								type="file"
+								id="file-upload-input"
+								multiple
+								@change=${this.handleUploadFiles}
+								class="hidden"
+								?disabled=${this.uploading}
+							/>
+							<button
+								class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+								@click=${() => document.getElementById('file-upload-input')?.click()}
+								?disabled=${this.uploading}
+							>
+								${this.uploading 
+									? html`${icon(Loader2, "sm", "animate-spin")} <span>Uploading...</span>`
+									: html`${icon(Upload, "sm")} <span>Upload Files</span>`
+								}
+							</button>
+							${this.uploadError
+								? html`
+									<div class="mt-2 px-3 py-2 bg-destructive/10 border border-destructive text-destructive text-xs rounded">
+										${this.uploadError}
+									</div>
+								`
+								: ""}
+						</div>
+					`
+					: ""}
+
+				<!-- Content Area -->
+				<div class="flex-1 overflow-y-auto p-2">
+					${this.loading
+						? html`
+							<div class="flex items-center justify-center h-full">
+								<div class="text-center">
+									<div class="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin mx-auto mb-2"></div>
+									<p class="text-sm text-muted-foreground">Loading files...</p>
+								</div>
+							</div>
+						`
+						: this.error
+							? html`
+							<div class="flex items-center justify-center h-full p-4">
+								<div class="text-center text-destructive">
+									<p class="font-medium mb-1">Error</p>
+										<p class="text-sm">${this.error}</p>
+									</div>
+								</div>
+							`
+							: files.length === 0
+								? html`
+								<div class="flex flex-col items-center justify-center h-full text-center p-4">
+									${icon(Folder, "lg", "text-muted-foreground opacity-30 mb-2")}
+									<p class="text-sm font-medium text-muted-foreground">No files yet</p>
+									<p class="text-xs text-muted-foreground mt-1">
+										${this.tab === 'workspace' 
+											? 'Files you create will appear here' 
+											: 'No course materials available'}
+										</p>
+									</div>
+								`
+								: html`
+									<div class="space-y-0.5">
+										${files.map(node => {
+											const subId = this.tab === 'subject' ? node.name : undefined;
+											return this.renderFileRow(node, 0);
+										})}
+									</div>
+								`}
+				</div>
+
+				<!-- Footer hint -->
+				<div class="shrink-0 px-4 py-2 border-t border-border bg-muted/30">
+					<p class="text-xs text-muted-foreground text-center">
+						${icon(Eye, "xs", "inline-block mr-1")} Preview · 
+						${icon(Plus, "xs", "inline-block mx-1")} Attach to chat
+					</p>
+				</div>
+			</div>
+
+			<!-- Backdrop (mobile only) -->
+			${this.open
+				? html`
+					<div
+						class="absolute inset-0 bg-background/80 backdrop-blur-sm md:hidden"
+						style="pointer-events: auto; z-index: -1;"
+						@click=${() => {
+							this.open = false;
+							this.onClose?.();
+						}}
+					></div>
+				`
+				: ""}
+		`;
+	}
+}
+
+declare global {
+	interface HTMLElementTagNameMap {
+		"file-drawer": FileDrawer;
+	}
+}

@@ -29,6 +29,11 @@ import { FilesTab } from "../dialogs/FilesTab.js";
 import { SessionsTab } from "../dialogs/SessionsTab.js";
 import { AccountTab } from "../dialogs/AccountTab.js";
 import "../dialogs/LandingBanner.js";
+import "../components/FileDrawer.js";
+import "../components/FileDrawerToggle.js";
+import "../components/FilePreviewModal.js";
+import type { FileDrawer } from "../components/FileDrawer.js";
+import type { FilePreviewModal } from "../components/FilePreviewModal.js";
 
 @customElement("chat-page")
 export class ChatPage extends LitElement {
@@ -41,10 +46,15 @@ export class ChatPage extends LitElement {
   @state() private isEditingTitle = false;
   @state() private showLanding = true;
   @state() private tokenBalance = 0;
+  @state() private fileDrawerOpen = false;
+  @state() private previewModalOpen = false;
 
   private agent?: Agent;
   private chatPanel?: ChatPanel;
   private lastLoadedThreadId: string | null = null; // Track loaded session
+  private fileDrawer?: FileDrawer;
+  private previewModal?: FilePreviewModal;
+  private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
 
   /**
    * Helper: Detect if an error is auth-related (401/403)
@@ -638,6 +648,9 @@ export class ChatPage extends LitElement {
     filesTab.sessionToken = this.sessionToken;
     filesTab.studentToken = this.auth.token;
     filesTab.subjectIds = this.auth.subject_ids;
+    filesTab.onPreviewFile = (node: any, isSubject: boolean, subjectId?: string) => {
+      this.handleFilePreview(node, isSubject, subjectId);
+    };
 
     const sessionsTab = new SessionsTab();
     sessionsTab.sessionId = this.sessionId;
@@ -665,6 +678,9 @@ export class ChatPage extends LitElement {
     filesTab.sessionToken = this.sessionToken;
     filesTab.studentToken = this.auth.token;
     filesTab.subjectIds = this.auth.subject_ids;
+    filesTab.onPreviewFile = (node: any, isSubject: boolean, subjectId?: string) => {
+      this.handleFilePreview(node, isSubject, subjectId);
+    };
 
     const sessionsTab = new SessionsTab();
     sessionsTab.sessionId = this.sessionId;
@@ -725,6 +741,56 @@ export class ChatPage extends LitElement {
     this.dispatchEvent(
       new CustomEvent("logout", { bubbles: true, composed: true }),
     );
+  }
+
+  // ── File Drawer Handlers ──
+
+  private handleFilePreview(node: any, isSubject: boolean, subjectId?: string) {
+    console.log("[chat-page] Preview file:", node.name);
+    this.currentPreviewFile = { node, isSubject, subjectId };
+    this.previewModalOpen = true;
+    this.requestUpdate();
+  }
+
+  private handleFileAttach(node: any, isSubject: boolean, subjectId?: string) {
+    console.log("[chat-page] Attach file:", node.name, "isSubject:", isSubject);
+    
+    // Build file path tag based on location
+    let filePathTag: string;
+    if (isSubject && subjectId) {
+      // Subject file: include subject folder in path
+      filePathTag = `[Subject: ${subjectId}/${node.path}]`;
+    } else {
+      // Workspace file: user's workspace path
+      filePathTag = `[Workspace: ${node.path}]`;
+    }
+    
+    // Add file reference to the chat input via AgentInterface's MessageEditor
+    if (this.chatPanel?.agentInterface) {
+      const messageEditor = (this.chatPanel.agentInterface as any)._messageEditor;
+      if (messageEditor) {
+        const currentValue = messageEditor.value || '';
+        const newValue = currentValue ? `${currentValue}\n${filePathTag}` : filePathTag;
+        messageEditor.value = newValue;
+        
+        // Focus the input
+        requestAnimationFrame(() => {
+          const textarea = messageEditor.shadowRoot?.querySelector('textarea') || 
+                          messageEditor.querySelector('textarea');
+          if (textarea) {
+            textarea.focus();
+          }
+        });
+        
+        console.log("[chat-page] File path added to input:", filePathTag);
+      }
+    }
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   render() {
@@ -828,7 +894,7 @@ export class ChatPage extends LitElement {
         </div>
 
         <!-- Chat Area -->
-        <div class="flex-1 flex flex-col min-h-0">
+        <div class="flex-1 flex flex-col min-h-0 relative">
           ${this.showLanding && this._ready
             ? html`<landing-banner
                 .onNewChat=${() => this.newSession()}
@@ -837,6 +903,56 @@ export class ChatPage extends LitElement {
               ></landing-banner>`
             : ''}
           <div class="flex-1 min-h-0 chat-container" style="${this.showLanding && this._ready ? 'display:none' : ''}"></div>
+
+          <!-- File Drawer Toggle Button -->
+          ${!this.showLanding && this._ready
+            ? html`
+              <file-drawer-toggle
+                .drawerOpen=${this.fileDrawerOpen}
+                .onClick=${() => {
+                  this.fileDrawerOpen = !this.fileDrawerOpen;
+                  this.requestUpdate();
+                }}
+              ></file-drawer-toggle>
+            `
+            : ''}
+
+          <!-- File Drawer -->
+          <file-drawer
+            .open=${this.fileDrawerOpen}
+            .sessionId=${this.sessionId}
+            .sessionToken=${this.sessionToken}
+            .studentToken=${this.auth.token}
+            .subjectIds=${this.auth.subject_ids || []}
+            .onClose=${() => {
+              this.fileDrawerOpen = false;
+              this.requestUpdate();
+            }}
+            .onPreviewFile=${(node: any, isSubject: boolean, subjectId?: string) => 
+              this.handleFilePreview(node, isSubject, subjectId)}
+            .onAttachFile=${(node: any, isSubject: boolean, subjectId?: string) => 
+              this.handleFileAttach(node, isSubject, subjectId)}
+          ></file-drawer>
+
+          <!-- File Preview Modal -->
+          <file-preview-modal
+            .open=${this.previewModalOpen}
+            .fileNode=${this.currentPreviewFile?.node}
+            .isSubject=${this.currentPreviewFile?.isSubject || false}
+            .subjectId=${this.currentPreviewFile?.subjectId}
+            .sessionId=${this.sessionId}
+            .sessionToken=${this.sessionToken}
+            .studentToken=${this.auth.token}
+            .onClose=${() => {
+              this.previewModalOpen = false;
+              this.requestUpdate();
+            }}
+            .onAttach=${(node: any, isSubject: boolean, subjectId?: string) => {
+              this.handleFileAttach(node, isSubject, subjectId);
+              this.previewModalOpen = false;
+              this.requestUpdate();
+            }}
+          ></file-preview-modal>
         </div>
       </div>
     `;
