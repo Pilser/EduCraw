@@ -1,4 +1,3 @@
-// Registry of custom message renderers by role
 const messageRenderers = new Map();
 export function registerMessageRenderer(role, renderer) {
     messageRenderers.set(role, renderer);

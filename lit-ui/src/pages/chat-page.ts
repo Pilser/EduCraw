@@ -1,21 +1,18 @@
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
+import { createWsStreamFn, type StreamCallbacks } from "../core/ws-stream-fn.js";
+import { eduApi } from "../core/edu-api.js";
+import { SessionManager } from "../core/session-manager.js";
+import { WsManager } from "../core/ws-manager.js";
 import type {
-  Model,
-  UserMessage,
-  AssistantMessage,
-  TextContent,
-  ToolCall,
-  ToolResultMessage,
-} from "@earendil-works/pi-ai";
-import { createWsStreamFn } from "../core/ws-stream-fn";
-import { eduModelToPiModel } from "../core/edu-model-provider";
-import { eduApi } from "../core/edu-api";
-import { SessionManager } from "../core/session-manager";
-import { WsManager } from "../core/ws-manager";
-import type { LoginResponse, EduModel, SessionListItem } from "../core/edu-types";
-import { defaultConvertToLlm } from "../components/Messages.js";
+  LoginResponse,
+  EduModel,
+  SessionListItem,
+  BackendAssistantMessage,
+  BackendMessage,
+  BackendUserMessage,
+  BackendToolCallBlock,
+} from "../core/edu-types.js";
 import "../ChatPanel.js";
 import type { ChatPanel } from "../ChatPanel.js";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
@@ -49,38 +46,24 @@ export class ChatPage extends LitElement {
   @state() private fileDrawerOpen = false;
   @state() private previewModalOpen = false;
 
-  private agent?: Agent;
+  @state() private messages: BackendMessage[] = [];
+  @state() private isStreaming = false;
+  @state() private streamingMessage: BackendAssistantMessage | null = null;
+
   private chatPanel?: ChatPanel;
-  private lastLoadedThreadId: string | null = null; // Track loaded session
+  private lastLoadedThreadId: string | null = null;
   private fileDrawer?: FileDrawer;
   private previewModal?: FilePreviewModal;
   private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
+  private wsStreamFn?: (input: string, callbacks: StreamCallbacks) => void;
 
-  /**
-   * Helper: Detect if an error is auth-related (401/403)
-   */
   private isAuthError(err: any): boolean {
-    // Check for HTTP error status codes
-    if (err?.status === 401 || err?.status === 403) {
-      return true;
-    }
-    // Check for "Unauthorized" in error message
-    if (
-      err?.message?.includes("Unauthorized") ||
-      err?.message?.includes("unauthorized")
-    ) {
-      return true;
-    }
-    // Check for common auth error patterns
-    if (err?.response?.status === 401 || err?.response?.status === 403) {
-      return true;
-    }
+    if (err?.status === 401 || err?.status === 403) return true;
+    if (err?.message?.includes("Unauthorized") || err?.message?.includes("unauthorized")) return true;
+    if (err?.response?.status === 401 || err?.response?.status === 403) return true;
     return false;
   }
 
-  /**
-   * Helper: Dispatch session-expired event when auth fails
-   */
   private dispatchSessionExpired() {
     console.log("Session expired - dispatching session-expired event");
     this.dispatchEvent(
@@ -100,11 +83,9 @@ export class ChatPage extends LitElement {
       await this.initChat();
       this._ready = true;
       this.loadBalance();
-      // Wait for re-render so .chat-container exists in DOM, then append
       await this.updateComplete;
       this.appendChatPanel();
-      
-      // IMPORTANT: Wait for WsManager to connect before loading session
+
       const wsManager = WsManager.getExistingInstance(
         this.sessionId,
         this.sessionToken,
@@ -114,7 +95,6 @@ export class ChatPage extends LitElement {
         const connected = await wsManager.waitForConnection(10000);
         if (connected) {
           console.log("[chat-page] WebSocket connected - loading recent session");
-          // After chat is visible and WS is connected, try to load the most recent session
           this.loadMostRecentSession();
         } else {
           console.error(
@@ -123,7 +103,6 @@ export class ChatPage extends LitElement {
         }
       }
     } catch (err) {
-      // Check if this is an authentication error (session expired)
       if (this.isAuthError(err)) {
         console.warn(
           "Authentication error detected during initialization",
@@ -155,56 +134,18 @@ export class ChatPage extends LitElement {
   }
 
   private async initChat() {
-    // Fetch models to get the active model
-    let model: Model<any> | undefined;
+    let activeModelName = "grok-4-1-fast-reasoning";
     try {
       const sessionModels = await eduApi.getSessionModels(
         this.sessionId,
         this.auth.token,
       );
-      
-      // Backend returns 'active' as the model NAME (not id)
-      // Priority: student.last_model → session.model → "grok-4-1-fast-reasoning"
-      const activeModel = sessionModels.models.find(
-        (m: EduModel) => m.name === sessionModels.active,
-      );
-      
-      if (activeModel) {
-        model = eduModelToPiModel(activeModel);
-      } else if (sessionModels.models.length > 0) {
-        // Fallback to first available model if active not found
-        console.warn("[chat-page] Active model not found in list, using first available");
-        model = eduModelToPiModel(sessionModels.models[0]);
-      }
+      activeModelName = sessionModels.active || activeModelName;
     } catch (err) {
-      // Check if this is an authentication error (session expired)
-      if (this.isAuthError(err)) {
-        console.warn("Authentication error while fetching session models", err);
-        throw err; // Re-throw to be caught by firstUpdated
-      }
-      // Will use default model for other errors
+      if (this.isAuthError(err)) throw err;
       console.error("Failed to fetch session models:", err);
     }
 
-    // Ensure we always have a model (fallback to default)
-    if (!model) {
-      console.warn("No model found, using default grok-4-1-fast-reasoning");
-      model = {
-        id: "grok-4-1-fast-reasoning",
-        name: "Grok 4.1 Fast Reasoning",
-        api: "unknown",
-        provider: "xai",
-        baseUrl: "",
-        reasoning: true,
-        input: ["text"],
-        contextWindow: 200000,
-        maxTokens: 8192,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      };
-    }
-
-    // IMPORTANT: Create WsManager BEFORE creating Agent
-    // This ensures the persistent connection exists for session replay
     console.log("[chat-page] Creating persistent WsManager connection");
     WsManager.getInstance({
       sessionId: this.sessionId,
@@ -214,7 +155,6 @@ export class ChatPage extends LitElement {
         this.handleReconnection();
       },
       onError: (error) => {
-        // Handle session expiration or auth failures
         console.error("[chat-page] WsManager error:", error.message);
         if (
           error.message.includes("Session expired") ||
@@ -224,57 +164,34 @@ export class ChatPage extends LitElement {
           this.dispatchSessionExpired();
         }
       },
-      onMessage: () => {
-        // Initial empty handler - will be overridden by ws-stream-fn
+      onMessage: () => {},
+    });
+
+    this.wsStreamFn = createWsStreamFn({
+      sessionId: this.sessionId,
+      authToken: this.sessionToken,
+      onStreamStart: () => {
+        if (this.showLanding) {
+          this.showLanding = false;
+          this.requestUpdate();
+        }
       },
     });
 
-    // Create the Agent with WebSocket stream function
-    // Pass convertToLlm to handle UserMessageWithAttachments (file attachments)
-    // Pass onReconnected handler to reload session on reconnection
-    this.agent = new Agent({
-      initialState: {
-        model: model,
-        thinkingLevel: "off",
-      },
-      streamFn: createWsStreamFn({
-        sessionId: this.sessionId,
-        authToken: this.sessionToken,
-        onStreamStart: () => {
-          if (this.showLanding) {
-            this.showLanding = false;
-            this.requestUpdate();
-          }
-        },
-      }),
-      convertToLlm: defaultConvertToLlm,
-      // EduCraw: tools are executed server-side. The agent loop must not
-      // try to execute them locally — it would fail (no tools registered)
-      // and then re-prompt, causing an infinite re-send loop.
-      skipToolExecution: true,
-    });
-
-    // Create ChatPanel and set the agent
     this.chatPanel = document.createElement("pi-chat-panel") as ChatPanel;
-    await this.chatPanel.setAgent(this.agent, {
+    this.chatPanel.init({
+      onSend: (text: string) => this.handleSend(text),
+      onCancel: () => this.handleCancel(),
       onModelSelect: async () => {
         const { ModelSelector } = await import("../dialogs/ModelSelector.js");
-        ModelSelector.open(this.agent!.state.model, async (newModel) => {
-          this.agent!.state.model = newModel;
-          
-          // Force UI update to show new model immediately
-          if (this.chatPanel?.agentInterface) {
-            this.chatPanel.agentInterface.requestUpdate();
-          }
-          
+        ModelSelector.open(activeModelName, async (newModelId) => {
           try {
             await eduApi.setSessionModel(
               this.sessionId,
               this.auth.token,
-              newModel.id,
+              newModelId,
             );
           } catch (err) {
-            // Check if this is an authentication error
             if (this.isAuthError(err)) {
               console.warn("Session expired while switching model", err);
               this.dispatchSessionExpired();
@@ -285,15 +202,19 @@ export class ChatPage extends LitElement {
         });
       },
     });
+
+    if (this.chatPanel.agentInterface) {
+      this.chatPanel.agentInterface.messages = this.messages;
+      this.chatPanel.agentInterface.currentModel = {
+        id: activeModelName,
+        name: activeModelName,
+        provider: "unknown",
+        reasoning: true,
+      };
+    }
   }
 
-  // ── Session auto-load (matches legacy educlaw-web behavior) ──
-
-  /**
-   * Handle WebSocket reconnection - reload last session to restore state
-   */
   private handleReconnection() {
-    // Try to reload the last loaded session if we have one
     const lastThreadId = SessionManager.loadLastThreadId(this.sessionId);
     if (lastThreadId) {
       console.log(
@@ -307,46 +228,121 @@ export class ChatPage extends LitElement {
     }
   }
 
-  /** Helper: finalize current assistant message and push to array */
-  private flushAssistant(
-    msgs: AgentMessage[],
-    assistant: AssistantMessage | null,
-  ): AssistantMessage | null {
-    if (assistant && assistant.content.length > 0) {
-      msgs.push(assistant);
-    }
-    return null;
-  }
+  private async handleSend(text: string) {
+    if (!this.wsStreamFn || this.isStreaming) return;
 
-  /** Helper: create a fresh assistant message shell */
-  private makeAssistantMsg(): AssistantMessage {
-    const m = this.agent!.state.model;
-    return {
-      role: "assistant",
-      content: [],
-      api: m.api,
-      provider: m.provider,
-      model: m.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
+    const userMsg: BackendUserMessage = {
+      role: "user",
+      content: text,
       timestamp: Date.now(),
     };
+    this.messages = [...this.messages, userMsg];
+    this.isStreaming = true;
+    this.showLanding = false;
+    this.streamingMessage = null;
+
+    if (!this.currentTitle) {
+      this.currentTitle = this.generateTitleFromText(text);
+    }
+
+    const callbacks: StreamCallbacks = {
+      onTextStart: () => {
+        this.streamingMessage = {
+          role: "assistant",
+          content: [],
+          timestamp: Date.now(),
+        };
+        this.updateStreaming();
+      },
+      onTextDelta: (delta: string) => {
+        if (!this.streamingMessage) return;
+        const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
+        if (lastBlock && lastBlock.type === "text") {
+          (lastBlock as any).text += delta;
+        } else {
+          this.streamingMessage.content.push({ type: "text", text: delta });
+        }
+        this.updateStreaming();
+      },
+      onTextEnd: () => {
+        this.updateStreaming();
+      },
+      onThinkingStart: () => {
+        if (!this.streamingMessage) return;
+        this.streamingMessage.content.push({
+          type: "thinking",
+          thinking: "",
+        } as any);
+        this.updateStreaming();
+      },
+      onThinkingDelta: (delta: string) => {
+        if (!this.streamingMessage) return;
+        const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
+        if (lastBlock && lastBlock.type === "thinking") {
+          (lastBlock as any).thinking += delta;
+        }
+        this.updateStreaming();
+      },
+      onThinkingEnd: () => {
+        this.updateStreaming();
+      },
+      onToolCallStart: (toolCall: BackendToolCallBlock) => {
+        if (!this.streamingMessage) return;
+        this.streamingMessage.content.push(toolCall);
+        this.updateStreaming();
+      },
+      onToolCallEnd: (toolCall: BackendToolCallBlock) => {
+        this.updateStreaming();
+      },
+      onDone: (msg: BackendAssistantMessage) => {
+        this.messages = [...this.messages, msg];
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.updateUI();
+      },
+      onError: (error: Error) => {
+        console.error("[chat-page] Stream error:", error);
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.updateUI();
+      },
+    };
+
+    this.wsStreamFn(text, callbacks);
+    this.updateUI();
   }
 
-  /**
-   * Load a specific session by thread ID using the persistent WsManager
-   */
-  private async loadSessionById(threadId: string) {
-    if (!this.agent) return;
+  private handleCancel() {
+    const wsManager = WsManager.getExistingInstance(
+      this.sessionId,
+      this.sessionToken,
+    );
+    if (wsManager) {
+      wsManager.send({ type: "cancel" });
+    }
+    this.isStreaming = false;
+    this.streamingMessage = null;
+    this.updateUI();
+  }
 
-    // Get the persistent WsManager instance (already created by Agent)
+  private updateStreaming() {
+    if (this.chatPanel?.agentInterface) {
+      this.chatPanel.agentInterface.isStreaming = this.isStreaming;
+      this.chatPanel.agentInterface.setStreamingMessage(this.streamingMessage);
+    }
+    this.requestUpdate();
+  }
+
+  private updateUI() {
+    if (this.chatPanel?.agentInterface) {
+      this.chatPanel.agentInterface.messages = this.messages;
+      this.chatPanel.agentInterface.isStreaming = this.isStreaming;
+      this.chatPanel.agentInterface.setStreamingMessage(null, true);
+    }
+    this.requestUpdate();
+  }
+
+  private async loadSessionById(threadId: string) {
     const wsManager = WsManager.getExistingInstance(
       this.sessionId,
       this.sessionToken,
@@ -358,98 +354,84 @@ export class ChatPage extends LitElement {
 
     console.log(`[replay] Loading session ${threadId} via persistent WsManager`);
 
-    // Replay state
-    const replayedMessages: AgentMessage[] = [];
-    let currentAssistant: AssistantMessage | null = null;
-    let currentTextContent: TextContent | null = null;
-    let currentThinkingContent: { type: "thinking"; thinking: string } | null =
-      null;
+    const replayedMessages: BackendMessage[] = [];
+    let currentAssistant: BackendAssistantMessage | null = null;
+    let currentText = "";
+    let currentThinking = "";
     let pendingToolCallId: string | null = null;
     let replayComplete = false;
 
-    // Save the original onMessage handler from ws-stream-fn
     const originalOnMessage = (wsManager as any).onMessage;
 
-    // Temporarily override onMessage to intercept replay frames
     (wsManager as any).onMessage = (frame: any) => {
-      // If replay is complete, restore original handler and forward
       if (replayComplete) {
-        if (originalOnMessage) {
-          originalOnMessage(frame);
-        }
+        if (originalOnMessage) originalOnMessage(frame);
         return;
       }
 
-      // Handle replay frames
       try {
         switch (frame.type) {
           case "user_text": {
-            // CRITICAL: Flush previous assistant message BEFORE adding user message
             if (currentAssistant) {
-              currentAssistant = this.flushAssistant(
-                replayedMessages,
-                currentAssistant,
-              );
-              currentTextContent = null;
-              currentThinkingContent = null;
+              if (currentText) {
+                currentAssistant.content.push({ type: "text", text: currentText });
+                currentText = "";
+              }
+              if (currentThinking) {
+                (currentAssistant.content as any[]).push({ type: "thinking", thinking: currentThinking });
+                currentThinking = "";
+              }
+              replayedMessages.push(currentAssistant);
+              currentAssistant = null;
             }
 
-            const text = (frame.text as string) || "";
             replayedMessages.push({
               role: "user",
-              content: text,
+              content: (frame.text as string) || "",
               timestamp: Date.now(),
-            } as UserMessage);
+            });
             break;
           }
 
           case "assistant_text": {
-            currentThinkingContent = null;
-            const delta = (frame.text as string) || "";
-
             if (!currentAssistant) {
-              currentAssistant = this.makeAssistantMsg();
+              currentAssistant = {
+                role: "assistant",
+                content: [],
+                timestamp: Date.now(),
+              };
             }
-
-            if (!currentTextContent) {
-              currentTextContent = { type: "text", text: delta };
-              currentAssistant.content = [
-                ...currentAssistant.content,
-                currentTextContent,
-              ];
-            } else {
-              currentTextContent.text += delta;
-            }
+            currentText += (frame.text as string) || "";
             break;
           }
 
           case "thinking": {
             if (!currentAssistant) {
-              currentAssistant = this.makeAssistantMsg();
-            }
-            const thinkText = (frame.thinking as string) || "";
-
-            if (currentThinkingContent === null) {
-              currentThinkingContent = {
-                type: "thinking",
-                thinking: thinkText,
+              currentAssistant = {
+                role: "assistant",
+                content: [],
+                timestamp: Date.now(),
               };
-              currentAssistant.content = [
-                ...currentAssistant.content,
-                currentThinkingContent,
-              ];
-            } else {
-              currentThinkingContent.thinking += thinkText;
             }
+            currentThinking += (frame.thinking as string) || "";
             break;
           }
 
           case "tool_start": {
-            currentTextContent = null;
-            currentThinkingContent = null;
-
             if (!currentAssistant) {
-              currentAssistant = this.makeAssistantMsg();
+              currentAssistant = {
+                role: "assistant",
+                content: [],
+                timestamp: Date.now(),
+              };
+            }
+            if (currentText) {
+              currentAssistant.content.push({ type: "text", text: currentText });
+              currentText = "";
+            }
+            if (currentThinking) {
+              (currentAssistant.content as any[]).push({ type: "thinking", thinking: currentThinking });
+              currentThinking = "";
             }
 
             const name = (frame.name as string) || "unknown";
@@ -461,38 +443,29 @@ export class ChatPage extends LitElement {
               args = { input: argsStr };
             }
 
-            const toolCall: ToolCall = {
+            const toolCall: BackendToolCallBlock = {
               type: "toolCall",
               id: crypto.randomUUID(),
               name,
               arguments: args,
             };
 
-            currentAssistant.content = [...currentAssistant.content, toolCall];
+            currentAssistant.content.push(toolCall);
             pendingToolCallId = toolCall.id;
             break;
           }
 
           case "tool_end": {
-            if (pendingToolCallId && currentAssistant) {
-              const exitCode = (frame.exit_code as number) ?? 0;
-              const stdout = (frame.stdout as string) || "";
-              const stderr = (frame.stderr as string) || "";
-              const status = frame.status as string;
-
-              const resultText =
-                stdout + (stderr ? "\n[stderr]\n" + stderr : "");
-
-              const toolResult: ToolResultMessage = {
-                role: "toolResult",
-                toolCallId: pendingToolCallId,
-                toolName: "",
-                content: resultText ? [{ type: "text", text: resultText }] : [],
-                isError: status === "failed" || exitCode !== 0,
-                timestamp: Date.now(),
-              } as ToolResultMessage;
-
-              replayedMessages.push(toolResult);
+            if (pendingToolCallId) {
+              const toolCall = currentAssistant?.content.find(
+                (c) => c.type === "toolCall" && c.id === pendingToolCallId,
+              ) as BackendToolCallBlock | undefined;
+              if (toolCall) {
+                toolCall.resultStatus = frame.status;
+                toolCall.resultExitCode = frame.exit_code;
+                toolCall.resultStdout = frame.stdout;
+                toolCall.resultStderr = frame.stderr;
+              }
               pendingToolCallId = null;
             }
             break;
@@ -500,41 +473,40 @@ export class ChatPage extends LitElement {
 
           case "load_session_complete": {
             if (currentAssistant) {
-              this.flushAssistant(replayedMessages, currentAssistant);
+              if (currentText) {
+                currentAssistant.content.push({ type: "text", text: currentText });
+              }
+              if (currentThinking) {
+                (currentAssistant.content as any[]).push({ type: "thinking", thinking: currentThinking });
+              }
+              replayedMessages.push(currentAssistant);
               currentAssistant = null;
-              currentTextContent = null;
-              currentThinkingContent = null;
             }
 
             const loadedThreadId = (frame.thread_id as string) || "";
             if (loadedThreadId) {
               this.lastLoadedThreadId = loadedThreadId;
               SessionManager.saveLastThreadId(loadedThreadId, this.sessionId);
-              console.log(
-                `[replay] Saved thread ID ${loadedThreadId} for reconnection`,
-              );
             }
 
             console.log(
               `[replay] Session replay complete — ${replayedMessages.length} messages restored`,
             );
 
-            if (this.agent) {
-              this.agent.state.messages = replayedMessages;
-              this.showLanding = false;
+            this.messages = replayedMessages;
+            this.showLanding = false;
 
-              if (replayedMessages.length > 0 && !this.currentTitle) {
-                this.currentTitle = this.generateTitle(replayedMessages);
+            if (replayedMessages.length > 0 && !this.currentTitle) {
+              const firstUser = replayedMessages.find((m) => m.role === "user");
+              if (firstUser) {
+                this.currentTitle = this.generateTitleFromText(
+                  typeof firstUser.content === "string" ? firstUser.content : "",
+                );
               }
-
-              const agentInterface = this.querySelector("agent-interface");
-              if (agentInterface) {
-                (agentInterface as LitElement).requestUpdate();
-              }
-              this.chatPanel?.requestUpdate();
             }
 
-            // Mark replay as complete and restore original handler
+            this.updateUI();
+
             replayComplete = true;
             (wsManager as any).onMessage = originalOnMessage;
             console.log("[replay] Restored original WsManager onMessage handler");
@@ -550,22 +522,15 @@ export class ChatPage extends LitElement {
               errorMsg.includes("401") ||
               errorMsg.includes("403")
             ) {
-              console.warn(
-                "[replay] Authentication error detected in session replay",
-              );
               this.dispatchSessionExpired();
             }
-            // Restore original handler on error
             replayComplete = true;
             (wsManager as any).onMessage = originalOnMessage;
             break;
           }
 
           default:
-            // Forward other frames to original handler (like binary, chat frames during replay)
-            if (originalOnMessage) {
-              originalOnMessage(frame);
-            }
+            if (originalOnMessage) originalOnMessage(frame);
             break;
         }
       } catch (err) {
@@ -573,7 +538,6 @@ export class ChatPage extends LitElement {
       }
     };
 
-    // Send load_session command via the persistent connection
     const sent = wsManager.send({
       type: "load_session",
       thread_id: threadId,
@@ -581,39 +545,29 @@ export class ChatPage extends LitElement {
 
     if (!sent) {
       console.error("[replay] Failed to send load_session - WS not open");
-      // Restore original handler
       (wsManager as any).onMessage = originalOnMessage;
       return;
     }
 
-    // Safety timeout in case load_session_complete never arrives
     setTimeout(() => {
       if (!replayComplete) {
         console.warn("[replay] Load timeout - restoring original handler");
         if (currentAssistant) {
-          this.flushAssistant(replayedMessages, currentAssistant);
+          if (currentText) currentAssistant.content.push({ type: "text", text: currentText });
+          if (currentThinking) (currentAssistant.content as any[]).push({ type: "thinking", thinking: currentThinking });
+          replayedMessages.push(currentAssistant);
         }
-        if (this.agent) {
-          this.agent.state.messages = replayedMessages;
-          this.showLanding = false;
-          const agentInterface = this.querySelector("agent-interface");
-          if (agentInterface) {
-            (agentInterface as LitElement).requestUpdate();
-          }
-          this.chatPanel?.requestUpdate();
-        }
+        this.messages = replayedMessages;
+        this.showLanding = false;
+        this.updateUI();
         replayComplete = true;
         (wsManager as any).onMessage = originalOnMessage;
       }
     }, 15000);
   }
 
-  /**
-   * Opens a temporary WebSocket to list sessions, find the most recent
-   * one with messages, and load it.
-   */
   private async loadMostRecentSession() {
-    if (!this.agent || !this.sessionId) return;
+    if (!this.sessionId) return;
 
     console.log("[replay] Listing threads via REST");
 
@@ -641,22 +595,7 @@ export class ChatPage extends LitElement {
     }
   }
 
-  // ── Title Generation ──
-
-  private generateTitle(messages: AgentMessage[]): string {
-    const firstUserMsg = messages.find((m) => m.role === "user");
-    if (!firstUserMsg) return "";
-
-    let text = "";
-    const content = firstUserMsg.content;
-
-    if (typeof content === "string") {
-      text = content;
-    } else {
-      const textBlocks = content.filter((c): c is TextContent => c.type === "text");
-      text = textBlocks.map((c) => c.text || "").join(" ");
-    }
-
+  private generateTitleFromText(text: string): string {
     text = text.trim();
     if (!text) return "";
 
@@ -666,14 +605,6 @@ export class ChatPage extends LitElement {
     }
     return text.length <= 50 ? text : `${text.substring(0, 47)}...`;
   }
-
-  private shouldSaveSession(messages: AgentMessage[]): boolean {
-    const hasUserMsg = messages.some((m) => m.role === "user");
-    const hasAssistantMsg = messages.some((m) => m.role === "assistant");
-    return hasUserMsg && hasAssistantMsg;
-  }
-
-  // ── Session Management UI ──
 
   private async openMenu() {
     console.log("[chat-page] Opening menu dialog");
@@ -751,25 +682,19 @@ export class ChatPage extends LitElement {
       const { thread_id } = await eduApi.createThread(this.sessionId, this.sessionToken);
       console.log("[chat-page] New thread created:", thread_id);
 
-      if (this.agent) {
-        this.agent.state.messages = [];
-        this.currentTitle = "";
-        this.lastLoadedThreadId = thread_id;
-        this.showLanding = false;
+      this.messages = [];
+      this.currentTitle = "";
+      this.lastLoadedThreadId = thread_id;
+      this.showLanding = false;
+      this.isStreaming = false;
+      this.streamingMessage = null;
 
-        const agentInterface = this.querySelector("agent-interface");
-        if (agentInterface) {
-          (agentInterface as LitElement).requestUpdate();
-        }
-        this.chatPanel?.requestUpdate();
-        this.requestUpdate();
-      }
+      this.updateUI();
+      this.requestUpdate();
     } catch (err) {
       console.error("[chat-page] Failed to create new thread:", err);
     }
   }
-
-  // ── Logout ──
 
   private handleLogout() {
     SessionManager.clearAuth();
@@ -777,8 +702,6 @@ export class ChatPage extends LitElement {
       new CustomEvent("logout", { bubbles: true, composed: true }),
     );
   }
-
-  // ── File Drawer Handlers ──
 
   private handleFilePreview(node: any, isSubject: boolean, subjectId?: string) {
     console.log("[chat-page] Preview file:", node.name);
@@ -789,43 +712,32 @@ export class ChatPage extends LitElement {
 
   private handleFileAttach(node: any, isSubject: boolean, subjectId?: string) {
     console.log("[chat-page] Attach file:", node.name, "isSubject:", isSubject);
-    
-    // Build file path tag based on location
+
     let filePathTag: string;
     if (isSubject && subjectId) {
-      // Subject file: include subject folder in path
       filePathTag = `[Subject: ${subjectId}/${node.path}]`;
     } else {
-      // Workspace file: user's workspace path
       filePathTag = `[Workspace: ${node.path}]`;
     }
-    
-    // Add file reference to the chat input via AgentInterface's MessageEditor
+
     if (this.chatPanel?.agentInterface) {
       const messageEditor = (this.chatPanel.agentInterface as any)._messageEditor;
       if (messageEditor) {
         const currentValue = messageEditor.value || '';
         const newValue = currentValue ? `${currentValue}\n${filePathTag}` : filePathTag;
         messageEditor.value = newValue;
-        
-        // Focus the input
+
         requestAnimationFrame(() => {
-          const textarea = messageEditor.shadowRoot?.querySelector('textarea') || 
+          const textarea = messageEditor.shadowRoot?.querySelector('textarea') ||
                           messageEditor.querySelector('textarea');
           if (textarea) {
             textarea.focus();
           }
         });
-        
+
         console.log("[chat-page] File path added to input:", filePathTag);
       }
     }
-  }
-
-  private formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   render() {
@@ -881,7 +793,6 @@ export class ChatPage extends LitElement {
                           const newTitle = (e.target as HTMLInputElement).value.trim();
                           if (newTitle && newTitle !== this.currentTitle) {
                             this.currentTitle = newTitle;
-                            // TODO: Wire to backend API to update session title
                           }
                           this.isEditingTitle = false;
                           this.requestUpdate();
@@ -891,7 +802,6 @@ export class ChatPage extends LitElement {
                             const newTitle = (e.target as HTMLInputElement).value.trim();
                             if (newTitle && newTitle !== this.currentTitle) {
                               this.currentTitle = newTitle;
-                              // TODO: Wire to backend API to update session title
                             }
                             this.isEditingTitle = false;
                             this.requestUpdate();
@@ -939,7 +849,6 @@ export class ChatPage extends LitElement {
             : ''}
           <div class="flex-1 min-h-0 chat-container" style="${this.showLanding && this._ready ? 'display:none' : ''}"></div>
 
-          <!-- File Drawer Toggle Button -->
           ${!this.showLanding && this._ready
             ? html`
               <file-drawer-toggle
@@ -952,7 +861,6 @@ export class ChatPage extends LitElement {
             `
             : ''}
 
-          <!-- File Drawer -->
           <file-drawer
             .open=${this.fileDrawerOpen}
             .sessionId=${this.sessionId}
@@ -963,13 +871,12 @@ export class ChatPage extends LitElement {
               this.fileDrawerOpen = false;
               this.requestUpdate();
             }}
-            .onPreviewFile=${(node: any, isSubject: boolean, subjectId?: string) => 
+            .onPreviewFile=${(node: any, isSubject: boolean, subjectId?: string) =>
               this.handleFilePreview(node, isSubject, subjectId)}
-            .onAttachFile=${(node: any, isSubject: boolean, subjectId?: string) => 
+            .onAttachFile=${(node: any, isSubject: boolean, subjectId?: string) =>
               this.handleFileAttach(node, isSubject, subjectId)}
           ></file-drawer>
 
-          <!-- File Preview Modal -->
           <file-preview-modal
             .open=${this.previewModalOpen}
             .fileNode=${this.currentPreviewFile?.node}

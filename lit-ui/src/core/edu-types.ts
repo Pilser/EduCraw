@@ -143,3 +143,79 @@ export interface UpdateMeResponse {
   cohort_id: string;
   subject_ids: string[];
 }
+
+// ============================================================================
+// Backend-native message types (no pi-ai dependencies)
+// ============================================================================
+
+export interface BackendTextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface BackendThinkingBlock {
+  type: "thinking";
+  thinking: string;
+}
+
+export interface BackendToolCallBlock {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  resultStatus?: string;
+  resultStdout?: string;
+  resultStderr?: string;
+  resultExitCode?: number;
+}
+
+export type BackendContentBlock =
+  | BackendTextBlock
+  | BackendThinkingBlock
+  | BackendToolCallBlock;
+
+export interface BackendAssistantMessage {
+  role: "assistant";
+  content: BackendContentBlock[];
+  model?: string;
+  provider?: string;
+  api?: string;
+  usage?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    totalTokens: number;
+    cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  };
+  stopReason?: string;
+  errorMessage?: string;
+  timestamp: number;
+}
+
+export interface BackendUserMessage {
+  role: "user";
+  content: string | Array<{ type: "text"; text: string }>;
+  timestamp: number;
+}
+
+export interface BackendUserMessageWithAttachments {
+  role: "user-with-attachments";
+  content: string | Array<{ type: "text"; text: string }>;
+  timestamp: number;
+  attachments?: Array<{
+    id: string;
+    type: "image" | "document";
+    fileName: string;
+    mimeType: string;
+    size: number;
+    content: string;
+    extractedText?: string;
+    preview?: string;
+  }>;
+}
+
+export type BackendMessage =
+  | BackendUserMessage
+  | BackendUserMessageWithAttachments
+  | BackendAssistantMessage;

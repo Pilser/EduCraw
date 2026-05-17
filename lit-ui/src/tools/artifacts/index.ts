@@ -1,7 +1,13 @@
 export { ArtifactElement } from "./ArtifactElement.js";
-export { type Artifact, ArtifactsPanel, type ArtifactsParams } from "./artifacts.js";
-export { ArtifactsToolRenderer } from "./artifacts-tool-renderer.js";
+export { ArtifactsToolRenderer, type ArtifactsParams } from "./artifacts-tool-renderer.js";
 export { HtmlArtifact } from "./HtmlArtifact.js";
 export { MarkdownArtifact } from "./MarkdownArtifact.js";
 export { SvgArtifact } from "./SvgArtifact.js";
 export { TextArtifact } from "./TextArtifact.js";
+export { ImageArtifact } from "./ImageArtifact.js";
+export { PdfArtifact } from "./PdfArtifact.js";
+export { DocxArtifact } from "./DocxArtifact.js";
+export { ExcelArtifact } from "./ExcelArtifact.js";
+export { GenericArtifact } from "./GenericArtifact.js";
+export { Console } from "./Console.js";
+export { ArtifactPill } from "./ArtifactPill.js";

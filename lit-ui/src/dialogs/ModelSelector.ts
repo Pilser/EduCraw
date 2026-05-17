@@ -1,4 +1,3 @@
-import { type Model } from "@earendil-works/pi-ai";
 import { icon } from "@mariozechner/mini-lit";
 import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
@@ -12,8 +11,38 @@ import { Input } from "../components/Input.js";
 import { formatModelCost } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import { eduApi } from "../core/edu-api.js";
-import { eduModelToPiModel } from "../core/edu-model-provider.js";
+import type { EduModel } from "../core/edu-types.js";
 import { SessionManager } from "../core/session-manager.js";
+
+export interface DisplayModel {
+  id: string;
+  name: string;
+  provider: string;
+  reasoning: boolean;
+  vision: boolean;
+  contextWindow: number;
+  maxTokens: number;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
+function eduModelToDisplay(m: EduModel): DisplayModel {
+  return {
+    id: m.name,
+    name: m.display_name || m.name,
+    provider: m.provider || "unknown",
+    reasoning: m.think_mode === 1,
+    vision: m.visual_support === 1,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+}
+
+function modelsAreEqual(a: DisplayModel | null, b: DisplayModel | null): boolean {
+  if (!a || !b) return false;
+  return a.id === b.id && a.provider === b.provider;
+}
+
 function subsequenceScore(query: string, text: string): number {
   let qi = 0;
   let ti = 0;
@@ -31,33 +60,23 @@ function subsequenceScore(query: string, text: string): number {
     ti++;
   }
 
-  // All query chars must match
   if (qi < query.length) return 0;
 
-  // Score: longer query match = better, fewer gaps = better
-  // Normalize so exact substring gets highest score
   return query.length / (query.length + gaps);
-}
-
-
-/** Check if two models are the same by comparing IDs */
-function modelsAreEqual(a: Model<any> | null, b: Model<any> | null): boolean {
-  if (!a || !b) return false;
-  return a.id === b.id && a.provider === b.provider;
 }
 
 @customElement("agent-model-selector")
 export class ModelSelector extends DialogBase {
-  @state() currentModel: Model<any> | null = null;
+  @state() currentModelId: string | null = null;
   @state() searchQuery = "";
   @state() filterThinking = false;
   @state() filterVision = false;
   @state() modelsLoading = false;
   @state() selectedIndex = 0;
   @state() private navigationMode: "mouse" | "keyboard" = "mouse";
-  @state() private eduModels: Model<any>[] = [];
+  @state() private eduModels: DisplayModel[] = [];
 
-  private onSelectCallback?: (model: Model<any>) => void;
+  private onSelectCallback?: (modelId: string) => void;
   private allowedProviders?: Set<string>;
   private scrollContainerRef = createRef<HTMLDivElement>();
   private searchInputRef = createRef<HTMLInputElement>();
@@ -68,12 +87,12 @@ export class ModelSelector extends DialogBase {
   protected override modalWidth = "min(400px, 90vw)";
 
   static async open(
-    currentModel: Model<any> | null,
-    onSelect: (model: Model<any>) => void,
+    currentModelId: string | null,
+    onSelect: (modelId: string) => void,
     allowedProviders?: string[],
   ) {
     const selector = new ModelSelector();
-    selector.currentModel = currentModel;
+    selector.currentModelId = currentModelId;
     selector.onSelectCallback = onSelect;
     if (allowedProviders) {
       selector.allowedProviders = new Set(allowedProviders);
@@ -86,23 +105,17 @@ export class ModelSelector extends DialogBase {
     changedProperties: PropertyValues,
   ): Promise<void> {
     super.firstUpdated(changedProperties);
-    // Wait for dialog to be fully rendered
     await this.updateComplete;
-    // Focus the search input when dialog opens
     this.searchInputRef.value?.focus();
 
-    // Track actual mouse movement
     this.addEventListener("mousemove", (e: MouseEvent) => {
-      // Check if mouse actually moved
       if (
         e.clientX !== this.lastMousePosition.x ||
         e.clientY !== this.lastMousePosition.y
       ) {
         this.lastMousePosition = { x: e.clientX, y: e.clientY };
-        // Only switch to mouse mode on actual mouse movement
         if (this.navigationMode === "keyboard") {
           this.navigationMode = "mouse";
-          // Update selection to the item under the mouse
           const target = e.target as HTMLElement;
           const modelItem = target.closest("[data-model-item]");
           if (modelItem) {
@@ -121,12 +134,9 @@ export class ModelSelector extends DialogBase {
       }
     });
 
-    // Add global keyboard handler for the dialog
     this.addEventListener("keydown", (e: KeyboardEvent) => {
-      // Ignore key events during IME composition (e.g. CJK input)
       if (e.isComposing || e.key === "Process") return;
 
-      // Get filtered models to know the bounds
       const filteredModels = this.getFilteredModels();
 
       if (e.key === "ArrowDown") {
@@ -160,8 +170,8 @@ export class ModelSelector extends DialogBase {
 
       const { models } = await eduApi.getSessionModels(sid, auth.token);
       this.eduModels = models
-        .filter((m: any) => m.enabled === 1)
-        .map((m: any) => eduModelToPiModel(m));
+        .filter((m: EduModel) => m.enabled === 1)
+        .map((m: EduModel) => eduModelToDisplay(m));
     } catch (error) {
       console.error("Failed to load models:", error);
     } finally {
@@ -176,9 +186,9 @@ export class ModelSelector extends DialogBase {
     return String(tokens);
   }
 
-  private handleSelect(model: Model<any>) {
+  private handleSelect(model: DisplayModel) {
     if (model) {
-      this.onSelectCallback?.(model);
+      this.onSelectCallback?.(model.id);
       this.close();
     }
   }
@@ -186,15 +196,13 @@ export class ModelSelector extends DialogBase {
   private getFilteredModels(): Array<{
     provider: string;
     id: string;
-    model: any;
+    model: DisplayModel;
   }> {
-    // Collect models from EduCrawl server
-    const allModels: Array<{ provider: string; id: string; model: any }> = [];
+    const allModels: Array<{ provider: string; id: string; model: DisplayModel }> = [];
     for (const model of this.eduModels) {
       allModels.push({ provider: model.provider, id: model.id, model });
     }
 
-    // Filter by allowed providers if set
     if (this.allowedProviders) {
       const allowed = this.allowedProviders;
       allModels.splice(
@@ -204,10 +212,8 @@ export class ModelSelector extends DialogBase {
       );
     }
 
-    // Filter models based on search and capability filters
     let filteredModels = allModels;
 
-    // Apply search filter (subsequence match: characters must appear in order)
     if (this.searchQuery) {
       const query = this.searchQuery.toLowerCase().replace(/\s+/g, "");
       if (query) {
@@ -226,23 +232,17 @@ export class ModelSelector extends DialogBase {
       }
     }
 
-    // Apply capability filters
     if (this.filterThinking) {
       filteredModels = filteredModels.filter(({ model }) => model.reasoning);
     }
     if (this.filterVision) {
-      filteredModels = filteredModels.filter(({ model }) =>
-        model.input.includes("image"),
-      );
+      filteredModels = filteredModels.filter(({ model }) => model.vision);
     }
 
-    // Sort: when not searching, current model first then by provider.
-    // When searching, preserve the score-based order from above,
-    // but still float the current model to the top.
     if (!this.searchQuery) {
       filteredModels.sort((a, b) => {
-        const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
-        const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
+        const aIsCurrent = this.currentModelId === a.id;
+        const bIsCurrent = this.currentModelId === b.id;
         if (aIsCurrent && !bIsCurrent) return -1;
         if (!aIsCurrent && bIsCurrent) return 1;
         return a.provider.localeCompare(b.provider);
@@ -271,7 +271,6 @@ export class ModelSelector extends DialogBase {
     const filteredModels = this.getFilteredModels();
 
     return html`
-      <!-- Header and Search -->
       <div
         class="p-6 pb-4 flex flex-col gap-4 border-b border-border flex-shrink-0"
       >
@@ -283,7 +282,6 @@ export class ModelSelector extends DialogBase {
           onInput: (e: Event) => {
             this.searchQuery = (e.target as HTMLInputElement).value;
             this.selectedIndex = 0;
-            // Reset scroll position when search changes
             if (this.scrollContainerRef.value) {
               this.scrollContainerRef.value.scrollTop = 0;
             }
@@ -323,10 +321,9 @@ export class ModelSelector extends DialogBase {
         </div>
       </div>
 
-      <!-- Scrollable model list -->
       <div class="flex-1 overflow-y-auto" ${ref(this.scrollContainerRef)}>
         ${filteredModels.map(({ provider, id, model }, index) => {
-          const isCurrent = modelsAreEqual(this.currentModel, model);
+          const isCurrent = this.currentModelId === model.id;
           const isSelected = index === this.selectedIndex;
           return html`
             <div
@@ -338,7 +335,6 @@ export class ModelSelector extends DialogBase {
                 : ""}"
               @click=${() => this.handleSelect(model)}
               @mouseenter=${() => {
-                // Only update selection in mouse mode
                 if (this.navigationMode === "mouse") {
                   this.selectedIndex = index;
                 }
@@ -363,7 +359,7 @@ export class ModelSelector extends DialogBase {
                     >${icon(Brain, "sm")}</span
                   >
                   <span
-                    class="${model.input.includes("image") ? "" : "opacity-30"}"
+                    class="${model.vision ? "" : "opacity-30"}"
                     >${icon(ImageIcon, "sm")}</span
                   >
                   <span

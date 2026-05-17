@@ -1,5 +1,5 @@
 import "@mariozechner/mini-lit/dist/CodeBlock.js";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { WsToolEndFrame } from "../../core/edu-types.js";
 import { createRef, ref } from "lit/directives/ref.js";
 import { FileCode2 } from "lucide";
 import "../../components/ConsoleBlock.js";
@@ -9,20 +9,20 @@ import { i18n } from "../../utils/i18n.js";
 import { renderCollapsibleHeader, renderHeader } from "../renderer-registry.js";
 import type { ToolRenderer, ToolRenderResult } from "../types.js";
 import { ArtifactPill } from "./ArtifactPill.js";
-import type { ArtifactsPanel, ArtifactsParams } from "./artifacts.js";
 
-// Helper to extract text from content blocks
-function getTextOutput(result: ToolResultMessage<any> | undefined): string {
-	if (!result) return "";
-	return (
-		result.content
-			?.filter((c) => c.type === "text")
-			.map((c: any) => c.text)
-			.join("\n") || ""
-	);
+export interface ArtifactsParams {
+	command: "create" | "update" | "rewrite" | "get" | "delete" | "logs";
+	filename: string;
+	content?: string;
+	old_str?: string;
+	new_str?: string;
 }
 
-// Helper to determine language for syntax highlighting
+function getTextOutput(result: WsToolEndFrame | undefined): string {
+	if (!result) return "";
+	return result.stdout || "";
+}
+
 function getLanguageFromFilename(filename?: string): string {
 	if (!filename) return "text";
 	const ext = filename.split(".").pop()?.toLowerCase();
@@ -59,21 +59,17 @@ function getLanguageFromFilename(filename?: string): string {
 	return languageMap[ext || ""] || "text";
 }
 
-export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, undefined> {
-	constructor(public artifactsPanel?: ArtifactsPanel) {}
-
+export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams> {
 	render(
 		params: ArtifactsParams | undefined,
-		result: ToolResultMessage<undefined> | undefined,
+		result: WsToolEndFrame | undefined,
 		isStreaming?: boolean,
 	): ToolRenderResult {
-		const state = result ? (result.isError ? "error" : "complete") : isStreaming ? "inprogress" : "complete";
+		const state = result ? (result.status === "failed" ? "error" : "complete") : isStreaming ? "inprogress" : "complete";
 
-		// Create refs for collapsible sections
 		const contentRef = createRef<HTMLDivElement>();
 		const chevronRef = createRef<HTMLSpanElement>();
 
-		// Helper to get command labels
 		const getCommandLabels = (command: string): { streaming: string; complete: string } => {
 			const labels: Record<string, { streaming: string; complete: string }> = {
 				create: { streaming: i18n("Creating artifact"), complete: i18n("Created artifact") },
@@ -86,16 +82,14 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 			return labels[command] || { streaming: i18n("Processing artifact"), complete: i18n("Processed artifact") };
 		};
 
-		// Helper to render header text with inline artifact pill
 		const renderHeaderWithPill = (labelText: string, filename?: string): TemplateResult => {
 			if (filename) {
-				return html`<span>${labelText} ${ArtifactPill(filename, this.artifactsPanel)}</span>`;
+				return html`<span>${labelText} ${ArtifactPill(filename)}</span>`;
 			}
 			return html`<span>${labelText}</span>`;
 		};
 
-		// Error handling
-		if (result?.isError) {
+		if (result?.status === "failed") {
 			const command = params?.command;
 			const filename = params?.filename;
 			const labels = command
@@ -103,7 +97,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 				: { streaming: i18n("Processing artifact"), complete: i18n("Processed artifact") };
 			const headerText = labels.streaming;
 
-			// For create/update/rewrite errors, show code block + console/error
 			if (command === "create" || command === "update" || command === "rewrite") {
 				const content = params?.content || "";
 				const { old_str, new_str } = params || {};
@@ -131,7 +124,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 				};
 			}
 
-			// For other errors, just show error message
 			return {
 				content: html`
 				<div class="space-y-3">
@@ -143,7 +135,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 			};
 		}
 
-		// Full params + result
 		if (result && params) {
 			const { command, filename, content } = params;
 			const labels = command
@@ -151,7 +142,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 				: { streaming: i18n("Processing artifact"), complete: i18n("Processed artifact") };
 			const headerText = labels.complete;
 
-			// GET command: show code block with file content
 			if (command === "get") {
 				const fileContent = getTextOutput(result) || i18n("(no output)");
 				return {
@@ -167,7 +157,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 				};
 			}
 
-			// LOGS command: show console block
 			if (command === "logs") {
 				const logs = getTextOutput(result) || i18n("(no output)");
 				return {
@@ -183,7 +172,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 				};
 			}
 
-			// CREATE/UPDATE/REWRITE: always show code block, + console block for .html files
 			if (command === "create" || command === "rewrite") {
 				const codeContent = content || "";
 				const isHtml = filename?.endsWith(".html");
@@ -220,7 +208,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 				};
 			}
 
-			// For DELETE, just show header
 			return {
 				content: html`
 				<div class="space-y-3">
@@ -231,11 +218,9 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 			};
 		}
 
-		// Params only (streaming or waiting for result)
 		if (params) {
 			const { command, filename, content, old_str, new_str } = params;
 
-			// If no command yet
 			if (!command) {
 				return { content: renderHeader(state, FileCode2, i18n("Preparing artifact...")), isCustom: false };
 			}
@@ -243,7 +228,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 			const labels = getCommandLabels(command);
 			const headerText = labels.streaming;
 
-			// Render based on command type
 			switch (command) {
 				case "create":
 				case "rewrite":
@@ -304,7 +288,6 @@ export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams, unde
 			}
 		}
 
-		// No params or result yet
 		return { content: renderHeader(state, FileCode2, i18n("Preparing artifact...")), isCustom: false };
 	}
 }

@@ -4,8 +4,7 @@ import { i18n } from "../../utils/i18n.js";
 import { renderHeader } from "../renderer-registry.js";
 export class DefaultRenderer {
     render(params, result, isStreaming) {
-        const state = result ? (result.isError ? "error" : "complete") : isStreaming ? "inprogress" : "complete";
-        // Format params as JSON
+        const state = result ? (result.status === "failed" ? "error" : "complete") : isStreaming ? "inprogress" : "complete";
         let paramsJson = "";
         if (params) {
             try {
@@ -20,21 +19,21 @@ export class DefaultRenderer {
                 }
             }
         }
-        // With result: show header + params + result
         if (result) {
-            let outputJson = result.content
-                ?.filter((c) => c.type === "text")
-                .map((c) => c.text)
-                .join("\n") || i18n("(no output)");
+            let outputJson = result.stdout || "";
+            if (result.stderr) {
+                outputJson += (outputJson ? "\n" : "") + "[stderr]\n" + result.stderr;
+            }
+            if (!outputJson)
+                outputJson = i18n("(no output)");
             let outputLanguage = "text";
-            // Try to parse and pretty-print if it's valid JSON
             try {
                 const parsed = JSON.parse(outputJson);
                 outputJson = JSON.stringify(parsed, null, 2);
                 outputLanguage = "json";
             }
             catch {
-                // Not valid JSON, leave as-is and use text highlighting
+                // Not valid JSON
             }
             return {
                 content: html `
@@ -55,7 +54,6 @@ export class DefaultRenderer {
                 isCustom: false,
             };
         }
-        // Just params (streaming or waiting for result)
         if (params) {
             if (isStreaming && (!paramsJson || paramsJson === "{}" || paramsJson === "null")) {
                 return {
@@ -80,7 +78,6 @@ export class DefaultRenderer {
                 isCustom: false,
             };
         }
-        // No params or result yet
         return {
             content: html `
 				<div>

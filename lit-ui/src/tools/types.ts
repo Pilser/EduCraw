@@ -1,15 +1,15 @@
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { TemplateResult } from "lit";
+import type { WsToolEndFrame } from "../core/edu-types.js";
 
 export interface ToolRenderResult {
 	content: TemplateResult;
-	isCustom: boolean; // true = no card wrapper, false = wrap in card
+	isCustom: boolean;
 }
 
-export interface ToolRenderer<TParams = any, TDetails = any> {
+export interface ToolRenderer<TParams = any> {
 	render(
 		params: TParams | undefined,
-		result: ToolResultMessage<TDetails> | undefined,
+		result: WsToolEndFrame | undefined,
 		isStreaming?: boolean,
 	): ToolRenderResult;
 }

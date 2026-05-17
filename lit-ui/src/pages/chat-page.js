@@ -6,13 +6,10 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { Agent } from "@earendil-works/pi-agent-core";
-import { createWsStreamFn } from "../core/ws-stream-fn";
-import { eduModelToPiModel } from "../core/edu-model-provider";
-import { eduApi } from "../core/edu-api";
-import { SessionManager } from "../core/session-manager";
-import { WsManager } from "../core/ws-manager";
-import { defaultConvertToLlm } from "../components/Messages.js";
+import { createWsStreamFn } from "../core/ws-stream-fn.js";
+import { eduApi } from "../core/edu-api.js";
+import { SessionManager } from "../core/session-manager.js";
+import { WsManager } from "../core/ws-manager.js";
 import "../ChatPanel.js";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit";
@@ -39,30 +36,20 @@ let ChatPage = class ChatPage extends LitElement {
         this.tokenBalance = 0;
         this.fileDrawerOpen = false;
         this.previewModalOpen = false;
-        this.lastLoadedThreadId = null; // Track loaded session
+        this.messages = [];
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.lastLoadedThreadId = null;
     }
-    /**
-     * Helper: Detect if an error is auth-related (401/403)
-     */
     isAuthError(err) {
-        // Check for HTTP error status codes
-        if (err?.status === 401 || err?.status === 403) {
+        if (err?.status === 401 || err?.status === 403)
             return true;
-        }
-        // Check for "Unauthorized" in error message
-        if (err?.message?.includes("Unauthorized") ||
-            err?.message?.includes("unauthorized")) {
+        if (err?.message?.includes("Unauthorized") || err?.message?.includes("unauthorized"))
             return true;
-        }
-        // Check for common auth error patterns
-        if (err?.response?.status === 401 || err?.response?.status === 403) {
+        if (err?.response?.status === 401 || err?.response?.status === 403)
             return true;
-        }
         return false;
     }
-    /**
-     * Helper: Dispatch session-expired event when auth fails
-     */
     dispatchSessionExpired() {
         console.log("Session expired - dispatching session-expired event");
         this.dispatchEvent(new CustomEvent("session-expired", {
@@ -78,17 +65,14 @@ let ChatPage = class ChatPage extends LitElement {
             await this.initChat();
             this._ready = true;
             this.loadBalance();
-            // Wait for re-render so .chat-container exists in DOM, then append
             await this.updateComplete;
             this.appendChatPanel();
-            // IMPORTANT: Wait for WsManager to connect before loading session
             const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
             if (wsManager) {
                 console.log("[chat-page] Waiting for WebSocket connection...");
                 const connected = await wsManager.waitForConnection(10000);
                 if (connected) {
                     console.log("[chat-page] WebSocket connected - loading recent session");
-                    // After chat is visible and WS is connected, try to load the most recent session
                     this.loadMostRecentSession();
                 }
                 else {
@@ -97,7 +81,6 @@ let ChatPage = class ChatPage extends LitElement {
             }
         }
         catch (err) {
-            // Check if this is an authentication error (session expired)
             if (this.isAuthError(err)) {
                 console.warn("Authentication error detected during initialization", err);
                 this.dispatchSessionExpired();
@@ -121,49 +104,16 @@ let ChatPage = class ChatPage extends LitElement {
         }
     }
     async initChat() {
-        // Fetch models to get the active model
-        let model;
+        let activeModelName = "grok-4-1-fast-reasoning";
         try {
             const sessionModels = await eduApi.getSessionModels(this.sessionId, this.auth.token);
-            // Backend returns 'active' as the model NAME (not id)
-            // Priority: student.last_model → session.model → "grok-4-1-fast-reasoning"
-            const activeModel = sessionModels.models.find((m) => m.name === sessionModels.active);
-            if (activeModel) {
-                model = eduModelToPiModel(activeModel);
-            }
-            else if (sessionModels.models.length > 0) {
-                // Fallback to first available model if active not found
-                console.warn("[chat-page] Active model not found in list, using first available");
-                model = eduModelToPiModel(sessionModels.models[0]);
-            }
+            activeModelName = sessionModels.active || activeModelName;
         }
         catch (err) {
-            // Check if this is an authentication error (session expired)
-            if (this.isAuthError(err)) {
-                console.warn("Authentication error while fetching session models", err);
-                throw err; // Re-throw to be caught by firstUpdated
-            }
-            // Will use default model for other errors
+            if (this.isAuthError(err))
+                throw err;
             console.error("Failed to fetch session models:", err);
         }
-        // Ensure we always have a model (fallback to default)
-        if (!model) {
-            console.warn("No model found, using default grok-4-1-fast-reasoning");
-            model = {
-                id: "grok-4-1-fast-reasoning",
-                name: "Grok 4.1 Fast Reasoning",
-                api: "unknown",
-                provider: "xai",
-                baseUrl: "",
-                reasoning: true,
-                input: ["text"],
-                contextWindow: 200000,
-                maxTokens: 8192,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            };
-        }
-        // IMPORTANT: Create WsManager BEFORE creating Agent
-        // This ensures the persistent connection exists for session replay
         console.log("[chat-page] Creating persistent WsManager connection");
         WsManager.getInstance({
             sessionId: this.sessionId,
@@ -173,7 +123,6 @@ let ChatPage = class ChatPage extends LitElement {
                 this.handleReconnection();
             },
             onError: (error) => {
-                // Handle session expiration or auth failures
                 console.error("[chat-page] WsManager error:", error.message);
                 if (error.message.includes("Session expired") ||
                     error.message.includes("authentication failed")) {
@@ -181,50 +130,29 @@ let ChatPage = class ChatPage extends LitElement {
                     this.dispatchSessionExpired();
                 }
             },
-            onMessage: () => {
-                // Initial empty handler - will be overridden by ws-stream-fn
+            onMessage: () => { },
+        });
+        this.wsStreamFn = createWsStreamFn({
+            sessionId: this.sessionId,
+            authToken: this.sessionToken,
+            onStreamStart: () => {
+                if (this.showLanding) {
+                    this.showLanding = false;
+                    this.requestUpdate();
+                }
             },
         });
-        // Create the Agent with WebSocket stream function
-        // Pass convertToLlm to handle UserMessageWithAttachments (file attachments)
-        // Pass onReconnected handler to reload session on reconnection
-        this.agent = new Agent({
-            initialState: {
-                model: model,
-                thinkingLevel: "off",
-            },
-            streamFn: createWsStreamFn({
-                sessionId: this.sessionId,
-                authToken: this.sessionToken,
-                onStreamStart: () => {
-                    if (this.showLanding) {
-                        this.showLanding = false;
-                        this.requestUpdate();
-                    }
-                },
-            }),
-            convertToLlm: defaultConvertToLlm,
-            // EduCraw: tools are executed server-side. The agent loop must not
-            // try to execute them locally — it would fail (no tools registered)
-            // and then re-prompt, causing an infinite re-send loop.
-            skipToolExecution: true,
-        });
-        // Create ChatPanel and set the agent
         this.chatPanel = document.createElement("pi-chat-panel");
-        await this.chatPanel.setAgent(this.agent, {
+        this.chatPanel.init({
+            onSend: (text) => this.handleSend(text),
+            onCancel: () => this.handleCancel(),
             onModelSelect: async () => {
                 const { ModelSelector } = await import("../dialogs/ModelSelector.js");
-                ModelSelector.open(this.agent.state.model, async (newModel) => {
-                    this.agent.state.model = newModel;
-                    // Force UI update to show new model immediately
-                    if (this.chatPanel?.agentInterface) {
-                        this.chatPanel.agentInterface.requestUpdate();
-                    }
+                ModelSelector.open(activeModelName, async (newModelId) => {
                     try {
-                        await eduApi.setSessionModel(this.sessionId, this.auth.token, newModel.id);
+                        await eduApi.setSessionModel(this.sessionId, this.auth.token, newModelId);
                     }
                     catch (err) {
-                        // Check if this is an authentication error
                         if (this.isAuthError(err)) {
                             console.warn("Session expired while switching model", err);
                             this.dispatchSessionExpired();
@@ -235,13 +163,11 @@ let ChatPage = class ChatPage extends LitElement {
                 });
             },
         });
+        if (this.chatPanel.agentInterface) {
+            this.chatPanel.agentInterface.messages = this.messages;
+        }
     }
-    // ── Session auto-load (matches legacy educlaw-web behavior) ──
-    /**
-     * Handle WebSocket reconnection - reload last session to restore state
-     */
     handleReconnection() {
-        // Try to reload the last loaded session if we have one
         const lastThreadId = SessionManager.loadLastThreadId(this.sessionId);
         if (lastThreadId) {
             console.log(`[chat-page] Reloading last session ${lastThreadId} after reconnection`);
@@ -251,126 +177,193 @@ let ChatPage = class ChatPage extends LitElement {
             console.log("[chat-page] No previous session to reload - starting fresh after reconnection");
         }
     }
-    /** Helper: finalize current assistant message and push to array */
-    flushAssistant(msgs, assistant) {
-        if (assistant && assistant.content.length > 0) {
-            msgs.push(assistant);
-        }
-        return null;
-    }
-    /** Helper: create a fresh assistant message shell */
-    makeAssistantMsg() {
-        const m = this.agent.state.model;
-        return {
-            role: "assistant",
-            content: [],
-            api: m.api,
-            provider: m.provider,
-            model: m.id,
-            usage: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 0,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: "stop",
+    async handleSend(text) {
+        if (!this.wsStreamFn || this.isStreaming)
+            return;
+        const userMsg = {
+            role: "user",
+            content: text,
             timestamp: Date.now(),
         };
+        this.messages = [...this.messages, userMsg];
+        this.isStreaming = true;
+        this.showLanding = false;
+        this.streamingMessage = null;
+        if (!this.currentTitle) {
+            this.currentTitle = this.generateTitleFromText(text);
+        }
+        const callbacks = {
+            onTextStart: () => {
+                this.streamingMessage = {
+                    role: "assistant",
+                    content: [],
+                    timestamp: Date.now(),
+                };
+                this.updateStreaming();
+            },
+            onTextDelta: (delta) => {
+                if (!this.streamingMessage)
+                    return;
+                const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
+                if (lastBlock && lastBlock.type === "text") {
+                    lastBlock.text += delta;
+                }
+                else {
+                    this.streamingMessage.content.push({ type: "text", text: delta });
+                }
+                this.updateStreaming();
+            },
+            onTextEnd: () => {
+                this.updateStreaming();
+            },
+            onThinkingStart: () => {
+                if (!this.streamingMessage)
+                    return;
+                this.streamingMessage.content.push({
+                    type: "thinking",
+                    thinking: "",
+                });
+                this.updateStreaming();
+            },
+            onThinkingDelta: (delta) => {
+                if (!this.streamingMessage)
+                    return;
+                const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
+                if (lastBlock && lastBlock.type === "thinking") {
+                    lastBlock.thinking += delta;
+                }
+                this.updateStreaming();
+            },
+            onThinkingEnd: () => {
+                this.updateStreaming();
+            },
+            onToolCallStart: (toolCall) => {
+                if (!this.streamingMessage)
+                    return;
+                this.streamingMessage.content.push(toolCall);
+                this.updateStreaming();
+            },
+            onToolCallEnd: (toolCall) => {
+                this.updateStreaming();
+            },
+            onDone: (msg) => {
+                this.messages = [...this.messages, msg];
+                this.isStreaming = false;
+                this.streamingMessage = null;
+                this.updateUI();
+            },
+            onError: (error) => {
+                console.error("[chat-page] Stream error:", error);
+                this.isStreaming = false;
+                this.streamingMessage = null;
+                this.updateUI();
+            },
+        };
+        this.wsStreamFn(text, callbacks);
+        this.updateUI();
     }
-    /**
-     * Load a specific session by thread ID using the persistent WsManager
-     */
+    handleCancel() {
+        const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
+        if (wsManager) {
+            wsManager.send({ type: "cancel" });
+        }
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.updateUI();
+    }
+    updateStreaming() {
+        if (this.chatPanel?.agentInterface) {
+            this.chatPanel.agentInterface.setStreamingMessage(this.streamingMessage);
+        }
+        this.requestUpdate();
+    }
+    updateUI() {
+        if (this.chatPanel?.agentInterface) {
+            this.chatPanel.agentInterface.messages = this.messages;
+            this.chatPanel.agentInterface.isStreaming = this.isStreaming;
+            this.chatPanel.agentInterface.setStreamingMessage(null, true);
+        }
+        this.requestUpdate();
+    }
     async loadSessionById(threadId) {
-        if (!this.agent)
-            return;
-        // Get the persistent WsManager instance (already created by Agent)
         const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
         if (!wsManager) {
             console.error("[replay] WsManager not found - cannot load session");
             return;
         }
         console.log(`[replay] Loading session ${threadId} via persistent WsManager`);
-        // Replay state
         const replayedMessages = [];
         let currentAssistant = null;
-        let currentTextContent = null;
-        let currentThinkingContent = null;
+        let currentText = "";
+        let currentThinking = "";
         let pendingToolCallId = null;
         let replayComplete = false;
-        // Save the original onMessage handler from ws-stream-fn
         const originalOnMessage = wsManager.onMessage;
-        // Temporarily override onMessage to intercept replay frames
         wsManager.onMessage = (frame) => {
-            // If replay is complete, restore original handler and forward
             if (replayComplete) {
-                if (originalOnMessage) {
+                if (originalOnMessage)
                     originalOnMessage(frame);
-                }
                 return;
             }
-            // Handle replay frames
             try {
                 switch (frame.type) {
                     case "user_text": {
-                        // CRITICAL: Flush previous assistant message BEFORE adding user message
                         if (currentAssistant) {
-                            currentAssistant = this.flushAssistant(replayedMessages, currentAssistant);
-                            currentTextContent = null;
-                            currentThinkingContent = null;
+                            if (currentText) {
+                                currentAssistant.content.push({ type: "text", text: currentText });
+                                currentText = "";
+                            }
+                            if (currentThinking) {
+                                currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
+                                currentThinking = "";
+                            }
+                            replayedMessages.push(currentAssistant);
+                            currentAssistant = null;
                         }
-                        const text = frame.text || "";
                         replayedMessages.push({
                             role: "user",
-                            content: text,
+                            content: frame.text || "",
                             timestamp: Date.now(),
                         });
                         break;
                     }
                     case "assistant_text": {
-                        currentThinkingContent = null;
-                        const delta = frame.text || "";
                         if (!currentAssistant) {
-                            currentAssistant = this.makeAssistantMsg();
+                            currentAssistant = {
+                                role: "assistant",
+                                content: [],
+                                timestamp: Date.now(),
+                            };
                         }
-                        if (!currentTextContent) {
-                            currentTextContent = { type: "text", text: delta };
-                            currentAssistant.content = [
-                                ...currentAssistant.content,
-                                currentTextContent,
-                            ];
-                        }
-                        else {
-                            currentTextContent.text += delta;
-                        }
+                        currentText += frame.text || "";
                         break;
                     }
                     case "thinking": {
                         if (!currentAssistant) {
-                            currentAssistant = this.makeAssistantMsg();
-                        }
-                        const thinkText = frame.thinking || "";
-                        if (currentThinkingContent === null) {
-                            currentThinkingContent = {
-                                type: "thinking",
-                                thinking: thinkText,
+                            currentAssistant = {
+                                role: "assistant",
+                                content: [],
+                                timestamp: Date.now(),
                             };
-                            currentAssistant.content = [
-                                ...currentAssistant.content,
-                                currentThinkingContent,
-                            ];
                         }
-                        else {
-                            currentThinkingContent.thinking += thinkText;
-                        }
+                        currentThinking += frame.thinking || "";
                         break;
                     }
                     case "tool_start": {
-                        currentTextContent = null;
-                        currentThinkingContent = null;
                         if (!currentAssistant) {
-                            currentAssistant = this.makeAssistantMsg();
+                            currentAssistant = {
+                                role: "assistant",
+                                content: [],
+                                timestamp: Date.now(),
+                            };
+                        }
+                        if (currentText) {
+                            currentAssistant.content.push({ type: "text", text: currentText });
+                            currentText = "";
+                        }
+                        if (currentThinking) {
+                            currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
+                            currentThinking = "";
                         }
                         const name = frame.name || "unknown";
                         const argsStr = frame.input || "{}";
@@ -387,57 +380,49 @@ let ChatPage = class ChatPage extends LitElement {
                             name,
                             arguments: args,
                         };
-                        currentAssistant.content = [...currentAssistant.content, toolCall];
+                        currentAssistant.content.push(toolCall);
                         pendingToolCallId = toolCall.id;
                         break;
                     }
                     case "tool_end": {
-                        if (pendingToolCallId && currentAssistant) {
-                            const exitCode = frame.exit_code ?? 0;
-                            const stdout = frame.stdout || "";
-                            const stderr = frame.stderr || "";
-                            const status = frame.status;
-                            const resultText = stdout + (stderr ? "\n[stderr]\n" + stderr : "");
-                            const toolResult = {
-                                role: "toolResult",
-                                toolCallId: pendingToolCallId,
-                                toolName: "",
-                                content: resultText ? [{ type: "text", text: resultText }] : [],
-                                isError: status === "failed" || exitCode !== 0,
-                                timestamp: Date.now(),
-                            };
-                            replayedMessages.push(toolResult);
+                        if (pendingToolCallId) {
+                            const toolCall = currentAssistant?.content.find((c) => c.type === "toolCall" && c.id === pendingToolCallId);
+                            if (toolCall) {
+                                toolCall.resultStatus = frame.status;
+                                toolCall.resultExitCode = frame.exit_code;
+                                toolCall.resultStdout = frame.stdout;
+                                toolCall.resultStderr = frame.stderr;
+                            }
                             pendingToolCallId = null;
                         }
                         break;
                     }
                     case "load_session_complete": {
                         if (currentAssistant) {
-                            this.flushAssistant(replayedMessages, currentAssistant);
+                            if (currentText) {
+                                currentAssistant.content.push({ type: "text", text: currentText });
+                            }
+                            if (currentThinking) {
+                                currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
+                            }
+                            replayedMessages.push(currentAssistant);
                             currentAssistant = null;
-                            currentTextContent = null;
-                            currentThinkingContent = null;
                         }
                         const loadedThreadId = frame.thread_id || "";
                         if (loadedThreadId) {
                             this.lastLoadedThreadId = loadedThreadId;
                             SessionManager.saveLastThreadId(loadedThreadId, this.sessionId);
-                            console.log(`[replay] Saved thread ID ${loadedThreadId} for reconnection`);
                         }
                         console.log(`[replay] Session replay complete — ${replayedMessages.length} messages restored`);
-                        if (this.agent) {
-                            this.agent.state.messages = replayedMessages;
-                            this.showLanding = false;
-                            if (replayedMessages.length > 0 && !this.currentTitle) {
-                                this.currentTitle = this.generateTitle(replayedMessages);
+                        this.messages = replayedMessages;
+                        this.showLanding = false;
+                        if (replayedMessages.length > 0 && !this.currentTitle) {
+                            const firstUser = replayedMessages.find((m) => m.role === "user");
+                            if (firstUser) {
+                                this.currentTitle = this.generateTitleFromText(typeof firstUser.content === "string" ? firstUser.content : "");
                             }
-                            const agentInterface = this.querySelector("agent-interface");
-                            if (agentInterface) {
-                                agentInterface.requestUpdate();
-                            }
-                            this.chatPanel?.requestUpdate();
                         }
-                        // Mark replay as complete and restore original handler
+                        this.updateUI();
                         replayComplete = true;
                         wsManager.onMessage = originalOnMessage;
                         console.log("[replay] Restored original WsManager onMessage handler");
@@ -450,19 +435,15 @@ let ChatPage = class ChatPage extends LitElement {
                             errorMsg.includes("unauthorized") ||
                             errorMsg.includes("401") ||
                             errorMsg.includes("403")) {
-                            console.warn("[replay] Authentication error detected in session replay");
                             this.dispatchSessionExpired();
                         }
-                        // Restore original handler on error
                         replayComplete = true;
                         wsManager.onMessage = originalOnMessage;
                         break;
                     }
                     default:
-                        // Forward other frames to original handler (like binary, chat frames during replay)
-                        if (originalOnMessage) {
+                        if (originalOnMessage)
                             originalOnMessage(frame);
-                        }
                         break;
                 }
             }
@@ -470,44 +451,35 @@ let ChatPage = class ChatPage extends LitElement {
                 console.error("[replay] Error processing frame:", err);
             }
         };
-        // Send load_session command via the persistent connection
         const sent = wsManager.send({
             type: "load_session",
             thread_id: threadId,
         });
         if (!sent) {
             console.error("[replay] Failed to send load_session - WS not open");
-            // Restore original handler
             wsManager.onMessage = originalOnMessage;
             return;
         }
-        // Safety timeout in case load_session_complete never arrives
         setTimeout(() => {
             if (!replayComplete) {
                 console.warn("[replay] Load timeout - restoring original handler");
                 if (currentAssistant) {
-                    this.flushAssistant(replayedMessages, currentAssistant);
+                    if (currentText)
+                        currentAssistant.content.push({ type: "text", text: currentText });
+                    if (currentThinking)
+                        currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
+                    replayedMessages.push(currentAssistant);
                 }
-                if (this.agent) {
-                    this.agent.state.messages = replayedMessages;
-                    this.showLanding = false;
-                    const agentInterface = this.querySelector("agent-interface");
-                    if (agentInterface) {
-                        agentInterface.requestUpdate();
-                    }
-                    this.chatPanel?.requestUpdate();
-                }
+                this.messages = replayedMessages;
+                this.showLanding = false;
+                this.updateUI();
                 replayComplete = true;
                 wsManager.onMessage = originalOnMessage;
             }
         }, 15000);
     }
-    /**
-     * Opens a temporary WebSocket to list sessions, find the most recent
-     * one with messages, and load it.
-     */
     async loadMostRecentSession() {
-        if (!this.agent || !this.sessionId)
+        if (!this.sessionId)
             return;
         console.log("[replay] Listing threads via REST");
         try {
@@ -529,20 +501,7 @@ let ChatPage = class ChatPage extends LitElement {
             console.error("[replay] Failed to list threads:", err);
         }
     }
-    // ── Title Generation ──
-    generateTitle(messages) {
-        const firstUserMsg = messages.find((m) => m.role === "user");
-        if (!firstUserMsg)
-            return "";
-        let text = "";
-        const content = firstUserMsg.content;
-        if (typeof content === "string") {
-            text = content;
-        }
-        else {
-            const textBlocks = content.filter((c) => c.type === "text");
-            text = textBlocks.map((c) => c.text || "").join(" ");
-        }
+    generateTitleFromText(text) {
         text = text.trim();
         if (!text)
             return "";
@@ -552,12 +511,6 @@ let ChatPage = class ChatPage extends LitElement {
         }
         return text.length <= 50 ? text : `${text.substring(0, 47)}...`;
     }
-    shouldSaveSession(messages) {
-        const hasUserMsg = messages.some((m) => m.role === "user");
-        const hasAssistantMsg = messages.some((m) => m.role === "assistant");
-        return hasUserMsg && hasAssistantMsg;
-    }
-    // ── Session Management UI ──
     async openMenu() {
         console.log("[chat-page] Opening menu dialog");
         const filesTab = new FilesTab();
@@ -624,29 +577,23 @@ let ChatPage = class ChatPage extends LitElement {
         try {
             const { thread_id } = await eduApi.createThread(this.sessionId, this.sessionToken);
             console.log("[chat-page] New thread created:", thread_id);
-            if (this.agent) {
-                this.agent.state.messages = [];
-                this.currentTitle = "";
-                this.lastLoadedThreadId = thread_id;
-                this.showLanding = false;
-                const agentInterface = this.querySelector("agent-interface");
-                if (agentInterface) {
-                    agentInterface.requestUpdate();
-                }
-                this.chatPanel?.requestUpdate();
-                this.requestUpdate();
-            }
+            this.messages = [];
+            this.currentTitle = "";
+            this.lastLoadedThreadId = thread_id;
+            this.showLanding = false;
+            this.isStreaming = false;
+            this.streamingMessage = null;
+            this.updateUI();
+            this.requestUpdate();
         }
         catch (err) {
             console.error("[chat-page] Failed to create new thread:", err);
         }
     }
-    // ── Logout ──
     handleLogout() {
         SessionManager.clearAuth();
         this.dispatchEvent(new CustomEvent("logout", { bubbles: true, composed: true }));
     }
-    // ── File Drawer Handlers ──
     handleFilePreview(node, isSubject, subjectId) {
         console.log("[chat-page] Preview file:", node.name);
         this.currentPreviewFile = { node, isSubject, subjectId };
@@ -655,24 +602,19 @@ let ChatPage = class ChatPage extends LitElement {
     }
     handleFileAttach(node, isSubject, subjectId) {
         console.log("[chat-page] Attach file:", node.name, "isSubject:", isSubject);
-        // Build file path tag based on location
         let filePathTag;
         if (isSubject && subjectId) {
-            // Subject file: include subject folder in path
             filePathTag = `[Subject: ${subjectId}/${node.path}]`;
         }
         else {
-            // Workspace file: user's workspace path
             filePathTag = `[Workspace: ${node.path}]`;
         }
-        // Add file reference to the chat input via AgentInterface's MessageEditor
         if (this.chatPanel?.agentInterface) {
             const messageEditor = this.chatPanel.agentInterface._messageEditor;
             if (messageEditor) {
                 const currentValue = messageEditor.value || '';
                 const newValue = currentValue ? `${currentValue}\n${filePathTag}` : filePathTag;
                 messageEditor.value = newValue;
-                // Focus the input
                 requestAnimationFrame(() => {
                     const textarea = messageEditor.shadowRoot?.querySelector('textarea') ||
                         messageEditor.querySelector('textarea');
@@ -683,13 +625,6 @@ let ChatPage = class ChatPage extends LitElement {
                 console.log("[chat-page] File path added to input:", filePathTag);
             }
         }
-    }
-    formatBytes(bytes) {
-        if (bytes < 1024)
-            return `${bytes} B`;
-        if (bytes < 1024 * 1024)
-            return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
     render() {
         if (this._error) {
@@ -742,7 +677,6 @@ let ChatPage = class ChatPage extends LitElement {
                         const newTitle = e.target.value.trim();
                         if (newTitle && newTitle !== this.currentTitle) {
                             this.currentTitle = newTitle;
-                            // TODO: Wire to backend API to update session title
                         }
                         this.isEditingTitle = false;
                         this.requestUpdate();
@@ -752,7 +686,6 @@ let ChatPage = class ChatPage extends LitElement {
                             const newTitle = e.target.value.trim();
                             if (newTitle && newTitle !== this.currentTitle) {
                                 this.currentTitle = newTitle;
-                                // TODO: Wire to backend API to update session title
                             }
                             this.isEditingTitle = false;
                             this.requestUpdate();
@@ -800,7 +733,6 @@ let ChatPage = class ChatPage extends LitElement {
             : ''}
           <div class="flex-1 min-h-0 chat-container" style="${this.showLanding && this._ready ? 'display:none' : ''}"></div>
 
-          <!-- File Drawer Toggle Button -->
           ${!this.showLanding && this._ready
             ? html `
               <file-drawer-toggle
@@ -813,7 +745,6 @@ let ChatPage = class ChatPage extends LitElement {
             `
             : ''}
 
-          <!-- File Drawer -->
           <file-drawer
             .open=${this.fileDrawerOpen}
             .sessionId=${this.sessionId}
@@ -828,7 +759,6 @@ let ChatPage = class ChatPage extends LitElement {
             .onAttachFile=${(node, isSubject, subjectId) => this.handleFileAttach(node, isSubject, subjectId)}
           ></file-drawer>
 
-          <!-- File Preview Modal -->
           <file-preview-modal
             .open=${this.previewModalOpen}
             .fileNode=${this.currentPreviewFile?.node}
@@ -885,6 +815,15 @@ __decorate([
 __decorate([
     state()
 ], ChatPage.prototype, "previewModalOpen", void 0);
+__decorate([
+    state()
+], ChatPage.prototype, "messages", void 0);
+__decorate([
+    state()
+], ChatPage.prototype, "isStreaming", void 0);
+__decorate([
+    state()
+], ChatPage.prototype, "streamingMessage", void 0);
 ChatPage = __decorate([
     customElement("chat-page")
 ], ChatPage);

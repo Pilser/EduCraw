@@ -9,7 +9,6 @@ export function formatModelCost(cost) {
     const output = cost.output || 0;
     if (input === 0 && output === 0)
         return i18n("Free");
-    // Format numbers with appropriate precision
     const formatNum = (num) => {
         if (num >= 100)
             return num.toFixed(0);

@@ -1,4 +1,3 @@
-import type { Model } from "@earendil-works/pi-ai";
 import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Select, type SelectOption } from "@mariozechner/mini-lit/dist/Select.js";
@@ -9,7 +8,8 @@ import { Brain, Loader2, Paperclip, Send, Sparkles, Square } from "lucide";
 import { type Attachment, loadAttachment } from "../utils/attachment-utils.js";
 import { i18n } from "../utils/i18n.js";
 import "./AttachmentTile.js";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
 
 @customElement("message-editor")
 export class MessageEditor extends LitElement {
@@ -28,7 +28,7 @@ export class MessageEditor extends LitElement {
 	}
 
 	@property() isStreaming = false;
-	@property() currentModel?: Model<any>;
+	@property() currentModel?: { id: string; name: string; provider: string; reasoning?: boolean };
 	@property() thinkingLevel: ThinkingLevel = "off";
 	@property() showAttachmentButton = true;
 	@property() showModelSelector = true;

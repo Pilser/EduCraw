@@ -12,7 +12,6 @@ export class MessageList extends LitElement {
     constructor() {
         super(...arguments);
         this.messages = [];
-        this.tools = [];
         this.isStreaming = false;
     }
     createRenderRoot() {
@@ -23,28 +22,31 @@ export class MessageList extends LitElement {
         this.style.display = "block";
     }
     buildRenderItems() {
-        // Map tool results by call id for quick lookup
         const resultByCallId = new Map();
         for (const message of this.messages) {
             if (message.role === "toolResult") {
-                resultByCallId.set(message.toolCallId, message);
+                const tr = message;
+                resultByCallId.set(tr.toolCallId, {
+                    type: "tool_end",
+                    status: tr.isError ? "failed" : "completed",
+                    exit_code: tr.exitCode ?? 0,
+                    stdout: tr.stdout || "",
+                    stderr: tr.stderr || "",
+                });
             }
         }
         const items = [];
         let index = 0;
         for (const msg of this.messages) {
-            // Skip artifact messages - they're for session persistence only, not UI display
             if (msg.role === "artifact") {
                 continue;
             }
-            // Try custom renderer first
             const customTemplate = renderMessage(msg);
             if (customTemplate) {
                 items.push({ key: `msg:${index}`, template: customTemplate });
                 index++;
                 continue;
             }
-            // Fall back to built-in renderers
             if (msg.role === "user" || msg.role === "user-with-attachments") {
                 items.push({
                     key: `msg:${index}`,
@@ -57,21 +59,16 @@ export class MessageList extends LitElement {
                 items.push({
                     key: `msg:${index}`,
                     template: html `<assistant-message
-						.message=${amsg}
-						.tools=${this.tools}
-						.isStreaming=${false}
-						.pendingToolCalls=${this.pendingToolCalls}
-						.toolResultsById=${resultByCallId}
-						.hideToolCalls=${false}
-						.hidePendingToolCalls=${this.isStreaming}
-						.onCostClick=${this.onCostClick}
-					></assistant-message>`,
+            .message=${amsg}
+            .isStreaming=${false}
+            .pendingToolCalls=${this.pendingToolCalls}
+            .toolResultsById=${resultByCallId}
+            .hideToolCalls=${false}
+            .hidePendingToolCalls=${this.isStreaming}
+            .onCostClick=${this.onCostClick}
+          ></assistant-message>`,
                 });
                 index++;
-            }
-            else {
-                // Skip standalone toolResult messages; they are rendered via paired tool-message above
-                // Skip unknown roles
             }
         }
         return items;
@@ -79,16 +76,13 @@ export class MessageList extends LitElement {
     render() {
         const items = this.buildRenderItems();
         return html `<div class="flex flex-col gap-3">
-			${repeat(items, (it) => it.key, (it) => it.template)}
-		</div>`;
+      ${repeat(items, (it) => it.key, (it) => it.template)}
+    </div>`;
     }
 }
 __decorate([
     property({ type: Array })
 ], MessageList.prototype, "messages", void 0);
-__decorate([
-    property({ type: Array })
-], MessageList.prototype, "tools", void 0);
 __decorate([
     property({ type: Object })
 ], MessageList.prototype, "pendingToolCalls", void 0);
@@ -98,7 +92,6 @@ __decorate([
 __decorate([
     property({ attribute: false })
 ], MessageList.prototype, "onCostClick", void 0);
-// Register custom element
 if (!customElements.get("message-list")) {
     customElements.define("message-list", MessageList);
 }

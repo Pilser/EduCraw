@@ -1,51 +1,44 @@
-import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai";
+import type {
+  BackendAssistantMessage,
+  BackendMessage,
+  WsToolEndFrame,
+} from "../core/edu-types.js";
 import { html, LitElement } from "lit";
-import { customElement, property, query } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
 import type { MessageEditor } from "./MessageEditor.js";
 import "./MessageEditor.js";
 import "./MessageList.js";
-import "./Messages.js"; // Import for side effects to register the custom elements
+import "./Messages.js";
 import "./StreamingMessageContainer.js";
-import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
-import type { UserMessageWithAttachments } from "./Messages.js";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
 
 @customElement("agent-interface")
 export class AgentInterface extends LitElement {
-  // Optional external session: when provided, this component becomes a view over the session
-  @property({ attribute: false }) session?: Agent;
+  @property({ type: Array }) messages: BackendMessage[] = [];
+  @property({ attribute: false }) currentModel?: { id: string; name: string; provider: string; reasoning?: boolean };
   @property({ type: Boolean }) enableAttachments = true;
   @property({ type: Boolean }) enableModelSelector = true;
   @property({ type: Boolean }) enableThinkingSelector = true;
   @property({ type: Boolean }) showThemeToggle = false;
-  // Optional custom token usage data (for backends that track usage separately)
   @property({ attribute: false }) sessionTokenUsage?: {
     total_input_tokens: number;
     total_output_tokens: number;
     total_cache_creation_tokens?: number;
     total_cache_read_tokens?: number;
   };
-  // Optional custom API key prompt handler - if not provided, uses default dialog
-  @property({ attribute: false }) onApiKeyRequired?: (
-    provider: string,
-  ) => Promise<boolean>;
-  // Optional callback called before sending a message
   @property({ attribute: false }) onBeforeSend?: () => void | Promise<void>;
-  // Optional callback called before executing a tool call - return false to prevent execution
-  @property({ attribute: false }) onBeforeToolCall?: (
-    toolName: string,
-    args: any,
-  ) => boolean | Promise<boolean>;
-  // Optional callback called when cost display is clicked
   @property({ attribute: false }) onCostClick?: () => void;
-  // Optional callback to override model selector behavior
   @property({ attribute: false }) onModelSelect?: () => void;
+  @property({ attribute: false }) onSend?: (text: string, attachments: Attachment[]) => void;
+  @property({ attribute: false }) onCancel?: () => void;
+  @property({ type: Boolean }) isStreaming = false;
 
-  // References
+  @state() private _streamingMessage: BackendAssistantMessage | null = null;
+
   @query("message-editor") private _messageEditor!: MessageEditor;
   @query("streaming-message-container")
   private _streamingContainer!: StreamingMessageContainer;
@@ -55,7 +48,6 @@ export class AgentInterface extends LitElement {
   private _lastClientHeight = 0;
   private _scrollContainer?: HTMLElement;
   private _resizeObserver?: ResizeObserver;
-  private _unsubscribeSession?: () => void;
 
   public setInput(text: string, attachments?: Attachment[]) {
     const update = () => {
@@ -72,17 +64,15 @@ export class AgentInterface extends LitElement {
     this._autoScroll = enabled;
   }
 
-  protected override createRenderRoot(): HTMLElement | DocumentFragment {
-    return this;
+  public setStreamingMessage(msg: BackendAssistantMessage | null, immediate = false) {
+    if (this._streamingContainer) {
+      this._streamingContainer.setMessage(msg, immediate);
+    }
+    this._streamingMessage = msg;
   }
 
-  override willUpdate(changedProperties: Map<string, any>) {
-    super.willUpdate(changedProperties);
-
-    // Re-subscribe when session property changes
-    if (changedProperties.has("session")) {
-      this.setupSessionSubscription();
-    }
+  protected override createRenderRoot(): HTMLElement | DocumentFragment {
+    return this;
   }
 
   override async connectedCallback() {
@@ -93,39 +83,31 @@ export class AgentInterface extends LitElement {
     this.style.height = "100%";
     this.style.minHeight = "0";
 
-    // Wait for first render to get scroll container
     await this.updateComplete;
     this._scrollContainer = this.querySelector(
       ".overflow-y-auto",
     ) as HTMLElement;
 
     if (this._scrollContainer) {
-      // Set up ResizeObserver to detect content changes
       this._resizeObserver = new ResizeObserver(() => {
         if (this._autoScroll && this._scrollContainer) {
           this._scrollContainer.scrollTop = this._scrollContainer.scrollHeight;
         }
       });
 
-      // Observe the content container inside the scroll container
       const contentContainer =
         this._scrollContainer.querySelector(".max-w-3xl");
       if (contentContainer) {
         this._resizeObserver.observe(contentContainer);
       }
 
-      // Set up scroll listener with better detection
       this._scrollContainer.addEventListener("scroll", this._handleScroll);
     }
-
-    // Subscribe to external session if provided
-    this.setupSessionSubscription();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
 
-    // Clean up observers and listeners
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
       this._resizeObserver = undefined;
@@ -134,71 +116,6 @@ export class AgentInterface extends LitElement {
     if (this._scrollContainer) {
       this._scrollContainer.removeEventListener("scroll", this._handleScroll);
     }
-
-    if (this._unsubscribeSession) {
-      this._unsubscribeSession();
-      this._unsubscribeSession = undefined;
-    }
-  }
-
-  private setupSessionSubscription() {
-    if (this._unsubscribeSession) {
-      this._unsubscribeSession();
-      this._unsubscribeSession = undefined;
-    }
-    if (!this.session) return;
-
-    // EduCrawl: streamFn and API keys are managed server-side.
-    // The Agent is pre-configured with wsStreamFn before being passed to ChatPanel.
-
-    this._unsubscribeSession = this.session.subscribe(
-      async (ev: AgentEvent) => {
-        switch (ev.type) {
-          case "message_start":
-          case "turn_start":
-          case "turn_end":
-          case "agent_start":
-            this.requestUpdate();
-            break;
-          case "message_end":
-            // Clear streaming container when a message completes
-            // to prevent duplicate rendering (stable list now has this message)
-            if (this._streamingContainer) {
-              this._streamingContainer.setMessage(null, true);
-            }
-            this.requestUpdate();
-            break;
-          case "agent_end":
-            // Clear streaming container when agent finishes
-            if (this._streamingContainer) {
-              this._streamingContainer.isStreaming = false;
-              this._streamingContainer.setMessage(null, true);
-            }
-            this.requestUpdate();
-            // finishRun() sets isStreaming=false AFTER agent_end is emitted.
-            // Use setTimeout(0) instead of queueMicrotask to ensure all
-            // microtasks (including Lit's own render deferral) have drained
-            // and finishRun() has executed before re-render.
-            console.log("[agent-event] agent_end — scheduling delayed update");
-            setTimeout(() => {
-              console.log(
-                "[agent-event] agent_end post-render — isStreaming:",
-                this.session?.state.isStreaming,
-              );
-              this.requestUpdate();
-            }, 0);
-            break;
-          case "message_update":
-            if (this._streamingContainer) {
-              const isStreaming = this.session?.state.isStreaming || false;
-              this._streamingContainer.isStreaming = isStreaming;
-              this._streamingContainer.setMessage(ev.message, !isStreaming);
-            }
-            this.requestUpdate();
-            break;
-        }
-      },
-    );
   }
 
   private _handleScroll = (_ev: any) => {
@@ -209,13 +126,11 @@ export class AgentInterface extends LitElement {
     const clientHeight = this._scrollContainer.clientHeight;
     const distanceFromBottom = scrollHeight - currentScrollTop - clientHeight;
 
-    // Ignore relayout due to message editor getting pushed up by stats
     if (clientHeight < this._lastClientHeight) {
       this._lastClientHeight = clientHeight;
       return;
     }
 
-    // Only disable auto-scroll if user scrolled UP or is far from bottom
     if (
       currentScrollTop !== 0 &&
       currentScrollTop < this._lastScrollTop &&
@@ -223,7 +138,6 @@ export class AgentInterface extends LitElement {
     ) {
       this._autoScroll = false;
     } else if (distanceFromBottom < 10) {
-      // Re-enable if very close to bottom
       this._autoScroll = true;
     }
 
@@ -231,74 +145,50 @@ export class AgentInterface extends LitElement {
     this._lastClientHeight = clientHeight;
   };
 
-  public async sendMessage(input: string, attachments?: Attachment[]) {
-    if (
-      (!input.trim() && attachments?.length === 0) ||
-      this.session?.state.isStreaming
-    )
-      return;
-    const session = this.session;
-    if (!session) throw new Error("No session set on AgentInterface");
-    if (!session.state.model) throw new Error("No model set on AgentInterface");
+  public async handleSend(input: string, attachments?: Attachment[]) {
+    if ((!input.trim() && attachments?.length === 0) || this.isStreaming) return;
 
-    // EduCrawl: API keys are managed server-side — no client-side check needed.
-
-    // Call onBeforeSend hook before sending
     if (this.onBeforeSend) {
       await this.onBeforeSend();
     }
 
-    // Only clear editor after we know we can send
     this._messageEditor.value = "";
     this._messageEditor.attachments = [];
-    this._autoScroll = true; // Enable auto-scroll when sending a message
+    this._autoScroll = true;
 
-    // Compose message with attachments if any
-    if (attachments && attachments.length > 0) {
-      const message: UserMessageWithAttachments = {
-        role: "user-with-attachments",
-        content: input,
-        attachments,
-        timestamp: Date.now(),
-      };
-      await this.session?.prompt(message);
-    } else {
-      await this.session?.prompt(input);
+    if (this.onSend) {
+      this.onSend(input, attachments || []);
     }
   }
 
   private renderMessages() {
-    if (!this.session)
-      return html`<div class="p-4 text-center text-muted-foreground">
-        ${i18n("No session available")}
-      </div>`;
-    const state = this.session.state;
-    // Build a map of tool results to allow inline rendering in assistant messages
-    const toolResultsById = new Map<string, ToolResultMessage<any>>();
-    for (const message of state.messages) {
-      if (message.role === "toolResult") {
-        toolResultsById.set(message.toolCallId, message);
+    const toolResultsById = new Map<string, WsToolEndFrame>();
+    for (const message of this.messages) {
+      if ((message as any).role === "toolResult") {
+        const tr = message as any;
+        toolResultsById.set(tr.toolCallId, {
+          type: "tool_end",
+          status: tr.isError ? "failed" : "completed",
+          exit_code: tr.exitCode ?? 0,
+          stdout: tr.stdout || "",
+          stderr: tr.stderr || "",
+        });
       }
     }
+
     return html`
       <div class="flex flex-col gap-3">
-        <!-- Stable messages list - won't re-render during streaming -->
         <message-list
-          .messages=${[...state.messages]}
-          .tools=${state.tools}
-          .pendingToolCalls=${this.session
-            ? this.session.state.pendingToolCalls
-            : new Set<string>()}
-          .isStreaming=${state.isStreaming}
+          .messages=${[...this.messages]}
+          .pendingToolCalls=${new Set<string>()}
+          .isStreaming=${this.isStreaming}
           .onCostClick=${this.onCostClick}
         ></message-list>
 
-        <!-- Streaming message container - manages its own updates -->
         <streaming-message-container
-          class="${state.isStreaming ? "" : "hidden"}"
-          .tools=${state.tools}
-          .isStreaming=${state.isStreaming}
-          .pendingToolCalls=${state.pendingToolCalls}
+          class="${this.isStreaming ? "" : "hidden"}"
+          .isStreaming=${this.isStreaming}
+          .pendingToolCalls=${new Set<string>()}
           .toolResultsById=${toolResultsById}
           .onCostClick=${this.onCostClick}
         ></streaming-message-container>
@@ -307,11 +197,6 @@ export class AgentInterface extends LitElement {
   }
 
   private renderStats() {
-    if (!this.session) return html`<div class="text-xs h-5"></div>`;
-
-    const state = this.session.state;
-    
-    // Use sessionTokenUsage if provided (for EduCraw backend)
     let totalsText = "";
     if (this.sessionTokenUsage) {
       const input = this.sessionTokenUsage.total_input_tokens || 0;
@@ -319,7 +204,7 @@ export class AgentInterface extends LitElement {
       const cacheRead = this.sessionTokenUsage.total_cache_read_tokens || 0;
       const cacheWrite = this.sessionTokenUsage.total_cache_creation_tokens || 0;
       const total = input + output;
-      
+
       if (total > 0) {
         totalsText = `${this.formatTokens(total)} tokens`;
         if (cacheRead > 0 || cacheWrite > 0) {
@@ -332,8 +217,7 @@ export class AgentInterface extends LitElement {
         }
       }
     } else {
-      // Fall back to calculating from message usage (pi default behavior)
-      const totals = state.messages
+      const totals = this.messages
         .filter((m) => m.role === "assistant")
         .reduce(
           (acc, msg: any) => {
@@ -354,7 +238,7 @@ export class AgentInterface extends LitElement {
             cacheWrite: 0,
             totalTokens: 0,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          } satisfies Usage,
+          },
         );
 
       const hasTotals =
@@ -394,48 +278,25 @@ export class AgentInterface extends LitElement {
   }
 
   override render() {
-    if (!this.session)
-      return html`<div class="p-4 text-center text-muted-foreground">
-        ${i18n("No session set")}
-      </div>`;
-
-    const session = this.session;
-    const state = this.session.state;
     return html`
       <div class="flex flex-col h-full bg-background text-foreground">
-        <!-- Messages Area -->
         <div class="flex-1 overflow-y-auto">
           <div class="max-w-3xl mx-auto p-4 pb-0">${this.renderMessages()}</div>
         </div>
 
-        <!-- Input Area -->
         <div class="shrink-0">
           <div class="max-w-3xl mx-auto px-2">
             <message-editor
-              .isStreaming=${state.isStreaming}
-              .currentModel=${state.model}
-              .thinkingLevel=${state.thinkingLevel}
+              .isStreaming=${this.isStreaming}
+              .currentModel=${this.currentModel}
               .showAttachmentButton=${this.enableAttachments}
               .showModelSelector=${this.enableModelSelector}
               .showThinkingSelector=${this.enableThinkingSelector}
               .onSend=${(input: string, attachments: Attachment[]) => {
-                this.sendMessage(input, attachments);
+                this.handleSend(input, attachments);
               }}
-              .onAbort=${() => session.abort()}
-              .onModelSelect=${() => {
-                if (this.onModelSelect) {
-                  this.onModelSelect();
-                } else {
-                  ModelSelector.open(state.model, (model) => {
-                    session.state.model = model;
-                  });
-                }
-              }}
-              .onThinkingChange=${this.enableThinkingSelector
-                ? (level: "off" | "minimal" | "low" | "medium" | "high") => {
-                    session.state.thinkingLevel = level;
-                  }
-                : undefined}
+              .onAbort=${this.onCancel}
+              .onModelSelect=${this.onModelSelect}
             ></message-editor>
             ${this.renderStats()}
           </div>
@@ -445,7 +306,6 @@ export class AgentInterface extends LitElement {
   }
 }
 
-// Register custom element with guard
 if (!customElements.get("agent-interface")) {
   customElements.define("agent-interface", AgentInterface);
 }

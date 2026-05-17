@@ -11,22 +11,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [tailwindcss()],
     resolve: {
-      alias: {
-        "@earendil-works/pi-agent-core": path.resolve(
-          __dirname,
-          "src/pi-dep/index.ts",
-        ),
-        "@earendil-works/pi-ai": path.resolve(
-          __dirname,
-          "src/pi-dep/ai/index.ts",
-        ),
-      },
-    },
-    optimizeDeps: {
-      exclude: [
-        "@earendil-works/pi-agent-core",
-        "@earendil-works/pi-ai",
-      ],
+      alias: {},
     },
     server: {
       port: 5174,
