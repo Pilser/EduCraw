@@ -67,17 +67,18 @@ let ChatPage = class ChatPage extends LitElement {
             this._ready = true;
             this.loadBalance();
             await this.updateComplete;
-            this.appendChatPanel();
-            if (this.chatPanel?.agentInterface) {
-                this.chatPanel.agentInterface.messages = this.messages;
-                this.chatPanel.agentInterface.currentModel = {
+            await this.chatPanel.updateComplete;
+            const ai = this.chatPanel.agentInterface;
+            if (ai) {
+                ai.messages = this.messages;
+                ai.currentModel = {
                     id: this.activeModelName,
                     name: this.activeModelName,
                     provider: "unknown",
                     reasoning: true,
                 };
-                this.chatPanel.agentInterface.thinkingLevel = "off";
-                this.chatPanel.agentInterface.requestUpdate();
+                ai.thinkingLevel = "off";
+                ai.requestUpdate();
             }
             const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
             if (wsManager) {

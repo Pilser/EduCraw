@@ -10,6 +10,7 @@ import { renderTool } from "../tools/index.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import "./ThinkingBlock.js";
+import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 let UserMessage = class UserMessage extends LitElement {
     createRenderRoot() {
         return this;

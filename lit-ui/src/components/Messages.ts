@@ -13,6 +13,7 @@ import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import "./ThinkingBlock.js";
+import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 
 @customElement("user-message")
 export class UserMessage extends LitElement {

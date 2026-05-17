@@ -8,6 +8,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { ChevronRight } from "lucide";
+import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 let ThinkingBlock = class ThinkingBlock extends LitElement {
     constructor() {
         super(...arguments);

@@ -2,6 +2,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { ChevronRight } from "lucide";
+import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 
 @customElement("thinking-block")
 export class ThinkingBlock extends LitElement {
