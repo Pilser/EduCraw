@@ -6,6 +6,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 import { html, LitElement } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import { icon } from "@mariozechner/mini-lit";
+import { Check, ChevronDown, ChevronRight, ListTodo } from "lucide";
 import "./MessageEditor.js";
 import "./MessageList.js";
 import "./Messages.js";
@@ -21,7 +23,9 @@ let AgentInterface = class AgentInterface extends LitElement {
         this.showThemeToggle = false;
         this.isStreaming = false;
         this.thinkingLevel = "off";
+        this.sessionTodo = "";
         this._streamingMessage = null;
+        this._todoExpanded = false;
         this._autoScroll = true;
         this._lastScrollTop = 0;
         this._lastClientHeight = 0;
@@ -225,11 +229,68 @@ let AgentInterface = class AgentInterface extends LitElement {
         }
         return tokens.toString();
     }
+    parseTodoItems(content) {
+        const items = [];
+        for (const line of content.split("\n")) {
+            const trimmed = line.trim();
+            const match = trimmed.match(/^[-*]\s*\[([xX\s])\]\s*(.*)/);
+            if (match) {
+                items.push({
+                    text: match[2] || trimmed,
+                    completed: match[1].toLowerCase() === "x",
+                });
+            }
+            else if (trimmed) {
+                items.push({ text: trimmed, completed: false });
+            }
+        }
+        return items;
+    }
+    renderTodoPanel() {
+        if (!this.sessionTodo)
+            return html ``;
+        const items = this.parseTodoItems(this.sessionTodo);
+        const completed = items.filter((i) => i.completed).length;
+        const total = items.length;
+        const chevron = this._todoExpanded
+            ? icon(ChevronDown, "sm")
+            : icon(ChevronRight, "sm");
+        return html `
+      <div class="mb-3 border border-border rounded-md bg-card">
+        <div
+          class="flex items-center gap-2 p-2.5 cursor-pointer select-none text-sm text-muted-foreground hover:text-foreground transition-colors"
+          @click=${() => { this._todoExpanded = !this._todoExpanded; }}
+        >
+          <span class="inline-block">${chevron}</span>
+          <span class="inline-block text-muted-foreground">${icon(ListTodo, "sm")}</span>
+          <span>Tasks</span>
+          <span class="text-xs ${completed === total ? "text-green-600" : "text-muted-foreground"}">(${completed}/${total})</span>
+        </div>
+        ${this._todoExpanded
+            ? html `
+            <div class="px-3 pb-3 space-y-1.5">
+              ${items.map((item) => html `
+                  <div class="flex items-start gap-2 text-sm ${item.completed ? "text-muted-foreground line-through" : "text-foreground"}">
+                    <span class="inline-flex items-center justify-center w-4 h-4 mt-0.5 shrink-0 rounded border ${item.completed ? "border-green-500 bg-green-500/20 text-green-600" : "border-border bg-muted"}">
+                      ${item.completed ? icon(Check, "xs") : ""}
+                    </span>
+                    <span>${item.text}</span>
+                  </div>
+                `)}
+            </div>
+          `
+            : ""}
+      </div>
+    `;
+    }
     render() {
         return html `
       <div class="flex flex-col h-full bg-background text-foreground">
         <div class="flex-1 overflow-y-auto">
-          <div class="max-w-3xl mx-auto p-4 pb-0">${this.renderMessages()}</div>
+          <div class="max-w-3xl mx-auto p-4 pb-0">
+            ${this.renderTodoPanel()}
+            ${this.renderMessages()}
+          </div>
         </div>
 
         <div class="shrink-0">
@@ -297,8 +358,14 @@ __decorate([
     property()
 ], AgentInterface.prototype, "thinkingLevel", void 0);
 __decorate([
+    property()
+], AgentInterface.prototype, "sessionTodo", void 0);
+__decorate([
     state()
 ], AgentInterface.prototype, "_streamingMessage", void 0);
+__decorate([
+    state()
+], AgentInterface.prototype, "_todoExpanded", void 0);
 __decorate([
     query("message-editor")
 ], AgentInterface.prototype, "_messageEditor", void 0);

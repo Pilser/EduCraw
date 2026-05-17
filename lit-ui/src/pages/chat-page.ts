@@ -42,6 +42,7 @@ export class ChatPage extends LitElement {
   @state() private currentTitle = "";
   @state() private isEditingTitle = false;
   @state() private showLanding = true;
+  @state() private sessionTodo = "";
   @state() private tokenBalance = 0;
   @state() private fileDrawerOpen = false;
   @state() private previewModalOpen = false;
@@ -97,6 +98,7 @@ export class ChatPage extends LitElement {
           reasoning: true,
         };
         ai.thinkingLevel = "off";
+        ai.sessionTodo = this.sessionTodo;
         ai.requestUpdate();
       }
 
@@ -339,13 +341,33 @@ export class ChatPage extends LitElement {
   }
 
   private updateUI() {
+    this.sessionTodo = this.extractSessionTodo(this.messages);
     if (this.chatPanel?.agentInterface) {
       this.chatPanel.agentInterface.messages = this.messages;
       this.chatPanel.agentInterface.isStreaming = this.isStreaming;
       this.chatPanel.agentInterface.setStreamingMessage(null, true);
+      this.chatPanel.agentInterface.sessionTodo = this.sessionTodo;
       this.chatPanel.agentInterface.requestUpdate();
     }
     this.requestUpdate();
+  }
+
+  private extractSessionTodo(messages: BackendMessage[]): string {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "assistant" && Array.isArray(msg.content)) {
+        for (let j = msg.content.length - 1; j >= 0; j--) {
+          const block = msg.content[j] as any;
+          if (block.type === "toolCall" && block.name === "todo__todo_write") {
+            const args = block.arguments as Record<string, unknown> | undefined;
+            if (args?.content && typeof args.content === "string") {
+              return args.content;
+            }
+          }
+        }
+      }
+    }
+    return "";
   }
 
   private async loadSessionById(threadId: string) {

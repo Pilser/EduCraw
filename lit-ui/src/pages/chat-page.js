@@ -33,6 +33,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.currentTitle = "";
         this.isEditingTitle = false;
         this.showLanding = true;
+        this.sessionTodo = "";
         this.tokenBalance = 0;
         this.fileDrawerOpen = false;
         this.previewModalOpen = false;
@@ -78,6 +79,7 @@ let ChatPage = class ChatPage extends LitElement {
                     reasoning: true,
                 };
                 ai.thinkingLevel = "off";
+                ai.sessionTodo = this.sessionTodo;
                 ai.requestUpdate();
             }
             const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
@@ -290,13 +292,32 @@ let ChatPage = class ChatPage extends LitElement {
         this.requestUpdate();
     }
     updateUI() {
+        this.sessionTodo = this.extractSessionTodo(this.messages);
         if (this.chatPanel?.agentInterface) {
             this.chatPanel.agentInterface.messages = this.messages;
             this.chatPanel.agentInterface.isStreaming = this.isStreaming;
             this.chatPanel.agentInterface.setStreamingMessage(null, true);
+            this.chatPanel.agentInterface.sessionTodo = this.sessionTodo;
             this.chatPanel.agentInterface.requestUpdate();
         }
         this.requestUpdate();
+    }
+    extractSessionTodo(messages) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            if (msg.role === "assistant" && Array.isArray(msg.content)) {
+                for (let j = msg.content.length - 1; j >= 0; j--) {
+                    const block = msg.content[j];
+                    if (block.type === "toolCall" && block.name === "todo__todo_write") {
+                        const args = block.arguments;
+                        if (args?.content && typeof args.content === "string") {
+                            return args.content;
+                        }
+                    }
+                }
+            }
+        }
+        return "";
     }
     async loadSessionById(threadId) {
         const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
@@ -830,6 +851,9 @@ __decorate([
 __decorate([
     state()
 ], ChatPage.prototype, "showLanding", void 0);
+__decorate([
+    state()
+], ChatPage.prototype, "sessionTodo", void 0);
 __decorate([
     state()
 ], ChatPage.prototype, "tokenBalance", void 0);

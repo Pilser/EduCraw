@@ -1,7 +1,9 @@
 import { getToolRenderer, registerToolRenderer } from "./renderer-registry.js";
 import { BashRenderer } from "./renderers/BashRenderer.js";
 import { DefaultRenderer } from "./renderers/DefaultRenderer.js";
+import { TodoRenderer } from "./renderers/TodoRenderer.js";
 registerToolRenderer("bash", new BashRenderer());
+registerToolRenderer("todo__todo_write", new TodoRenderer());
 const defaultRenderer = new DefaultRenderer();
 let showJsonMode = false;
 export function setShowJsonMode(enabled) {

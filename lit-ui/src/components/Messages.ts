@@ -7,13 +7,27 @@ import type {
   WsToolEndFrame,
 } from "../core/edu-types.js";
 import { html, LitElement, type TemplateResult } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { renderTool } from "../tools/index.js";
 import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
+import { icon } from "@mariozechner/mini-lit";
+import { Check, ChevronDown, ChevronRight, Loader, Wrench, X } from "lucide";
 import "./ThinkingBlock.js";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
+
+const FRIENDLY_TOOL_LABELS: Record<string, string> = {
+  "bash": "Running command",
+  "todo__todo_write": "Updating task list",
+  "read": "Reading file",
+  "write": "Writing file",
+  "edit": "Editing file",
+  "glob": "Searching files",
+  "grep": "Searching code",
+  "web_search": "Searching the web",
+  "web_fetch": "Fetching web page",
+};
 
 @customElement("user-message")
 export class UserMessage extends LitElement {
@@ -142,6 +156,7 @@ export class ToolMessage extends LitElement {
   @property({ type: Boolean }) pending: boolean = false;
   @property({ type: Boolean }) aborted: boolean = false;
   @property({ type: Boolean }) isStreaming: boolean = false;
+  @state() private isExpanded = false;
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
     return this;
@@ -152,8 +167,54 @@ export class ToolMessage extends LitElement {
     this.style.display = "block";
   }
 
+  private getFriendlyLabel(): string {
+    const name = this.toolCall.name;
+    if (FRIENDLY_TOOL_LABELS[name]) return FRIENDLY_TOOL_LABELS[name];
+    if (name.startsWith("todo__")) return "Updating task list";
+    return "Working on it...";
+  }
+
+  private getToolState(): "inprogress" | "complete" | "error" {
+    if (this.aborted) return "error";
+    if (this.isStreaming || this.pending) return "inprogress";
+    if (this.result) {
+      return this.result.status === "failed" ? "error" : "complete";
+    }
+    if (this.toolCall.resultStatus === "failed") return "error";
+    return "complete";
+  }
+
+  private renderStatusIcon(state: "inprogress" | "complete" | "error") {
+    switch (state) {
+      case "inprogress":
+        return html`<span class="inline-block text-foreground animate-spin">${icon(Loader, "sm")}</span>`;
+      case "complete":
+        return html`<span class="inline-block text-green-600 dark:text-green-500">${icon(Check, "sm")}</span>`;
+      case "error":
+        return html`<span class="inline-block text-destructive">${icon(X, "sm")}</span>`;
+    }
+  }
+
+  private toggleExpanded() {
+    this.isExpanded = !this.isExpanded;
+  }
+
   override render() {
     const toolName = this.toolCall.name;
+    const state = this.getToolState();
+    const friendlyLabel = this.getFriendlyLabel();
+
+    const effectiveResult = this.result ?? (
+      this.toolCall.resultStatus
+        ? {
+            type: "tool_end" as const,
+            status: (this.toolCall.resultStatus === "failed" ? "failed" : "completed") as "completed" | "failed",
+            exit_code: this.toolCall.resultExitCode ?? 0,
+            stdout: this.toolCall.resultStdout ?? "",
+            stderr: this.toolCall.resultStderr ?? "",
+          }
+        : undefined
+    );
 
     const renderResult = renderTool(
       toolName,
@@ -166,17 +227,30 @@ export class ToolMessage extends LitElement {
             stdout: "",
             stderr: "Aborted",
           }
-        : this.result,
+        : effectiveResult,
       !this.aborted && (this.isStreaming || this.pending),
     );
 
-    if (renderResult.isCustom) {
-      return renderResult.content;
-    }
+    const toolContent = renderResult.isCustom
+      ? html`<div class="mt-2">${renderResult.content}</div>`
+      : html`<div class="mt-2 p-2.5 border border-border rounded-md bg-card text-card-foreground shadow-xs">${renderResult.content}</div>`;
+
+    const chevronIcon = this.isExpanded
+      ? icon(ChevronDown, "sm")
+      : icon(ChevronRight, "sm");
 
     return html`
-      <div class="p-2.5 border border-border rounded-md bg-card text-card-foreground shadow-xs">
-        ${renderResult.content}
+      <div class="tool-message-container border border-border rounded-md bg-muted/30">
+        <div
+          class="tool-message-header cursor-pointer select-none flex items-center gap-2 p-2.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          @click=${this.toggleExpanded}
+        >
+          <span class="transition-transform inline-block">${chevronIcon}</span>
+          ${this.renderStatusIcon(state)}
+          <span class="inline-block">${icon(Wrench, "sm")}</span>
+          <span>${friendlyLabel}</span>
+        </div>
+        ${this.isExpanded ? toolContent : ""}
       </div>
     `;
   }
