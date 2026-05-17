@@ -76,7 +76,7 @@ export class ModelSelector extends DialogBase {
   @state() private navigationMode: "mouse" | "keyboard" = "mouse";
   @state() private eduModels: DisplayModel[] = [];
 
-  private onSelectCallback?: (modelId: string) => void;
+  private onSelectCallback?: (modelId: string, modelName: string) => void;
   private allowedProviders?: Set<string>;
   private scrollContainerRef = createRef<HTMLDivElement>();
   private searchInputRef = createRef<HTMLInputElement>();
@@ -88,7 +88,7 @@ export class ModelSelector extends DialogBase {
 
   static async open(
     currentModelId: string | null,
-    onSelect: (modelId: string) => void,
+    onSelect: (modelId: string, modelName: string) => void,
     allowedProviders?: string[],
   ) {
     const selector = new ModelSelector();
@@ -107,6 +107,9 @@ export class ModelSelector extends DialogBase {
     super.firstUpdated(changedProperties);
     await this.updateComplete;
     this.searchInputRef.value?.focus();
+
+    this.selectedIndex = this.findIndexOfCurrentModel();
+    requestAnimationFrame(() => this.scrollToSelected());
 
     this.addEventListener("mousemove", (e: MouseEvent) => {
       if (
@@ -177,7 +180,16 @@ export class ModelSelector extends DialogBase {
     } finally {
       this.modelsLoading = false;
       this.requestUpdate();
+      await this.updateComplete;
+      this.selectedIndex = this.findIndexOfCurrentModel();
+      this.scrollToSelected();
     }
+  }
+
+  private findIndexOfCurrentModel(): number {
+    const filtered = this.getFilteredModels();
+    const idx = filtered.findIndex(({ id }) => id === this.currentModelId);
+    return idx >= 0 ? idx : 0;
   }
 
   private formatTokens(tokens: number): string {
@@ -188,7 +200,7 @@ export class ModelSelector extends DialogBase {
 
   private handleSelect(model: DisplayModel) {
     if (model) {
-      this.onSelectCallback?.(model.id);
+      this.onSelectCallback?.(model.id, model.name);
       this.close();
     }
   }

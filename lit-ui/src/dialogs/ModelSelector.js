@@ -85,6 +85,8 @@ let ModelSelector = ModelSelector_1 = class ModelSelector extends DialogBase {
         super.firstUpdated(changedProperties);
         await this.updateComplete;
         this.searchInputRef.value?.focus();
+        this.selectedIndex = this.findIndexOfCurrentModel();
+        requestAnimationFrame(() => this.scrollToSelected());
         this.addEventListener("mousemove", (e) => {
             if (e.clientX !== this.lastMousePosition.x ||
                 e.clientY !== this.lastMousePosition.y) {
@@ -147,7 +149,15 @@ let ModelSelector = ModelSelector_1 = class ModelSelector extends DialogBase {
         finally {
             this.modelsLoading = false;
             this.requestUpdate();
+            await this.updateComplete;
+            this.selectedIndex = this.findIndexOfCurrentModel();
+            this.scrollToSelected();
         }
+    }
+    findIndexOfCurrentModel() {
+        const filtered = this.getFilteredModels();
+        const idx = filtered.findIndex(({ id }) => id === this.currentModelId);
+        return idx >= 0 ? idx : 0;
     }
     formatTokens(tokens) {
         if (tokens >= 1000000)
@@ -158,7 +168,7 @@ let ModelSelector = ModelSelector_1 = class ModelSelector extends DialogBase {
     }
     handleSelect(model) {
         if (model) {
-            this.onSelectCallback?.(model.id);
+            this.onSelectCallback?.(model.id, model.name);
             this.close();
         }
     }

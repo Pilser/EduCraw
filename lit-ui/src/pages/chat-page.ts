@@ -57,7 +57,8 @@ export class ChatPage extends LitElement {
   private previewModal?: FilePreviewModal;
   private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
   private wsStreamFn?: (input: string, callbacks: StreamCallbacks) => void;
-  private activeModelName = "grok-4-1-fast-reasoning";
+  private activeModelId = "grok-4-1-fast-reasoning";
+  private activeModelDisplayName = "grok-4-1-fast-reasoning";
 
   private isAuthError(err: any): boolean {
     if (err?.status === 401 || err?.status === 403) return true;
@@ -92,8 +93,8 @@ export class ChatPage extends LitElement {
       if (ai) {
         ai.messages = this.messages;
         ai.currentModel = {
-          id: this.activeModelName,
-          name: this.activeModelName,
+          id: this.activeModelId,
+          name: this.activeModelDisplayName,
           provider: "unknown",
           reasoning: true,
         };
@@ -150,13 +151,17 @@ export class ChatPage extends LitElement {
   }
 
   private async initChat() {
-    this.activeModelName = "grok-4-1-fast-reasoning";
+    this.activeModelId = "grok-4-1-fast-reasoning";
+    this.activeModelDisplayName = "grok-4-1-fast-reasoning";
     try {
       const sessionModels = await eduApi.getSessionModels(
         this.sessionId,
         this.auth.token,
       );
-      this.activeModelName = sessionModels.active || this.activeModelName;
+      const activeId = sessionModels.active || this.activeModelId;
+      this.activeModelId = activeId;
+      const activeModel = sessionModels.models.find((m) => m.name === activeId);
+      this.activeModelDisplayName = activeModel?.display_name || activeId;
     } catch (err) {
       if (this.isAuthError(err)) throw err;
       console.error("Failed to fetch session models:", err);
@@ -200,7 +205,18 @@ export class ChatPage extends LitElement {
       onCancel: () => this.handleCancel(),
       onModelSelect: async () => {
         const { ModelSelector } = await import("../dialogs/ModelSelector.js");
-        ModelSelector.open(this.activeModelName, async (newModelId) => {
+        ModelSelector.open(this.activeModelId, async (newModelId, newModelName) => {
+          this.activeModelId = newModelId;
+          this.activeModelDisplayName = newModelName;
+          if (this.chatPanel?.agentInterface) {
+            this.chatPanel.agentInterface.currentModel = {
+              id: this.activeModelId,
+              name: this.activeModelDisplayName,
+              provider: "unknown",
+              reasoning: true,
+            };
+            this.chatPanel.agentInterface.requestUpdate();
+          }
           try {
             await eduApi.setSessionModel(
               this.sessionId,
