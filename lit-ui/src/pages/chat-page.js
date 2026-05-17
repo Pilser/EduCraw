@@ -348,6 +348,13 @@ let ChatPage = class ChatPage extends LitElement {
                                 timestamp: Date.now(),
                             };
                         }
+                        if (currentThinking) {
+                            currentAssistant.content.push({
+                                type: "thinking",
+                                thinking: currentThinking,
+                            });
+                            currentThinking = "";
+                        }
                         currentText += frame.text || "";
                         break;
                     }
@@ -358,6 +365,10 @@ let ChatPage = class ChatPage extends LitElement {
                                 content: [],
                                 timestamp: Date.now(),
                             };
+                        }
+                        if (currentText) {
+                            currentAssistant.content.push({ type: "text", text: currentText });
+                            currentText = "";
                         }
                         currentThinking += frame.thinking || "";
                         break;
