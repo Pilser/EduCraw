@@ -1,7 +1,13 @@
-import type { AssistantMessageDiagnostic } from "./utils/diagnostics.js";
 import type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
 export type { AssistantMessageEventStream } from "./utils/event-stream.js";
+
+export interface AssistantMessageDiagnostic {
+	type: string;
+	timestamp: number;
+	error?: { name?: string; message: string; stack?: string; code?: string | number };
+	details?: Record<string, unknown>;
+}
 
 export type KnownApi =
 	| "openai-completions"
