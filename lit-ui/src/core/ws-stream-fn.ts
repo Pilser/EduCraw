@@ -134,12 +134,26 @@ export function createWsStreamFn(options: WsStreamFnOptions): StreamFn {
               });
             }
             assistantMsg.stopReason = "stop";
+
+            // Strip tool calls from the final message so the agent loop
+            // does not try to execute them locally and re-prompt.
+            // Tools were already executed server-side; the agent has no
+            // local tools registered. Without this, hasMoreToolCalls
+            // stays true in runLoop() and the loop re-sends the user
+            // message over WebSocket — causing an infinite loop.
+            const finalMsg = {
+              ...assistantMsg,
+              content: assistantMsg.content.filter(
+                (c) => c.type !== "toolCall",
+              ),
+            };
+
             stream.push({
               type: "done",
               reason: "stop",
-              message: { ...assistantMsg },
+              message: finalMsg,
             });
-            stream.end({ ...assistantMsg });
+            stream.end(finalMsg);
             streamEnded = true;
             break;
 
