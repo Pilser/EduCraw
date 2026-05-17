@@ -248,6 +248,10 @@ export class ChatPage extends LitElement {
         },
       }),
       convertToLlm: defaultConvertToLlm,
+      // EduCraw: tools are executed server-side. The agent loop must not
+      // try to execute them locally — it would fail (no tools registered)
+      // and then re-prompt, causing an infinite re-send loop.
+      skipToolExecution: true,
     });
 
     // Create ChatPanel and set the agent

@@ -14,15 +14,11 @@ export default defineConfig(({ mode }) => {
       alias: {
         "@earendil-works/pi-agent-core": path.resolve(
           __dirname,
-          "../pi/packages/agent/dist/browser.js",
+          "../pi/packages/agent/src/browser.ts",
         ),
         "@earendil-works/pi-ai": path.resolve(
           __dirname,
-          "../pi/packages/ai/dist/index.js",
-        ),
-        "@earendil-works/pi-web-ui": path.resolve(
-          __dirname,
-          "../pi/packages/web-ui/dist/index.js",
+          "../pi/packages/ai/src/index.ts",
         ),
       },
     },
@@ -30,7 +26,6 @@ export default defineConfig(({ mode }) => {
       exclude: [
         "@earendil-works/pi-agent-core",
         "@earendil-works/pi-ai",
-        "@earendil-works/pi-web-ui",
       ],
     },
     server: {

@@ -5,18 +5,15 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
     "paths": {
-      "@earendil-works/pi-agent-core": ["../pi/packages/agent/dist/index.d.ts"],
-      "@earendil-works/pi-ai": ["../pi/packages/ai/dist/index.d.ts"],
-      "@earendil-works/pi-web-ui": ["../pi/packages/web-ui/dist/index.d.ts"],
+      "@earendil-works/pi-agent-core": ["../pi/packages/agent/src/browser.ts"],
+      "@earendil-works/pi-ai": ["../pi/packages/ai/src/index.ts"]
     },
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
-    "useDefineForClassFields": false,
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "useDefineForClassFields": false
   },
   "include": ["src/**/*"],
 }
