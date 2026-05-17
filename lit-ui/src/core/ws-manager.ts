@@ -30,8 +30,10 @@ export class WsManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isMounted = true;
   private reconnectKey = 0;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly maxReconnectTime = 5 * 60 * 1000; // 5 minutes
+  private readonly heartbeatInterval = 30 * 1000; // 30 seconds
   private readonly sessionId: string;
   private readonly token: string;
   private onMessage?: (message: any) => void;
@@ -52,6 +54,9 @@ export class WsManager {
   static getInstance(options: WsManagerOptions): WsManager {
     const key = `${options.sessionId}:${options.token}`;
     if (!this.instances.has(key)) {
+      // Clean up any stale instances for the same sessionId with different tokens
+      this.cleanupStaleInstances(options.sessionId);
+      
       const manager = new WsManager(options);
       this.instances.set(key, manager);
       manager.connect();
@@ -61,6 +66,39 @@ export class WsManager {
       manager.updateCallbacks(options);
     }
     return this.instances.get(key)!;
+  }
+
+  /** Remove stale WsManager instances for a sessionId (different tokens) */
+  private static cleanupStaleInstances(sessionId: string) {
+    const keysToRemove: string[] = [];
+    for (const [key, manager] of this.instances) {
+      if (key.startsWith(`${sessionId}:`) && manager.isMounted === false) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      this.instances.delete(key);
+    }
+  }
+
+  /** Update session ID and token on an existing instance (for session refresh) */
+  updateSession(sessionId: string, token: string): void {
+    const oldKey = `${this.sessionId}:${this.token}`;
+    const newKey = `${sessionId}:${token}`;
+    
+    if (oldKey === newKey) return; // No change
+    
+    // Update internal state
+    (this as any).sessionId = sessionId;
+    (this as any).token = token;
+    
+    // Re-register under new key
+    WsManager.instances.delete(oldKey);
+    WsManager.instances.set(newKey, this);
+    
+    // Reconnect with new session
+    this.reconnectAttempts = 0;
+    this.connect();
   }
 
   /** Get existing WsManager instance (without creating) */
@@ -82,10 +120,46 @@ export class WsManager {
       this.onReconnected = options.onReconnected;
   }
 
+  /** Check if the JWT token is expired (client-side decode) */
+  private isTokenExpired(): boolean {
+    try {
+      const parts = this.token.split('.');
+      if (parts.length !== 3) return true;
+      const payload = JSON.parse(atob(parts[1]));
+      const now = Math.floor(Date.now() / 1000);
+      return payload.exp < now;
+    } catch {
+      return true;
+    }
+  }
+
+  /** Get remaining time until token expiry (in seconds), or 0 if expired/invalid */
+  getTokenExpirySeconds(): number {
+    try {
+      const parts = this.token.split('.');
+      if (parts.length !== 3) return 0;
+      const payload = JSON.parse(atob(parts[1]));
+      const now = Math.floor(Date.now() / 1000);
+      return Math.max(0, payload.exp - now);
+    } catch {
+      return 0;
+    }
+  }
+
   /** Connect or reconnect to WebSocket */
   private connect() {
     if (this.status === "connecting" || this.status === "connected") {
       return; // Already connecting or connected
+    }
+
+    // Check token expiry before attempting connection
+    if (this.isTokenExpired()) {
+      console.warn("[WsManager] Token is expired - not connecting");
+      this.setStatus("error");
+      if (this.onError) {
+        this.onError(new Error("Token expired"));
+      }
+      return;
     }
 
     this.setStatus("connecting");
@@ -104,6 +178,9 @@ export class WsManager {
       const wasReconnecting = this.reconnectAttempts > 0;
       this.setStatus("connected");
       this.reconnectAttempts = 0; // Reset on successful connection
+      
+      // Start heartbeat to detect silent disconnections
+      this.startHeartbeat();
       
       // Notify about successful reconnection (not initial connection)
       if (wasReconnecting && this.onReconnected) {
@@ -138,6 +215,7 @@ export class WsManager {
       console.log(
         `[WsManager] WebSocket closed for session ${this.sessionId} - code: ${event.code}, reason: ${event.reason || "none"}`,
       );
+      this.stopHeartbeat();
       this.setStatus("disconnected");
 
       if (!this.isMounted) return;
@@ -145,14 +223,18 @@ export class WsManager {
       // Check if close code indicates session is gone/expired
       // 1000 = Normal closure
       // 1001 = Going away
-      // 1006 = Abnormal closure (connection refused/server down)
+      // 1006 = Abnormal closure (network issue, server restart, proxy timeout) — NOT auth failure
       // 1008 = Policy violation (auth failure)
-      // 4000-4999 = Custom application codes
+      // 4401 = Custom: Unauthorized
+      // 4403 = Custom: Forbidden
       const isAuthOrSessionExpired =
         event.code === 1008 || // Policy violation (auth failure)
-        event.code === 1006 || // Connection refused (session doesn't exist)
         event.code === 4401 || // Custom: Unauthorized
-        event.code === 4403; // Custom: Forbidden
+        event.code === 4403;   // Custom: Forbidden
+
+      // 1006 with no prior successful connection may indicate server rejected the handshake
+      // (e.g., JWT expired before WS upgrade completed). Check token to differentiate.
+      const isPossibleAuthFailure = event.code === 1006 && this.reconnectAttempts === 0;
 
       if (isAuthOrSessionExpired) {
         console.warn(
@@ -160,13 +242,30 @@ export class WsManager {
         );
         this.setStatus("error");
         if (this.onError) {
-          this.onError(
-            new Error(
-              `Session expired or authentication failed (WebSocket close code: ${event.code})`,
-            ),
-          );
+          // Differentiate between JWT expiry (needs re-login) and session expiry (needs new session)
+          const tokenExpired = this.isTokenExpired();
+          if (tokenExpired) {
+            this.onError(new Error("JWT token expired"));
+          } else {
+            this.onError(new Error("Session expired"));
+          }
         }
         return; // Don't attempt reconnection
+      }
+
+      // 1006 on first attempt: server may have rejected handshake (e.g., expired token)
+      // Check token to decide whether to retry or report auth failure
+      if (isPossibleAuthFailure) {
+        if (this.isTokenExpired()) {
+          console.warn("[WsManager] Connection failed (1006) and token is expired - not reconnecting");
+          this.setStatus("error");
+          if (this.onError) {
+            this.onError(new Error("JWT token expired"));
+          }
+          return;
+        }
+        // Token is still valid, 1006 is likely a transient network issue — attempt reconnect
+        console.log("[WsManager] Connection failed (1006) but token is valid — attempting reconnect");
       }
 
       // Attempt reconnection with exponential backoff (only for network issues)
@@ -253,9 +352,28 @@ export class WsManager {
     });
   }
 
+  /** Start heartbeat to detect silent disconnections */
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "ping" }));
+      }
+    }, this.heartbeatInterval);
+  }
+
+  /** Stop heartbeat timer */
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
   /** Disconnect and cleanup */
   disconnect() {
     this.isMounted = false;
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }

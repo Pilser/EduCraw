@@ -79,9 +79,31 @@ function renderApp() {
             renderApp();
           }}
           @session-expired=${() => {
+            // Session expired but JWT may still be valid
+            // Try to create a new session before forcing re-login
             SessionManager.markSessionExpired();
-            currentView = { kind: "login" };
-            renderApp();
+            if (currentView.kind === "chat") {
+              const auth = currentView.auth;
+              // Try to refresh session in background
+              eduApi.createSession(auth.student_id, auth.token)
+                .then((session) => {
+                  SessionManager.saveSession(session.session_id, session.token);
+                  currentView = {
+                    kind: "chat",
+                    auth,
+                    sessionId: session.session_id,
+                    sessionToken: session.token,
+                  };
+                  renderApp();
+                })
+                .catch((err) => {
+                  console.error("Failed to refresh session:", err);
+                  // JWT may also be expired, force re-login
+                  SessionManager.clearAuth();
+                  currentView = { kind: "login" };
+                  renderApp();
+                });
+            }
           }}
           @new-session=${(e: CustomEvent) => {
             console.log("[main] Handling new-session event", e.detail);
@@ -108,30 +130,53 @@ async function init() {
   const auth = SessionManager.loadAuth();
 
   if (auth) {
-    // Validate stored auth token with server (like educlaw-web does)
-    const isValid = await SessionManager.validateSession(
-      auth.student_id,
-      auth.token,
-    );
+    // Check JWT expiry client-side (no server call, no side effects)
+    const isJwtValid = SessionManager.isTokenValid(auth.token);
 
-    if (!isValid) {
-      console.warn("[main] Stored token is invalid - forcing re-login");
+    if (!isJwtValid) {
+      console.warn("[main] JWT token is expired - forcing re-login");
       SessionManager.clearAuth();
       currentView = { kind: "login" };
       renderApp();
       return;
     }
 
+    // JWT is valid - try to use existing session
     const sessionId = SessionManager.loadSessionId();
     const sessionToken = SessionManager.loadSessionToken();
+    
     if (sessionId && sessionToken) {
-      currentView = {
-        kind: "chat",
-        auth,
-        sessionId,
-        sessionToken,
-      };
+      // Check if session token is also valid
+      const isSessionTokenValid = SessionManager.isTokenValid(sessionToken);
+      if (isSessionTokenValid) {
+        console.log("[main] Restoring existing session");
+        currentView = {
+          kind: "chat",
+          auth,
+          sessionId,
+          sessionToken,
+        };
+      } else {
+        // Session token expired but JWT is valid - try to refresh session
+        console.log("[main] Session token expired, refreshing session...");
+        try {
+          const session = await eduApi.createSession(auth.student_id, auth.token);
+          SessionManager.saveSession(session.session_id, session.token);
+          currentView = {
+            kind: "chat",
+            auth,
+            sessionId: session.session_id,
+            sessionToken: session.token,
+          };
+        } catch (err) {
+          console.error("Failed to refresh session:", err);
+          SessionManager.clearAuth();
+          currentView = { kind: "login" };
+        }
+      }
     } else {
+      // No session stored but JWT is valid - create new session
+      console.log("[main] No session stored, creating new session...");
       try {
         const session = await eduApi.createSession(auth.student_id, auth.token);
         SessionManager.saveSession(session.session_id, session.token);
@@ -142,7 +187,7 @@ async function init() {
           sessionToken: session.token,
         };
       } catch (err) {
-        console.error("Failed to create session on restore:", err);
+        console.error("Failed to create session:", err);
         SessionManager.clearAuth();
         currentView = { kind: "login" };
       }

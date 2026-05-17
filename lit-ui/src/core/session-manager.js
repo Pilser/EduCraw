@@ -68,15 +68,70 @@ export class SessionManager {
             return null;
         }
     }
+    /** Clear only session data (keep auth for session refresh) */
+    static clearSession() {
+        try {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+            localStorage.removeItem(THREAD_STORAGE_KEY);
+        }
+        catch {
+            // Ignore
+        }
+    }
     /** Check if user is authenticated */
     static isAuthenticated() {
         return this.loadAuth() !== null;
     }
     /**
-     * Validate session by attempting to create a new session
-     * This matches educlaw-web's approach and detects expired tokens
+     * Check if the JWT token is expired (client-side decode, no server call)
+     * Returns true if token is valid, false if expired or invalid
      */
-    static async validateSession(studentId, token) {
+    static isTokenValid(token) {
+        try {
+            const parts = token.split('.');
+            if (parts.length !== 3)
+                return false;
+            const payload = JSON.parse(atob(parts[1]));
+            const now = Math.floor(Date.now() / 1000);
+            return payload.exp > now;
+        }
+        catch {
+            return false;
+        }
+    }
+    /**
+     * Get remaining time until JWT expiry (in seconds), or 0 if expired/invalid
+     */
+    static getTokenExpirySeconds(token) {
+        try {
+            const parts = token.split('.');
+            if (parts.length !== 3)
+                return 0;
+            const payload = JSON.parse(atob(parts[1]));
+            const now = Math.floor(Date.now() / 1000);
+            return Math.max(0, payload.exp - now);
+        }
+        catch {
+            return 0;
+        }
+    }
+    /**
+     * Validate session by checking JWT expiry client-side
+     * Does NOT create a new session (no side effects)
+     * Returns true if JWT is still valid
+     */
+    static async validateSession(_studentId, token) {
+        const isValid = this.isTokenValid(token);
+        if (!isValid) {
+            console.warn("[SessionManager] JWT token is expired");
+        }
+        return isValid;
+    }
+    /**
+     * Refresh session: create a new session on the server using valid JWT
+     * Call this when session expired but JWT is still valid
+     */
+    static async refreshSession(studentId, token) {
         try {
             const res = await fetch("/sessions", {
                 method: "POST",
@@ -86,24 +141,26 @@ export class SessionManager {
                 },
                 body: JSON.stringify({ student_id: studentId }),
             });
-            if (res.status === 401 || res.status === 403) {
-                console.warn("[SessionManager] Token expired or unauthorized");
-                return false;
-            }
             if (!res.ok) {
-                console.warn("[SessionManager] Validation failed:", res.status);
-                return false;
+                console.warn("[SessionManager] Session refresh failed:", res.status);
+                return null;
             }
-            return true;
+            const data = await res.json();
+            return { session_id: data.session_id, session_token: data.token };
         }
         catch (err) {
-            console.error("[SessionManager] Validation error:", err);
-            return false;
+            console.error("[SessionManager] Session refresh error:", err);
+            return null;
         }
     }
-    /** Mark session as expired and clear storage */
+    /** Mark session as expired - only clears session data, NOT auth */
     static markSessionExpired() {
-        console.warn("[SessionManager] Session expired - clearing storage");
+        console.warn("[SessionManager] Session expired - clearing session data only");
+        this.clearSession();
+    }
+    /** Mark auth as expired - clears everything (forces re-login) */
+    static markAuthExpired() {
+        console.warn("[SessionManager] Auth expired - clearing all storage");
         this.clearAuth();
     }
     /** Save last loaded thread ID (Goose session) */

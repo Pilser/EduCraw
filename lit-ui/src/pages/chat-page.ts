@@ -177,7 +177,15 @@ export class ChatPage extends LitElement {
       },
       onError: (error) => {
         console.error("[chat-page] WsManager error:", error.message);
-        if (
+        if (error.message.includes("JWT token expired")) {
+          // JWT expired - user needs to re-login
+          console.warn("[chat-page] JWT expired - dispatching session-expired (will force login)");
+          this.dispatchSessionExpired();
+        } else if (error.message.includes("Session expired")) {
+          // Session expired but JWT may still be valid - try to refresh
+          console.warn("[chat-page] Session expired - attempting session refresh");
+          this.handleSessionRefresh();
+        } else if (
           error.message.includes("Session expired") ||
           error.message.includes("authentication failed")
         ) {
@@ -247,6 +255,39 @@ export class ChatPage extends LitElement {
       console.log(
         "[chat-page] No previous session to reload - starting fresh after reconnection",
       );
+    }
+  }
+
+  /** Handle session expiry - try to create a new session without re-login */
+  private async handleSessionRefresh() {
+    console.log("[chat-page] Attempting to refresh session...");
+    try {
+      const session = await eduApi.createSession(
+        this.auth.student_id,
+        this.auth.token,
+      );
+      console.log(
+        `[chat-page] Session refreshed: ${session.session_id}`,
+      );
+      
+      // Update stored session
+      SessionManager.saveSession(session.session_id, session.token);
+      
+      // Dispatch event to update the view with new session
+      this.dispatchEvent(
+        new CustomEvent("new-session", {
+          bubbles: true,
+          composed: true,
+          detail: {
+            sessionId: session.session_id,
+            sessionToken: session.token,
+          },
+        }),
+      );
+    } catch (err) {
+      console.error("[chat-page] Session refresh failed:", err);
+      // If refresh fails, JWT may also be expired - force re-login
+      this.dispatchSessionExpired();
     }
   }
 
@@ -577,7 +618,15 @@ export class ChatPage extends LitElement {
               errorMsg.includes("401") ||
               errorMsg.includes("403")
             ) {
-              this.dispatchSessionExpired();
+              // Check if it's a JWT expiry or session expiry
+              const auth = SessionManager.loadAuth();
+              if (auth && SessionManager.isTokenValid(auth.token)) {
+                // JWT is valid, session expired - try to refresh
+                this.handleSessionRefresh();
+              } else {
+                // JWT expired - force re-login
+                this.dispatchSessionExpired();
+              }
             }
             replayComplete = true;
             (wsManager as any).onMessage = originalOnMessage;
