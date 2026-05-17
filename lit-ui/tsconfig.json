@@ -5,8 +5,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
     "paths": {
-      "@earendil-works/pi-agent-core": ["../pi/packages/agent/src/browser.ts"],
-      "@earendil-works/pi-ai": ["../pi/packages/ai/src/index.ts"]
+      "@earendil-works/pi-agent-core": ["./src/pi-dep/index.ts"],
+      "@earendil-works/pi-ai": ["./src/pi-dep/ai/index.ts"]
     },
     "strict": true,
     "skipLibCheck": true,

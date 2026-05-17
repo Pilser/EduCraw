@@ -1,0 +1,420 @@
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+import { Button } from "@mariozechner/mini-lit/dist/Button.js";
+import { icon } from "@mariozechner/mini-lit";
+import { html } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
+import { MenuTab } from "./MenuDialog.js";
+import { eduApi } from "../core/edu-api.js";
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Download, Trash2, FilePlus, FileText, FileCode, FileJson, Image as ImageIcon, FileSpreadsheet, FileVideo, FileAudio, Archive, FileType } from "lucide";
+let FilesTab = class FilesTab extends MenuTab {
+    constructor() {
+        super(...arguments);
+        this.sessionId = "";
+        this.sessionToken = "";
+        this.studentToken = "";
+        this.subjectIds = [];
+        this.subjectFiles = [];
+        this.studentFiles = [];
+        this.loading = false;
+        this.error = "";
+        this.expandedPaths = new Set();
+        this.initialized = false;
+    }
+    async updated(changedProperties) {
+        super.updated(changedProperties);
+        // Load files once we have the required properties
+        if (!this.initialized && this.sessionId && this.sessionToken) {
+            console.log("[FilesTab] Loading files", { sessionId: this.sessionId, subjectIds: this.subjectIds });
+            this.initialized = true;
+            await this.loadFiles();
+        }
+    }
+    async loadFiles() {
+        this.loading = true;
+        this.error = "";
+        this.requestUpdate();
+        try {
+            console.log("[FilesTab] Loading files...", {
+                subjectIds: this.subjectIds,
+                sessionId: this.sessionId,
+                hasStudentToken: !!this.studentToken,
+                hasSessionToken: !!this.sessionToken
+            });
+            // Load subject files if available
+            if (this.subjectIds.length > 0 && this.studentToken) {
+                try {
+                    console.log("[FilesTab] Requesting subject files for:", this.subjectIds[0]);
+                    this.subjectFiles = await eduApi.listSubjectFiles(this.subjectIds[0], this.studentToken);
+                    console.log("[FilesTab] Subject files loaded:", this.subjectFiles.length, this.subjectFiles);
+                }
+                catch (err) {
+                    console.warn("[FilesTab] Failed to load subject files:", err);
+                    this.error = `Subject files: ${err instanceof Error ? err.message : "Unknown error"}`;
+                }
+            }
+            else {
+                console.log("[FilesTab] Skipping subject files - no subject IDs or token");
+            }
+            // Load student workspace files
+            if (this.sessionId && this.sessionToken) {
+                try {
+                    console.log("[FilesTab] Requesting student files for session:", this.sessionId);
+                    this.studentFiles = await eduApi.listStudentFiles(this.sessionId, this.sessionToken);
+                    console.log("[FilesTab] Student files loaded:", this.studentFiles.length, this.studentFiles);
+                }
+                catch (err) {
+                    console.warn("[FilesTab] Failed to load student files:", err);
+                    if (!this.error) {
+                        this.error = `Student files: ${err instanceof Error ? err.message : "Unknown error"}`;
+                    }
+                }
+            }
+            else {
+                console.log("[FilesTab] Skipping student files - no session ID or token");
+            }
+        }
+        catch (err) {
+            console.error("[FilesTab] Failed to load files:", err);
+            this.error = err instanceof Error ? err.message : "Failed to load files";
+        }
+        finally {
+            this.loading = false;
+            this.requestUpdate();
+        }
+    }
+    toggleExpand(path) {
+        if (this.expandedPaths.has(path)) {
+            this.expandedPaths.delete(path);
+        }
+        else {
+            this.expandedPaths.add(path);
+        }
+        this.requestUpdate();
+    }
+    handleFileClick(node, isStudentFile) {
+        if (node.kind === "dir") {
+            this.toggleExpand(node.path);
+            return;
+        }
+        // If preview callback is provided, use it; otherwise download
+        if (this.onPreviewFile) {
+            const subjectId = !isStudentFile && this.subjectIds.length > 0 ? this.subjectIds[0] : undefined;
+            this.onPreviewFile(node, !isStudentFile, subjectId);
+        }
+        else {
+            this.downloadFile(node, isStudentFile);
+        }
+    }
+    async downloadFile(node, isStudentFile) {
+        // Open file in new tab for preview/download
+        try {
+            let blob;
+            if (isStudentFile) {
+                blob = await eduApi.readStudentFile(this.sessionId, node.path, this.sessionToken);
+            }
+            else {
+                blob = await eduApi.readSubjectFile(this.subjectIds[0], node.path, this.studentToken);
+            }
+            // Create object URL and open in new tab
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = node.name;
+            a.target = "_blank"; // Open in new tab
+            a.click();
+            // Clean up after a delay
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+        catch (err) {
+            console.error("Failed to open file:", err);
+            alert(`Failed to open file: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+    }
+    async handleDeleteFile(node) {
+        if (!confirm(`Are you sure you want to delete "${node.name}"?`)) {
+            return;
+        }
+        try {
+            await eduApi.deleteStudentFile(this.sessionId, node.path, this.sessionToken);
+            await this.loadFiles();
+        }
+        catch (err) {
+            console.error("Failed to delete file:", err);
+            alert(`Failed to delete file: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+    }
+    async handleUploadFile() {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.onchange = async () => {
+            const files = input.files;
+            if (!files)
+                return;
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                try {
+                    await eduApi.writeStudentFile(this.sessionId, file.name, file, this.sessionToken);
+                }
+                catch (err) {
+                    console.error(`Failed to upload ${file.name}:`, err);
+                    alert(`Failed to upload ${file.name}: ${err instanceof Error ? err.message : "Unknown error"}`);
+                }
+            }
+            await this.loadFiles();
+        };
+        input.click();
+    }
+    renderFileTree(nodes, isStudentFile, level = 0) {
+        return html `
+			${nodes.map((node) => html `
+					<div class="select-none">
+						<div
+							class="group flex items-center gap-2 px-2 py-1.5 hover:bg-secondary rounded cursor-pointer transition-colors"
+							style="padding-left: ${level * 16 + 8}px"
+							@click=${() => this.handleFileClick(node, isStudentFile)}
+						>
+							${node.kind === "dir"
+            ? html `
+								<span class="w-4 h-4 flex-shrink-0">
+									${this.expandedPaths.has(node.path)
+                ? icon(ChevronDown, "xs")
+                : icon(ChevronRight, "xs")}
+								</span>
+								<span class="w-4 h-4 flex-shrink-0">
+									${this.expandedPaths.has(node.path)
+                ? icon(FolderOpen, "xs", "text-yellow-500")
+                : icon(Folder, "xs", "text-yellow-600")}
+								</span>
+							`
+            : html `
+								<span class="w-4 h-4 flex-shrink-0"></span>
+								<span class="w-4 h-4 flex-shrink-0">
+									${this.getFileIcon(node.name, "xs")}
+								</span>
+							`}
+						<span class="text-sm text-foreground flex-1 truncate">${node.name}</span>
+						${node.size !== undefined
+            ? html `<span class="text-xs text-muted-foreground shrink-0">${this.formatFileSize(node.size)}</span>`
+            : ""}
+						${isStudentFile && node.kind === "file"
+            ? html `
+								<button
+									class="w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-destructive/20 rounded transition-all"
+									@click=${(e) => {
+                e.stopPropagation();
+                this.handleDeleteFile(node);
+            }}
+									title="Delete"
+								>
+									${icon(Trash2, "xs", "text-destructive")}
+								</button>
+							`
+            : node.kind === "file"
+                ? html `
+									<button
+										class="w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-primary/20 rounded transition-all"
+										@click=${(e) => {
+                    e.stopPropagation();
+                    this.downloadFile(node, isStudentFile);
+                }}
+										title="Download"
+									>
+										${icon(Download, "xs", "text-primary")}
+									</button>
+								`
+                : ""}
+							${node.kind === "file"
+            ? html `
+									<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+										<button
+											class="w-6 h-6 flex items-center justify-center hover:bg-primary/20 rounded transition-colors"
+											@click=${(e) => {
+                e.stopPropagation();
+                this.downloadFile(node, isStudentFile);
+            }}
+											title="Download"
+										>
+											${icon(Download, "xs")}
+										</button>
+										${isStudentFile
+                ? html `
+												<button
+													class="w-6 h-6 flex items-center justify-center hover:bg-destructive/20 rounded transition-colors"
+													@click=${(e) => {
+                    e.stopPropagation();
+                    this.handleDeleteFile(node);
+                }}
+													title="Delete"
+												>
+													${icon(Trash2, "xs")}
+												</button>
+											`
+                : ""}
+									</div>
+								`
+            : ""}
+						</div>
+						${node.kind === "dir" &&
+            this.expandedPaths.has(node.path) &&
+            node.children &&
+            node.children.length > 0
+            ? this.renderFileTree(node.children, isStudentFile, level + 1)
+            : ""}
+					</div>
+				`)}
+		`;
+    }
+    formatFileSize(bytes) {
+        if (bytes < 1024)
+            return `${bytes} B`;
+        if (bytes < 1024 * 1024)
+            return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    getFileIcon(fileName, size = "xs") {
+        const lower = fileName.toLowerCase();
+        // Documents
+        if (lower.endsWith('.pdf'))
+            return icon(FileText, size, "text-red-500");
+        if (lower.endsWith('.md'))
+            return icon(FileText, size, "text-blue-500");
+        if (lower.match(/\.(doc|docx)$/))
+            return icon(FileText, size, "text-blue-600");
+        if (lower.endsWith('.txt'))
+            return icon(FileType, size, "text-gray-500");
+        // Spreadsheets
+        if (lower.match(/\.(xlsx?|csv)$/))
+            return icon(FileSpreadsheet, size, "text-green-600");
+        // Images
+        if (lower.match(/\.(png|jpg|jpeg)$/))
+            return icon(ImageIcon, size, "text-purple-500");
+        if (lower.match(/\.(svg|gif|webp)$/))
+            return icon(ImageIcon, size, "text-purple-400");
+        // Code files
+        if (lower.match(/\.(py|pyw)$/))
+            return icon(FileCode, size, "text-blue-400");
+        if (lower.match(/\.(js|jsx|ts|tsx)$/))
+            return icon(FileCode, size, "text-yellow-500");
+        if (lower.match(/\.(rs|toml)$/))
+            return icon(FileCode, size, "text-orange-500");
+        if (lower.match(/\.(cpp|c|h|hpp)$/))
+            return icon(FileCode, size, "text-blue-600");
+        if (lower.match(/\.(java|kt|scala)$/))
+            return icon(FileCode, size, "text-red-600");
+        if (lower.match(/\.(go|mod)$/))
+            return icon(FileCode, size, "text-cyan-500");
+        if (lower.match(/\.(php|rb|lua)$/))
+            return icon(FileCode, size, "text-purple-600");
+        if (lower.match(/\.(html|htm|xml)$/))
+            return icon(FileCode, size, "text-orange-600");
+        if (lower.match(/\.(css|scss|sass|less)$/))
+            return icon(FileCode, size, "text-blue-500");
+        // Data files
+        if (lower.endsWith('.json'))
+            return icon(FileJson, size, "text-yellow-600");
+        if (lower.match(/\.(yaml|yml)$/))
+            return icon(FileJson, size, "text-red-500");
+        // Media
+        if (lower.match(/\.(mp4|avi|mov|mkv|webm)$/))
+            return icon(FileVideo, size, "text-pink-500");
+        if (lower.match(/\.(mp3|wav|ogg|flac|m4a)$/))
+            return icon(FileAudio, size, "text-indigo-500");
+        // Archives
+        if (lower.match(/\.(zip|tar|gz|rar|7z)$/))
+            return icon(Archive, size, "text-yellow-700");
+        // Default
+        return icon(File, size, "text-muted-foreground");
+    }
+    getTabName() {
+        return "Files";
+    }
+    render() {
+        return html `
+			<div class="flex flex-col gap-6">
+				${this.loading
+            ? html `<div class="text-center py-8 text-muted-foreground">Loading files...</div>`
+            : this.error
+                ? html `<div class="text-center py-8 text-destructive">${this.error}</div>`
+                : html `
+							<!-- Subject Files (Read-Only) -->
+							<div class="space-y-3">
+								<div class="flex items-center justify-between">
+									<h3 class="text-lg font-semibold text-foreground">Course Materials</h3>
+									<span class="text-xs text-muted-foreground">(Read-only)</span>
+								</div>
+								<div class="border border-border rounded-lg overflow-hidden">
+									<div class="max-h-64 overflow-y-auto p-2">
+										${this.subjectFiles.length > 0
+                    ? this.renderFileTree(this.subjectFiles, false)
+                    : html `<div class="text-sm text-muted-foreground text-center py-4">No course materials available</div>`}
+									</div>
+								</div>
+							</div>
+
+							<!-- Student Workspace (Read-Write) -->
+							<div class="space-y-3">
+								<div class="flex items-center justify-between">
+									<h3 class="text-lg font-semibold text-foreground">Your Workspace</h3>
+									${Button({
+                    variant: "ghost",
+                    size: "sm",
+                    children: html `${icon(FilePlus, "sm")} Upload`,
+                    onClick: () => this.handleUploadFile(),
+                })}
+								</div>
+								<div class="border border-border rounded-lg overflow-hidden">
+									<div class="max-h-64 overflow-y-auto p-2">
+										${this.studentFiles.length > 0
+                    ? this.renderFileTree(this.studentFiles, true)
+                    : html `<div class="text-sm text-muted-foreground text-center py-4">No files in your workspace</div>`}
+									</div>
+								</div>
+							</div>
+						`}
+			</div>
+		`;
+    }
+};
+__decorate([
+    property({ type: String })
+], FilesTab.prototype, "sessionId", void 0);
+__decorate([
+    property({ type: String })
+], FilesTab.prototype, "sessionToken", void 0);
+__decorate([
+    property({ type: String })
+], FilesTab.prototype, "studentToken", void 0);
+__decorate([
+    property({ type: Array })
+], FilesTab.prototype, "subjectIds", void 0);
+__decorate([
+    property({ attribute: false })
+], FilesTab.prototype, "onPreviewFile", void 0);
+__decorate([
+    state()
+], FilesTab.prototype, "subjectFiles", void 0);
+__decorate([
+    state()
+], FilesTab.prototype, "studentFiles", void 0);
+__decorate([
+    state()
+], FilesTab.prototype, "loading", void 0);
+__decorate([
+    state()
+], FilesTab.prototype, "error", void 0);
+__decorate([
+    state()
+], FilesTab.prototype, "expandedPaths", void 0);
+__decorate([
+    state()
+], FilesTab.prototype, "initialized", void 0);
+FilesTab = __decorate([
+    customElement("files-tab")
+], FilesTab);
+export { FilesTab };

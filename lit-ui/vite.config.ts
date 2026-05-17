@@ -14,11 +14,11 @@ export default defineConfig(({ mode }) => {
       alias: {
         "@earendil-works/pi-agent-core": path.resolve(
           __dirname,
-          "../pi/packages/agent/src/browser.ts",
+          "src/pi-dep/index.ts",
         ),
         "@earendil-works/pi-ai": path.resolve(
           __dirname,
-          "../pi/packages/ai/src/index.ts",
+          "src/pi-dep/ai/index.ts",
         ),
       },
     },
