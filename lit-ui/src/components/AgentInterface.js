@@ -20,6 +20,7 @@ let AgentInterface = class AgentInterface extends LitElement {
         this.enableThinkingSelector = true;
         this.showThemeToggle = false;
         this.isStreaming = false;
+        this.thinkingLevel = "off";
         this._streamingMessage = null;
         this._autoScroll = true;
         this._lastScrollTop = 0;
@@ -235,6 +236,8 @@ let AgentInterface = class AgentInterface extends LitElement {
           <div class="max-w-3xl mx-auto px-2">
             <message-editor
               .isStreaming=${this.isStreaming}
+              .currentModel=${this.currentModel}
+              .thinkingLevel=${this.thinkingLevel}
               .showAttachmentButton=${this.enableAttachments}
               .showModelSelector=${this.enableModelSelector}
               .showThinkingSelector=${this.enableThinkingSelector}
@@ -254,6 +257,9 @@ let AgentInterface = class AgentInterface extends LitElement {
 __decorate([
     property({ type: Array })
 ], AgentInterface.prototype, "messages", void 0);
+__decorate([
+    property({ attribute: false })
+], AgentInterface.prototype, "currentModel", void 0);
 __decorate([
     property({ type: Boolean })
 ], AgentInterface.prototype, "enableAttachments", void 0);
@@ -287,6 +293,9 @@ __decorate([
 __decorate([
     property({ type: Boolean })
 ], AgentInterface.prototype, "isStreaming", void 0);
+__decorate([
+    property()
+], AgentInterface.prototype, "thinkingLevel", void 0);
 __decorate([
     state()
 ], AgentInterface.prototype, "_streamingMessage", void 0);

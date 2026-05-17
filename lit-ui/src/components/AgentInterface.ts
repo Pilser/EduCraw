@@ -6,7 +6,7 @@ import type {
 import { html, LitElement } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
-import type { MessageEditor } from "./MessageEditor.js";
+import type { MessageEditor, ThinkingLevel } from "./MessageEditor.js";
 import "./MessageEditor.js";
 import "./MessageList.js";
 import "./Messages.js";
@@ -36,6 +36,7 @@ export class AgentInterface extends LitElement {
   @property({ attribute: false }) onSend?: (text: string, attachments: Attachment[]) => void;
   @property({ attribute: false }) onCancel?: () => void;
   @property({ type: Boolean }) isStreaming = false;
+  @property() thinkingLevel: ThinkingLevel = "off";
 
   @state() private _streamingMessage: BackendAssistantMessage | null = null;
 
@@ -289,6 +290,7 @@ export class AgentInterface extends LitElement {
             <message-editor
               .isStreaming=${this.isStreaming}
               .currentModel=${this.currentModel}
+              .thinkingLevel=${this.thinkingLevel}
               .showAttachmentButton=${this.enableAttachments}
               .showModelSelector=${this.enableModelSelector}
               .showThinkingSelector=${this.enableThinkingSelector}

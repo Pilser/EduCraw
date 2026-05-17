@@ -56,6 +56,7 @@ export class ChatPage extends LitElement {
   private previewModal?: FilePreviewModal;
   private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
   private wsStreamFn?: (input: string, callbacks: StreamCallbacks) => void;
+  private activeModelName = "grok-4-1-fast-reasoning";
 
   private isAuthError(err: any): boolean {
     if (err?.status === 401 || err?.status === 403) return true;
@@ -85,6 +86,18 @@ export class ChatPage extends LitElement {
       this.loadBalance();
       await this.updateComplete;
       this.appendChatPanel();
+
+      if (this.chatPanel?.agentInterface) {
+        this.chatPanel.agentInterface.messages = this.messages;
+        this.chatPanel.agentInterface.currentModel = {
+          id: this.activeModelName,
+          name: this.activeModelName,
+          provider: "unknown",
+          reasoning: true,
+        };
+        this.chatPanel.agentInterface.thinkingLevel = "off";
+        this.chatPanel.agentInterface.requestUpdate();
+      }
 
       const wsManager = WsManager.getExistingInstance(
         this.sessionId,
@@ -134,13 +147,13 @@ export class ChatPage extends LitElement {
   }
 
   private async initChat() {
-    let activeModelName = "grok-4-1-fast-reasoning";
+    this.activeModelName = "grok-4-1-fast-reasoning";
     try {
       const sessionModels = await eduApi.getSessionModels(
         this.sessionId,
         this.auth.token,
       );
-      activeModelName = sessionModels.active || activeModelName;
+      this.activeModelName = sessionModels.active || this.activeModelName;
     } catch (err) {
       if (this.isAuthError(err)) throw err;
       console.error("Failed to fetch session models:", err);
@@ -184,7 +197,7 @@ export class ChatPage extends LitElement {
       onCancel: () => this.handleCancel(),
       onModelSelect: async () => {
         const { ModelSelector } = await import("../dialogs/ModelSelector.js");
-        ModelSelector.open(activeModelName, async (newModelId) => {
+        ModelSelector.open(this.activeModelName, async (newModelId) => {
           try {
             await eduApi.setSessionModel(
               this.sessionId,
@@ -202,16 +215,6 @@ export class ChatPage extends LitElement {
         });
       },
     });
-
-    if (this.chatPanel.agentInterface) {
-      this.chatPanel.agentInterface.messages = this.messages;
-      this.chatPanel.agentInterface.currentModel = {
-        id: activeModelName,
-        name: activeModelName,
-        provider: "unknown",
-        reasoning: true,
-      };
-    }
   }
 
   private handleReconnection() {
@@ -329,6 +332,7 @@ export class ChatPage extends LitElement {
     if (this.chatPanel?.agentInterface) {
       this.chatPanel.agentInterface.isStreaming = this.isStreaming;
       this.chatPanel.agentInterface.setStreamingMessage(this.streamingMessage);
+      this.chatPanel.agentInterface.requestUpdate();
     }
     this.requestUpdate();
   }
@@ -338,6 +342,7 @@ export class ChatPage extends LitElement {
       this.chatPanel.agentInterface.messages = this.messages;
       this.chatPanel.agentInterface.isStreaming = this.isStreaming;
       this.chatPanel.agentInterface.setStreamingMessage(null, true);
+      this.chatPanel.agentInterface.requestUpdate();
     }
     this.requestUpdate();
   }

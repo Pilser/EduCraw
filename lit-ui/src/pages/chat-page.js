@@ -40,6 +40,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.isStreaming = false;
         this.streamingMessage = null;
         this.lastLoadedThreadId = null;
+        this.activeModelName = "grok-4-1-fast-reasoning";
     }
     isAuthError(err) {
         if (err?.status === 401 || err?.status === 403)
@@ -67,6 +68,17 @@ let ChatPage = class ChatPage extends LitElement {
             this.loadBalance();
             await this.updateComplete;
             this.appendChatPanel();
+            if (this.chatPanel?.agentInterface) {
+                this.chatPanel.agentInterface.messages = this.messages;
+                this.chatPanel.agentInterface.currentModel = {
+                    id: this.activeModelName,
+                    name: this.activeModelName,
+                    provider: "unknown",
+                    reasoning: true,
+                };
+                this.chatPanel.agentInterface.thinkingLevel = "off";
+                this.chatPanel.agentInterface.requestUpdate();
+            }
             const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
             if (wsManager) {
                 console.log("[chat-page] Waiting for WebSocket connection...");
@@ -104,10 +116,10 @@ let ChatPage = class ChatPage extends LitElement {
         }
     }
     async initChat() {
-        let activeModelName = "grok-4-1-fast-reasoning";
+        this.activeModelName = "grok-4-1-fast-reasoning";
         try {
             const sessionModels = await eduApi.getSessionModels(this.sessionId, this.auth.token);
-            activeModelName = sessionModels.active || activeModelName;
+            this.activeModelName = sessionModels.active || this.activeModelName;
         }
         catch (err) {
             if (this.isAuthError(err))
@@ -148,7 +160,7 @@ let ChatPage = class ChatPage extends LitElement {
             onCancel: () => this.handleCancel(),
             onModelSelect: async () => {
                 const { ModelSelector } = await import("../dialogs/ModelSelector.js");
-                ModelSelector.open(activeModelName, async (newModelId) => {
+                ModelSelector.open(this.activeModelName, async (newModelId) => {
                     try {
                         await eduApi.setSessionModel(this.sessionId, this.auth.token, newModelId);
                     }
@@ -163,9 +175,6 @@ let ChatPage = class ChatPage extends LitElement {
                 });
             },
         });
-        if (this.chatPanel.agentInterface) {
-            this.chatPanel.agentInterface.messages = this.messages;
-        }
     }
     handleReconnection() {
         const lastThreadId = SessionManager.loadLastThreadId(this.sessionId);
@@ -273,7 +282,9 @@ let ChatPage = class ChatPage extends LitElement {
     }
     updateStreaming() {
         if (this.chatPanel?.agentInterface) {
+            this.chatPanel.agentInterface.isStreaming = this.isStreaming;
             this.chatPanel.agentInterface.setStreamingMessage(this.streamingMessage);
+            this.chatPanel.agentInterface.requestUpdate();
         }
         this.requestUpdate();
     }
@@ -282,6 +293,7 @@ let ChatPage = class ChatPage extends LitElement {
             this.chatPanel.agentInterface.messages = this.messages;
             this.chatPanel.agentInterface.isStreaming = this.isStreaming;
             this.chatPanel.agentInterface.setStreamingMessage(null, true);
+            this.chatPanel.agentInterface.requestUpdate();
         }
         this.requestUpdate();
     }
