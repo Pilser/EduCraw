@@ -7,15 +7,13 @@ mod auth_routes;
 mod common;
 mod files;
 mod sessions;
-mod sse;
 mod students;
+mod sse;
 mod threads;
-mod ws;
 
 use axum::{routing::get, Json, Router};
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::auth::AuthConfig;
 use crate::db::models as db_models;
@@ -74,7 +72,6 @@ pub fn routes() -> Router<AppState> {
         .merge(students::routes())
         .merge(sessions::routes())
         .merge(threads::routes())
-        .merge(ws::routes())
         .merge(sse::routes())
         .merge(files::routes())
         .route("/health", get(health))

@@ -1,22 +1,20 @@
 // acp_bridge/mod.rs
 //
-// ACP bridge between the browser WebSocket and `goose acp` (stdio SACP).
+// ACP bridge between the browser (SSE) and `goose acp` (stdio SACP).
 //
 // Module layout:
 //   client        — sacp client bootstrap (connect, init, create session)
 //   commands      — ACP command handlers (list_sessions, load_session, fork_session)
 //   images        — parse base64 images from frontend, create ImageContent blocks
-//   messages      — ClientMessage enum (browser → server WS messages)
 //   model_poller  — background task: polls pending_model.txt → SetSessionModelRequest
-//   notifications — SessionNotification → WS frames + DB token accounting
+//   notifications — SessionNotification → SSE frames + DB token accounting
 //   permissions   — auto-approve tool permission requests from goose
-//   session       — run_acp_session: top-level orchestrator
+//   session       — SSE session orchestrator (init, input, replay, cancel)
 
 mod client;
 mod commands;
 mod custom_requests;
 mod images;
-mod messages;
 mod model_poller;
 mod notifications;
 // pub mod stats;  // Deferred: tables to be planned later
@@ -26,12 +24,12 @@ mod token_calculator;
 
 pub use commands::{
     handle_export_session, handle_fork_session, handle_import_session, handle_list_sessions,
-    handle_load_session, ForkSessionResult, SessionListItem,
+    ForkSessionResult, SessionListItem,
 };
 
 pub use custom_requests::ImportSessionResponse;
 
 pub use session::{
-    handle_cancel, handle_input_sse, handle_replay_sse, init_acp_session, run_acp_session,
+    handle_cancel, handle_input_sse, handle_replay_sse, init_acp_session,
     SseEvent, SseEventStream,
 };
