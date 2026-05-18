@@ -417,6 +417,13 @@ async fn get_session_models(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
+    if session.state != "active" {
+        return Err(AppError::BadRequest(format!(
+            "session {} is not active (state: {})",
+            session_id, session.state
+        )));
+    }
+
     // Get full Model objects with specs (provider, think_mode, visual_support)
     let models = db_models::full_models_for_student(&state.pool, &session.student_id).await?;
 

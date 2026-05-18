@@ -1,4 +1,22 @@
 const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
+// ── Centralised session-death detection ────────────────────────────────────
+const SESSION_DEATH_RE = /session \S+ not found|is not active/;
+let _lastDeathSessionId = "";
+function detectSessionDeath(text, sessionIdHint) {
+    if (!SESSION_DEATH_RE.test(text))
+        return false;
+    if (sessionIdHint && _lastDeathSessionId === sessionIdHint)
+        return false; // dedup
+    _lastDeathSessionId = sessionIdHint || "";
+    return true;
+}
+function dispatchSessionDead(errorText) {
+    window.dispatchEvent(new CustomEvent("session-dead", {
+        detail: { error: errorText },
+        bubbles: true,
+        composed: true,
+    }));
+}
 /**
  * Parse a fetch response body as an SSE stream.
  * Returns an async iterable of parsed SSE events plus an abort function.
@@ -27,6 +45,10 @@ function sseStream(input, init) {
                         if (!response.ok) {
                             const text = await response.text().catch(() => "Unknown error");
                             console.error(`[sse] Request failed: ${response.status}`, text);
+                            const sid = typeof input === "string" ? extractSessionId(input) : undefined;
+                            if (detectSessionDeath(text, sid)) {
+                                dispatchSessionDead(text);
+                            }
                             done = true;
                             return { value: undefined, done: true };
                         }
@@ -85,6 +107,9 @@ async function request(url, options) {
     if (!res.ok) {
         const text = await res.text().catch(() => "Unknown error");
         console.error(`[edu-api] Request failed: ${res.status} ${url}`, text);
+        if (detectSessionDeath(text, extractSessionId(url))) {
+            dispatchSessionDead(text);
+        }
         throw new Error(`${res.status}: ${text || res.statusText}`);
     }
     const contentType = res.headers.get("content-type");
@@ -96,6 +121,10 @@ async function request(url, options) {
         console.error(`[edu-api] Expected JSON but got: ${contentType}`, text);
         throw new Error(`Expected JSON response but got ${contentType}`);
     }
+}
+function extractSessionId(url) {
+    const m = url.match(/\/sessions\/([a-f0-9-]{36})/);
+    return m?.[1];
 }
 function authHeader(token) {
     return { Authorization: `Bearer ${token}` };

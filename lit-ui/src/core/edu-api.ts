@@ -14,6 +14,28 @@ import type {
 
 const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
 
+// ── Centralised session-death detection ────────────────────────────────────
+
+const SESSION_DEATH_RE = /session \S+ not found|is not active/;
+let _lastDeathSessionId = "";
+
+function detectSessionDeath(text: string, sessionIdHint?: string): boolean {
+  if (!SESSION_DEATH_RE.test(text)) return false;
+  if (sessionIdHint && _lastDeathSessionId === sessionIdHint) return false; // dedup
+  _lastDeathSessionId = sessionIdHint || "";
+  return true;
+}
+
+function dispatchSessionDead(errorText: string) {
+  window.dispatchEvent(
+    new CustomEvent("session-dead", {
+      detail: { error: errorText },
+      bubbles: true,
+      composed: true,
+    }),
+  );
+}
+
 // ── SSE Stream parser ─────────────────────────────────────────────────────
 
 export interface SseEvent {
@@ -55,6 +77,10 @@ function sseStream(
             if (!response.ok) {
               const text = await response.text().catch(() => "Unknown error");
               console.error(`[sse] Request failed: ${response.status}`, text);
+              const sid = typeof input === "string" ? extractSessionId(input) : undefined;
+              if (detectSessionDeath(text, sid)) {
+                dispatchSessionDead(text);
+              }
               done = true;
               return { value: undefined, done: true };
             }
@@ -122,6 +148,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
     console.error(`[edu-api] Request failed: ${res.status} ${url}`, text);
+    if (detectSessionDeath(text, extractSessionId(url))) {
+      dispatchSessionDead(text);
+    }
     throw new Error(`${res.status}: ${text || res.statusText}`);
   }
   const contentType = res.headers.get("content-type");
@@ -132,6 +161,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     console.error(`[edu-api] Expected JSON but got: ${contentType}`, text);
     throw new Error(`Expected JSON response but got ${contentType}`);
   }
+}
+
+function extractSessionId(url: string): string | undefined {
+  const m = url.match(/\/sessions\/([a-f0-9-]{36})/);
+  return m?.[1];
 }
 
 function authHeader(token: string): Record<string, string> {

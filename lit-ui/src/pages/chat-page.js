@@ -42,6 +42,8 @@ let ChatPage = class ChatPage extends LitElement {
         this.currentAbort = null;
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
+        this._isRefreshing = false;
+        this._onSessionDeadBound = (e) => this.onSessionDead(e);
     }
     isAuthError(err) {
         if (err?.status === 401 || err?.status === 403)
@@ -62,7 +64,12 @@ let ChatPage = class ChatPage extends LitElement {
     createRenderRoot() {
         return this;
     }
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        window.removeEventListener("session-dead", this._onSessionDeadBound);
+    }
     async firstUpdated() {
+        window.addEventListener("session-dead", this._onSessionDeadBound);
         await this.ensureValidSession();
         try {
             await this.initChat();
@@ -108,6 +115,9 @@ let ChatPage = class ChatPage extends LitElement {
             container.appendChild(this.chatPanel);
         }
     }
+    isSessionDead(msg) {
+        return msg.includes("404") || msg.includes("not found") || msg.includes("not active") || msg.includes("ended");
+    }
     async ensureValidSession() {
         try {
             await eduApi.getSessionModels(this.sessionId, this.auth.token);
@@ -116,8 +126,8 @@ let ChatPage = class ChatPage extends LitElement {
             if (this.isAuthError(err))
                 throw err;
             const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes("404") || msg.includes("not found")) {
-                console.warn("[chat-page] Session not found during validation, refreshing...");
+            if (this.isSessionDead(msg)) {
+                console.warn("[chat-page] Session dead during validation, refreshing...");
                 const refreshed = await this.handleSessionRefresh();
                 if (!refreshed) {
                     throw new Error("Session expired and could not be refreshed");
@@ -175,6 +185,23 @@ let ChatPage = class ChatPage extends LitElement {
             },
         });
     }
+    /** Centralised handler: any API call that detects a dead session fires this. */
+    async onSessionDead(e) {
+        if (this._isRefreshing)
+            return;
+        const detail = e.detail;
+        console.warn("[chat-page] session-dead event received:", detail?.error);
+        this._isRefreshing = true;
+        try {
+            const refreshed = await this.handleSessionRefresh();
+            if (refreshed) {
+                console.log("[chat-page] Session recovered via global watcher");
+            }
+        }
+        finally {
+            this._isRefreshing = false;
+        }
+    }
     /** Handle session expiry — create new session IN-PLACE, return it for retry. */
     async handleSessionRefresh() {
         console.log("[chat-page] Attempting to refresh session...");
@@ -223,6 +250,7 @@ let ChatPage = class ChatPage extends LitElement {
         const pendingTools = [];
         let streamEnded = false;
         let needsRetry = false;
+        let receivedAnyFrame = false;
         const { events, abort } = eduApi.sendInput(this.sessionId, this.sessionToken, text);
         this.currentAbort = abort;
         const processEvent = (ev) => {
@@ -237,6 +265,7 @@ let ChatPage = class ChatPage extends LitElement {
             }
             switch (frameType) {
                 case "chat_start":
+                    receivedAnyFrame = true;
                     if (this.showLanding) {
                         this.showLanding = false;
                         this.requestUpdate();
@@ -419,12 +448,22 @@ let ChatPage = class ChatPage extends LitElement {
                 if (streamEnded && !needsRetry)
                     break;
                 if (needsRetry)
-                    break; // exit loop, handle retry below
+                    break;
+            }
+            // If the stream produced no frames at all, the session is dead
+            if (!receivedAnyFrame && !streamEnded) {
+                console.warn("[sse-stream] No frames received — session likely dead");
+                needsRetry = true;
             }
         }
         catch (err) {
             console.error("[sse-stream] Stream error:", err);
-            if (!streamEnded) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!receivedAnyFrame && this.isSessionDead(msg)) {
+                needsRetry = true;
+                streamEnded = true;
+            }
+            else if (!streamEnded) {
                 assistantMsg.stopReason = "error";
                 assistantMsg.errorMessage =
                     err instanceof Error ? err.message : "Stream error";
@@ -701,6 +740,13 @@ let ChatPage = class ChatPage extends LitElement {
             }
         }
         catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (this.isSessionDead(msg)) {
+                console.warn("[replay] Session dead, refreshing before retry...");
+                const refreshed = await this.handleSessionRefresh();
+                if (refreshed)
+                    return this.loadMostRecentSession();
+            }
             console.error("[replay] Failed to list threads:", err);
         }
     }
