@@ -52,6 +52,10 @@ pub fn routes() -> Router<AppState> {
 struct CreateSessionRequest {
     student_id: String,
     model: Option<String>,
+    /// Optional: frontend can generate its own session_id (UUID).
+    /// Backend validates it's a proper UUID; falls back to random if invalid/missing.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -69,7 +73,10 @@ async fn create_session(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {} not found", body.student_id)))?;
 
-    let session_id = Uuid::new_v4().to_string();
+    let session_id = body
+        .session_id
+        .filter(|id| Uuid::parse_str(id).is_ok())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     // lower = {subjects_root}/{cohort_id}/{...subject slugs...} — read-only via OverlayFS
     //   cohort.id is a slug (e.g. "primary-2b"), not a UUID — already human-readable.

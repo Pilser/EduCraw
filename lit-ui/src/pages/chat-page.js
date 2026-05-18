@@ -6,10 +6,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { createWsStreamFn } from "../core/ws-stream-fn.js";
 import { eduApi } from "../core/edu-api.js";
 import { SessionManager } from "../core/session-manager.js";
-import { WsManager } from "../core/ws-manager.js";
 import "../ChatPanel.js";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit";
@@ -41,6 +39,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.isStreaming = false;
         this.streamingMessage = null;
         this.lastLoadedThreadId = null;
+        this.currentAbort = null;
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
     }
@@ -64,6 +63,7 @@ let ChatPage = class ChatPage extends LitElement {
         return this;
     }
     async firstUpdated() {
+        await this.ensureValidSession();
         try {
             await this.initChat();
             this._ready = true;
@@ -83,18 +83,7 @@ let ChatPage = class ChatPage extends LitElement {
                 ai.sessionTodo = this.sessionTodo;
                 ai.requestUpdate();
             }
-            const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
-            if (wsManager) {
-                console.log("[chat-page] Waiting for WebSocket connection...");
-                const connected = await wsManager.waitForConnection(10000);
-                if (connected) {
-                    console.log("[chat-page] WebSocket connected - loading recent session");
-                    this.loadMostRecentSession();
-                }
-                else {
-                    console.error("[chat-page] WebSocket connection timeout - cannot load session");
-                }
-            }
+            this.loadMostRecentSession();
         }
         catch (err) {
             if (this.isAuthError(err)) {
@@ -119,6 +108,25 @@ let ChatPage = class ChatPage extends LitElement {
             container.appendChild(this.chatPanel);
         }
     }
+    async ensureValidSession() {
+        try {
+            await eduApi.getSessionModels(this.sessionId, this.auth.token);
+        }
+        catch (err) {
+            if (this.isAuthError(err))
+                throw err;
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("404") || msg.includes("not found")) {
+                console.warn("[chat-page] Session not found during validation, refreshing...");
+                const refreshed = await this.handleSessionRefresh();
+                if (!refreshed) {
+                    throw new Error("Session expired and could not be refreshed");
+                }
+                return;
+            }
+            console.warn("[chat-page] Session validation warning:", msg);
+        }
+    }
     async initChat() {
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
@@ -134,44 +142,6 @@ let ChatPage = class ChatPage extends LitElement {
                 throw err;
             console.error("Failed to fetch session models:", err);
         }
-        console.log("[chat-page] Creating persistent WsManager connection");
-        WsManager.getInstance({
-            sessionId: this.sessionId,
-            token: this.sessionToken,
-            onReconnected: () => {
-                console.log("[chat-page] WebSocket reconnected - reloading session");
-                this.handleReconnection();
-            },
-            onError: (error) => {
-                console.error("[chat-page] WsManager error:", error.message);
-                if (error.message.includes("JWT token expired")) {
-                    // JWT expired - user needs to re-login
-                    console.warn("[chat-page] JWT expired - dispatching session-expired (will force login)");
-                    this.dispatchSessionExpired();
-                }
-                else if (error.message.includes("Session expired")) {
-                    // Session expired but JWT may still be valid - try to refresh
-                    console.warn("[chat-page] Session expired - attempting session refresh");
-                    this.handleSessionRefresh();
-                }
-                else if (error.message.includes("Session expired") ||
-                    error.message.includes("authentication failed")) {
-                    console.warn("[chat-page] Session/auth expired - dispatching event");
-                    this.dispatchSessionExpired();
-                }
-            },
-            onMessage: () => { },
-        });
-        this.wsStreamFn = createWsStreamFn({
-            sessionId: this.sessionId,
-            authToken: this.sessionToken,
-            onStreamStart: () => {
-                if (this.showLanding) {
-                    this.showLanding = false;
-                    this.requestUpdate();
-                }
-            },
-        });
         this.chatPanel = document.createElement("pi-chat-panel");
         this.chatPanel.init({
             onSend: (text) => this.handleSend(text),
@@ -205,42 +175,31 @@ let ChatPage = class ChatPage extends LitElement {
             },
         });
     }
-    handleReconnection() {
-        const lastThreadId = SessionManager.loadLastThreadId(this.sessionId);
-        if (lastThreadId) {
-            console.log(`[chat-page] Reloading last session ${lastThreadId} after reconnection`);
-            this.loadSessionById(lastThreadId);
-        }
-        else {
-            console.log("[chat-page] No previous session to reload - starting fresh after reconnection");
-        }
-    }
-    /** Handle session expiry - try to create a new session without re-login */
+    /** Handle session expiry — create new session IN-PLACE, return it for retry. */
     async handleSessionRefresh() {
         console.log("[chat-page] Attempting to refresh session...");
         try {
-            const session = await eduApi.createSession(this.auth.student_id, this.auth.token);
+            const newSessionId = crypto.randomUUID();
+            const session = await eduApi.createSession(this.auth.student_id, this.auth.token, undefined, newSessionId);
             console.log(`[chat-page] Session refreshed: ${session.session_id}`);
-            // Update stored session
+            // Update in-place — no @new-session event (avoids losing messages)
+            this.sessionId = session.session_id;
+            this.sessionToken = session.token;
+            this.lastLoadedThreadId = null;
+            // Persist (clearSession removes stale thread ref + old session before saving new)
+            SessionManager.clearSession();
             SessionManager.saveSession(session.session_id, session.token);
-            // Dispatch event to update the view with new session
-            this.dispatchEvent(new CustomEvent("new-session", {
-                bubbles: true,
-                composed: true,
-                detail: {
-                    sessionId: session.session_id,
-                    sessionToken: session.token,
-                },
-            }));
+            return { sessionId: session.session_id, sessionToken: session.token };
         }
         catch (err) {
             console.error("[chat-page] Session refresh failed:", err);
             // If refresh fails, JWT may also be expired - force re-login
             this.dispatchSessionExpired();
+            return null;
         }
     }
     async handleSend(text) {
-        if (!this.wsStreamFn || this.isStreaming)
+        if (this.isStreaming)
             return;
         const userMsg = {
             role: "user",
@@ -254,81 +213,257 @@ let ChatPage = class ChatPage extends LitElement {
         if (!this.currentTitle) {
             this.currentTitle = this.generateTitleFromText(text);
         }
-        const callbacks = {
-            onTextStart: () => {
-                this.streamingMessage = {
-                    role: "assistant",
-                    content: [],
-                    timestamp: Date.now(),
-                };
-                this.updateStreaming();
-            },
-            onTextDelta: (delta) => {
-                if (!this.streamingMessage)
-                    return;
-                const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
-                if (lastBlock && lastBlock.type === "text") {
-                    lastBlock.text += delta;
-                }
-                else {
-                    this.streamingMessage.content.push({ type: "text", text: delta });
-                }
-                this.updateStreaming();
-            },
-            onTextEnd: () => {
-                this.updateStreaming();
-            },
-            onThinkingStart: () => {
-                if (!this.streamingMessage)
-                    return;
-                this.streamingMessage.content.push({
-                    type: "thinking",
-                    thinking: "",
-                });
-                this.updateStreaming();
-            },
-            onThinkingDelta: (delta) => {
-                if (!this.streamingMessage)
-                    return;
-                const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
-                if (lastBlock && lastBlock.type === "thinking") {
-                    lastBlock.thinking += delta;
-                }
-                this.updateStreaming();
-            },
-            onThinkingEnd: () => {
-                this.updateStreaming();
-            },
-            onToolCallStart: (toolCall) => {
-                if (!this.streamingMessage)
-                    return;
-                this.streamingMessage.content.push(toolCall);
-                this.updateStreaming();
-            },
-            onToolCallEnd: (toolCall) => {
-                this.updateStreaming();
-            },
-            onDone: (msg) => {
-                this.messages = [...this.messages, msg];
-                this.isStreaming = false;
-                this.streamingMessage = null;
-                this.updateUI();
-            },
-            onError: (error) => {
-                console.error("[chat-page] Stream error:", error);
-                this.isStreaming = false;
-                this.streamingMessage = null;
-                this.updateUI();
-            },
+        const assistantMsg = {
+            role: "assistant",
+            content: [],
+            timestamp: Date.now(),
         };
-        this.wsStreamFn(text, callbacks);
-        this.updateUI();
+        let currentTextBlock = null;
+        let currentThinkingBlock = null;
+        const pendingTools = [];
+        let streamEnded = false;
+        let needsRetry = false;
+        const { events, abort } = eduApi.sendInput(this.sessionId, this.sessionToken, text);
+        this.currentAbort = abort;
+        const processEvent = (ev) => {
+            if (streamEnded)
+                return;
+            const frame = ev.data;
+            const frameType = ev.event;
+            if (frameType !== "token_usage") {
+                console.log("[sse-stream] frame:", frameType, frameType === "assistant_text"
+                    ? `"${frame.text.slice(0, 40)}..."`
+                    : "");
+            }
+            switch (frameType) {
+                case "chat_start":
+                    if (this.showLanding) {
+                        this.showLanding = false;
+                        this.requestUpdate();
+                    }
+                    break;
+                case "session_terminated": {
+                    streamEnded = true;
+                    needsRetry = true;
+                    console.log("[sse-stream] Session terminated — will retry after stream ends");
+                    break;
+                }
+                case "chat_end": {
+                    currentThinkingBlock = null;
+                    if (currentTextBlock) {
+                        // Flush current text block if needed
+                    }
+                    assistantMsg.stopReason = "stop";
+                    this.isStreaming = false;
+                    this.streamingMessage = null;
+                    this.messages = [...this.messages, assistantMsg];
+                    this.updateUI();
+                    streamEnded = true;
+                    break;
+                }
+                case "assistant_text": {
+                    currentThinkingBlock = null;
+                    const delta = frame.text;
+                    if (!currentTextBlock) {
+                        currentTextBlock = { type: "text", text: delta };
+                        assistantMsg.content = [...assistantMsg.content, currentTextBlock];
+                        if (!this.streamingMessage) {
+                            this.streamingMessage = {
+                                role: "assistant",
+                                content: [],
+                                timestamp: Date.now(),
+                            };
+                        }
+                        this.streamingMessage.content = [...assistantMsg.content];
+                    }
+                    else {
+                        currentTextBlock.text += delta;
+                        this.streamingMessage.content = [...assistantMsg.content];
+                    }
+                    this.updateStreaming();
+                    break;
+                }
+                case "thinking": {
+                    const thinkText = frame.thinking || "";
+                    if (currentThinkingBlock === null) {
+                        currentThinkingBlock = {
+                            type: "thinking",
+                            thinking: thinkText,
+                        };
+                        assistantMsg.content = [...assistantMsg.content, currentThinkingBlock];
+                        if (!this.streamingMessage) {
+                            this.streamingMessage = {
+                                role: "assistant",
+                                content: [],
+                                timestamp: Date.now(),
+                            };
+                        }
+                        this.streamingMessage.content = [...assistantMsg.content];
+                    }
+                    else {
+                        currentThinkingBlock.thinking += thinkText;
+                        this.streamingMessage.content = [...assistantMsg.content];
+                    }
+                    this.updateStreaming();
+                    break;
+                }
+                case "tool_start": {
+                    currentTextBlock = null;
+                    currentThinkingBlock = null;
+                    const name = frame.name || "unknown";
+                    const argsStr = frame.input || "{}";
+                    let args = {};
+                    try {
+                        args = JSON.parse(argsStr);
+                    }
+                    catch {
+                        args = { input: argsStr };
+                    }
+                    const toolCall = {
+                        type: "toolCall",
+                        id: crypto.randomUUID(),
+                        name,
+                        arguments: args,
+                    };
+                    assistantMsg.content = [...assistantMsg.content, toolCall];
+                    pendingTools.push({ id: toolCall.id, name: toolCall.name });
+                    if (!this.streamingMessage) {
+                        this.streamingMessage = {
+                            role: "assistant",
+                            content: [],
+                            timestamp: Date.now(),
+                        };
+                    }
+                    this.streamingMessage.content = [...assistantMsg.content];
+                    this.updateStreaming();
+                    break;
+                }
+                case "tool_end": {
+                    const pending = pendingTools.shift();
+                    if (!pending)
+                        break;
+                    const status = frame.status || "unknown";
+                    const exitCode = frame.exit_code ?? 0;
+                    const stdout = frame.stdout || "";
+                    const stderr = frame.stderr || "";
+                    const tc = assistantMsg.content.find((c) => c.type === "toolCall" && c.id === pending.id);
+                    if (tc) {
+                        tc.resultStatus = status;
+                        tc.resultStdout = stdout;
+                        tc.resultStderr = stderr;
+                        tc.resultExitCode = exitCode;
+                    }
+                    if (this.streamingMessage) {
+                        this.streamingMessage.content = [...assistantMsg.content];
+                    }
+                    this.updateStreaming();
+                    break;
+                }
+                case "token_usage": {
+                    if (frame.used) {
+                        const used = frame.used;
+                        assistantMsg.usage = {
+                            input: used,
+                            output: 0,
+                            cacheRead: frame.cache_read_tokens || 0,
+                            cacheWrite: frame.cache_write_tokens || 0,
+                            totalTokens: used,
+                            cost: {
+                                input: frame.cost ? frame.cost.amount || 0 : 0,
+                                output: 0,
+                                cacheRead: 0,
+                                cacheWrite: 0,
+                                total: frame.cost ? frame.cost.amount || 0 : 0,
+                            },
+                        };
+                    }
+                    break;
+                }
+                case "chat_error": {
+                    console.error("[sse-stream] Chat error:", frame.error);
+                    assistantMsg.stopReason = "error";
+                    assistantMsg.errorMessage = frame.error;
+                    this.isStreaming = false;
+                    this.streamingMessage = null;
+                    this.messages = [...this.messages, assistantMsg];
+                    this.updateUI();
+                    streamEnded = true;
+                    break;
+                }
+                case "restriction": {
+                    assistantMsg.stopReason = "restriction";
+                    assistantMsg.errorMessage = frame.message || "Access restricted";
+                    this.isStreaming = false;
+                    this.streamingMessage = null;
+                    this.messages = [...this.messages, assistantMsg];
+                    this.updateUI();
+                    streamEnded = true;
+                    break;
+                }
+                case "model_changed":
+                case "session_created":
+                case "session_info_update":
+                case "config_update":
+                case "available_commands":
+                case "mode_update":
+                case "plan_update":
+                case "user_text":
+                    break;
+                default:
+                    break;
+            }
+        };
+        try {
+            for await (const ev of events) {
+                processEvent(ev);
+                if (streamEnded && !needsRetry)
+                    break;
+                if (needsRetry)
+                    break; // exit loop, handle retry below
+            }
+        }
+        catch (err) {
+            console.error("[sse-stream] Stream error:", err);
+            if (!streamEnded) {
+                assistantMsg.stopReason = "error";
+                assistantMsg.errorMessage =
+                    err instanceof Error ? err.message : "Stream error";
+                this.isStreaming = false;
+                this.streamingMessage = null;
+                this.messages = [...this.messages, assistantMsg];
+                this.updateUI();
+            }
+        }
+        finally {
+            this.currentAbort = null;
+            if (!streamEnded) {
+                this.isStreaming = false;
+                this.streamingMessage = null;
+                this.updateUI();
+            }
+        }
+        // — Handle session termination retry AFTER the event stream closes —
+        if (needsRetry) {
+            this.messages = this.messages.filter((m) => m.role !== "assistant" || m.content?.length);
+            this.isStreaming = false;
+            this.streamingMessage = null;
+            console.log("[sse-stream] Refreshing session for retry...");
+            const refreshed = await this.handleSessionRefresh();
+            if (refreshed) {
+                console.log("[sse-stream] Retrying message with new session:", refreshed.sessionId);
+                this.handleSend(text);
+            }
+        }
     }
     handleCancel() {
-        const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
-        if (wsManager) {
-            wsManager.send({ type: "cancel" });
+        if (this.currentAbort) {
+            this.currentAbort();
+            this.currentAbort = null;
         }
+        // Also notify backend to cancel the prompt
+        eduApi.cancelInput(this.sessionId, this.sessionToken).catch((err) => {
+            console.warn("[chat-page] Cancel request failed:", err);
+        });
         this.isStreaming = false;
         this.streamingMessage = null;
         this.updateUI();
@@ -370,29 +505,83 @@ let ChatPage = class ChatPage extends LitElement {
         return "";
     }
     async loadSessionById(threadId) {
-        const wsManager = WsManager.getExistingInstance(this.sessionId, this.sessionToken);
-        if (!wsManager) {
-            console.error("[replay] WsManager not found - cannot load session");
-            return;
-        }
-        console.log(`[replay] Loading session ${threadId} via persistent WsManager`);
+        console.log(`[replay] Loading session ${threadId} via SSE`);
         const replayedMessages = [];
         let currentAssistant = null;
         let currentText = "";
         let currentThinking = "";
         let pendingToolCallId = null;
-        let replayComplete = false;
-        const originalOnMessage = wsManager.onMessage;
-        wsManager.onMessage = (frame) => {
-            if (replayComplete) {
-                if (originalOnMessage)
-                    originalOnMessage(frame);
-                return;
-            }
-            try {
-                switch (frame.type) {
-                    case "user_text": {
-                        if (currentAssistant) {
+        const { events, abort } = eduApi.replayThread(this.sessionId, this.sessionToken, threadId);
+        const timeout = setTimeout(() => {
+            console.warn("[replay] Load timeout — aborting");
+            abort();
+        }, 15000);
+        try {
+            for await (const ev of events) {
+                const frame = ev.data;
+                try {
+                    switch (ev.event) {
+                        case "user_text": {
+                            if (currentAssistant) {
+                                if (currentText) {
+                                    currentAssistant.content.push({ type: "text", text: currentText });
+                                    currentText = "";
+                                }
+                                if (currentThinking) {
+                                    currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
+                                    currentThinking = "";
+                                }
+                                replayedMessages.push(currentAssistant);
+                                currentAssistant = null;
+                            }
+                            replayedMessages.push({
+                                role: "user",
+                                content: frame.text || "",
+                                timestamp: Date.now(),
+                            });
+                            break;
+                        }
+                        case "assistant_text": {
+                            if (!currentAssistant) {
+                                currentAssistant = {
+                                    role: "assistant",
+                                    content: [],
+                                    timestamp: Date.now(),
+                                };
+                            }
+                            if (currentThinking) {
+                                currentAssistant.content.push({
+                                    type: "thinking",
+                                    thinking: currentThinking,
+                                });
+                                currentThinking = "";
+                            }
+                            currentText += frame.text || "";
+                            break;
+                        }
+                        case "thinking": {
+                            if (!currentAssistant) {
+                                currentAssistant = {
+                                    role: "assistant",
+                                    content: [],
+                                    timestamp: Date.now(),
+                                };
+                            }
+                            if (currentText) {
+                                currentAssistant.content.push({ type: "text", text: currentText });
+                                currentText = "";
+                            }
+                            currentThinking += frame.thinking || "";
+                            break;
+                        }
+                        case "tool_start": {
+                            if (!currentAssistant) {
+                                currentAssistant = {
+                                    role: "assistant",
+                                    content: [],
+                                    timestamp: Date.now(),
+                                };
+                            }
                             if (currentText) {
                                 currentAssistant.content.push({ type: "text", text: currentText });
                                 currentText = "";
@@ -401,186 +590,96 @@ let ChatPage = class ChatPage extends LitElement {
                                 currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
                                 currentThinking = "";
                             }
-                            replayedMessages.push(currentAssistant);
-                            currentAssistant = null;
-                        }
-                        replayedMessages.push({
-                            role: "user",
-                            content: frame.text || "",
-                            timestamp: Date.now(),
-                        });
-                        break;
-                    }
-                    case "assistant_text": {
-                        if (!currentAssistant) {
-                            currentAssistant = {
-                                role: "assistant",
-                                content: [],
-                                timestamp: Date.now(),
+                            const name = frame.name || "unknown";
+                            const argsStr = frame.input || "{}";
+                            let args = {};
+                            try {
+                                args = JSON.parse(argsStr);
+                            }
+                            catch {
+                                args = { input: argsStr };
+                            }
+                            const toolCall = {
+                                type: "toolCall",
+                                id: crypto.randomUUID(),
+                                name,
+                                arguments: args,
                             };
+                            currentAssistant.content.push(toolCall);
+                            pendingToolCallId = toolCall.id;
+                            break;
                         }
-                        if (currentThinking) {
-                            currentAssistant.content.push({
-                                type: "thinking",
-                                thinking: currentThinking,
-                            });
-                            currentThinking = "";
-                        }
-                        currentText += frame.text || "";
-                        break;
-                    }
-                    case "thinking": {
-                        if (!currentAssistant) {
-                            currentAssistant = {
-                                role: "assistant",
-                                content: [],
-                                timestamp: Date.now(),
-                            };
-                        }
-                        if (currentText) {
-                            currentAssistant.content.push({ type: "text", text: currentText });
-                            currentText = "";
-                        }
-                        currentThinking += frame.thinking || "";
-                        break;
-                    }
-                    case "tool_start": {
-                        if (!currentAssistant) {
-                            currentAssistant = {
-                                role: "assistant",
-                                content: [],
-                                timestamp: Date.now(),
-                            };
-                        }
-                        if (currentText) {
-                            currentAssistant.content.push({ type: "text", text: currentText });
-                            currentText = "";
-                        }
-                        if (currentThinking) {
-                            currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
-                            currentThinking = "";
-                        }
-                        const name = frame.name || "unknown";
-                        const argsStr = frame.input || "{}";
-                        let args = {};
-                        try {
-                            args = JSON.parse(argsStr);
-                        }
-                        catch {
-                            args = { input: argsStr };
-                        }
-                        const toolCall = {
-                            type: "toolCall",
-                            id: crypto.randomUUID(),
-                            name,
-                            arguments: args,
-                        };
-                        currentAssistant.content.push(toolCall);
-                        pendingToolCallId = toolCall.id;
-                        break;
-                    }
-                    case "tool_end": {
-                        if (pendingToolCallId) {
-                            const toolCall = currentAssistant?.content.find((c) => c.type === "toolCall" && c.id === pendingToolCallId);
-                            if (toolCall) {
-                                toolCall.resultStatus = frame.status;
-                                toolCall.resultExitCode = frame.exit_code;
-                                toolCall.resultStdout = frame.stdout;
-                                toolCall.resultStderr = frame.stderr;
+                        case "tool_end": {
+                            if (pendingToolCallId) {
+                                const toolCall = currentAssistant?.content.find((c) => c.type === "toolCall" && c.id === pendingToolCallId);
+                                if (toolCall) {
+                                    toolCall.resultStatus = frame.status;
+                                    toolCall.resultExitCode = frame.exit_code;
+                                    toolCall.resultStdout = frame.stdout;
+                                    toolCall.resultStderr = frame.stderr;
+                                }
+                                pendingToolCallId = null;
                             }
-                            pendingToolCallId = null;
+                            break;
                         }
-                        break;
+                        case "load_session_complete": {
+                            if (currentAssistant) {
+                                if (currentText) {
+                                    currentAssistant.content.push({ type: "text", text: currentText });
+                                }
+                                if (currentThinking) {
+                                    currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
+                                }
+                                replayedMessages.push(currentAssistant);
+                                currentAssistant = null;
+                            }
+                            const loadedThreadId = frame.thread_id || "";
+                            if (loadedThreadId) {
+                                this.lastLoadedThreadId = loadedThreadId;
+                                SessionManager.saveLastThreadId(loadedThreadId, this.sessionId);
+                            }
+                            console.log(`[replay] Session replay complete — ${replayedMessages.length} messages restored`);
+                            this.messages = replayedMessages;
+                            this.showLanding = false;
+                            if (replayedMessages.length > 0 && !this.currentTitle) {
+                                const firstUser = replayedMessages.find((m) => m.role === "user");
+                                if (firstUser) {
+                                    this.currentTitle = this.generateTitleFromText(typeof firstUser.content === "string" ? firstUser.content : "");
+                                }
+                            }
+                            this.updateUI();
+                            break;
+                        }
+                        case "error": {
+                            const errorMsg = frame.message || "Unknown error";
+                            console.error("[replay] Session replay error:", errorMsg);
+                            if (errorMsg.includes("Unauthorized") ||
+                                errorMsg.includes("unauthorized") ||
+                                errorMsg.includes("401") ||
+                                errorMsg.includes("403")) {
+                                const auth = SessionManager.loadAuth();
+                                if (auth && SessionManager.isTokenValid(auth.token)) {
+                                    this.handleSessionRefresh();
+                                }
+                                else {
+                                    this.dispatchSessionExpired();
+                                }
+                            }
+                            break;
+                        }
                     }
-                    case "load_session_complete": {
-                        if (currentAssistant) {
-                            if (currentText) {
-                                currentAssistant.content.push({ type: "text", text: currentText });
-                            }
-                            if (currentThinking) {
-                                currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
-                            }
-                            replayedMessages.push(currentAssistant);
-                            currentAssistant = null;
-                        }
-                        const loadedThreadId = frame.thread_id || "";
-                        if (loadedThreadId) {
-                            this.lastLoadedThreadId = loadedThreadId;
-                            SessionManager.saveLastThreadId(loadedThreadId, this.sessionId);
-                        }
-                        console.log(`[replay] Session replay complete — ${replayedMessages.length} messages restored`);
-                        this.messages = replayedMessages;
-                        this.showLanding = false;
-                        if (replayedMessages.length > 0 && !this.currentTitle) {
-                            const firstUser = replayedMessages.find((m) => m.role === "user");
-                            if (firstUser) {
-                                this.currentTitle = this.generateTitleFromText(typeof firstUser.content === "string" ? firstUser.content : "");
-                            }
-                        }
-                        this.updateUI();
-                        replayComplete = true;
-                        wsManager.onMessage = originalOnMessage;
-                        console.log("[replay] Restored original WsManager onMessage handler");
-                        break;
-                    }
-                    case "error": {
-                        const errorMsg = frame.message || "Unknown error";
-                        console.error("[replay] Session replay error:", errorMsg);
-                        if (errorMsg.includes("Unauthorized") ||
-                            errorMsg.includes("unauthorized") ||
-                            errorMsg.includes("401") ||
-                            errorMsg.includes("403")) {
-                            // Check if it's a JWT expiry or session expiry
-                            const auth = SessionManager.loadAuth();
-                            if (auth && SessionManager.isTokenValid(auth.token)) {
-                                // JWT is valid, session expired - try to refresh
-                                this.handleSessionRefresh();
-                            }
-                            else {
-                                // JWT expired - force re-login
-                                this.dispatchSessionExpired();
-                            }
-                        }
-                        replayComplete = true;
-                        wsManager.onMessage = originalOnMessage;
-                        break;
-                    }
-                    default:
-                        if (originalOnMessage)
-                            originalOnMessage(frame);
-                        break;
+                }
+                catch (err) {
+                    console.error("[replay] Error processing frame:", err);
                 }
             }
-            catch (err) {
-                console.error("[replay] Error processing frame:", err);
-            }
-        };
-        const sent = wsManager.send({
-            type: "load_session",
-            thread_id: threadId,
-        });
-        if (!sent) {
-            console.error("[replay] Failed to send load_session - WS not open");
-            wsManager.onMessage = originalOnMessage;
-            return;
         }
-        setTimeout(() => {
-            if (!replayComplete) {
-                console.warn("[replay] Load timeout - restoring original handler");
-                if (currentAssistant) {
-                    if (currentText)
-                        currentAssistant.content.push({ type: "text", text: currentText });
-                    if (currentThinking)
-                        currentAssistant.content.push({ type: "thinking", thinking: currentThinking });
-                    replayedMessages.push(currentAssistant);
-                }
-                this.messages = replayedMessages;
-                this.showLanding = false;
-                this.updateUI();
-                replayComplete = true;
-                wsManager.onMessage = originalOnMessage;
-            }
-        }, 15000);
+        catch (err) {
+            console.error("[replay] SSE stream error:", err);
+        }
+        finally {
+            clearTimeout(timeout);
+        }
     }
     async loadMostRecentSession() {
         if (!this.sessionId)

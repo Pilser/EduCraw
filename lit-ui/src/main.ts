@@ -41,9 +41,12 @@ function renderApp() {
           @login-success=${async (e: CustomEvent<LoginResponse>) => {
             const auth = e.detail;
             try {
+              const sessionId = crypto.randomUUID();
               const session = await eduApi.createSession(
                 auth.student_id,
                 auth.token,
+                undefined,
+                sessionId,
               );
               // Save auth and session
               SessionManager.saveAuth(auth);
@@ -85,7 +88,7 @@ function renderApp() {
             if (currentView.kind === "chat") {
               const auth = currentView.auth;
               // Try to refresh session in background
-              eduApi.createSession(auth.student_id, auth.token)
+              eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID())
                 .then((session) => {
                   SessionManager.saveSession(session.session_id, session.token);
                   currentView = {
@@ -146,21 +149,40 @@ async function init() {
     const sessionToken = SessionManager.loadSessionToken();
     
     if (sessionId && sessionToken) {
-      // Check if session token is also valid
       const isSessionTokenValid = SessionManager.isTokenValid(sessionToken);
       if (isSessionTokenValid) {
-        console.log("[main] Restoring existing session");
-        currentView = {
-          kind: "chat",
-          auth,
-          sessionId,
-          sessionToken,
-        };
+        try {
+          await eduApi.getSessionModels(sessionId, auth.token);
+          console.log("[main] Restoring existing session");
+          currentView = {
+            kind: "chat",
+            auth,
+            sessionId,
+            sessionToken,
+          };
+        } catch {
+          console.log("[main] Session not found on backend, creating new session...");
+          SessionManager.clearSession();
+          try {
+            const session = await eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID());
+            SessionManager.saveSession(session.session_id, session.token);
+            currentView = {
+              kind: "chat",
+              auth,
+              sessionId: session.session_id,
+              sessionToken: session.token,
+            };
+          } catch (createErr) {
+            console.error("Failed to create session:", createErr);
+            SessionManager.clearAuth();
+            currentView = { kind: "login" };
+          }
+        }
       } else {
         // Session token expired but JWT is valid - try to refresh session
         console.log("[main] Session token expired, refreshing session...");
         try {
-          const session = await eduApi.createSession(auth.student_id, auth.token);
+          const session = await eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID());
           SessionManager.saveSession(session.session_id, session.token);
           currentView = {
             kind: "chat",
@@ -178,7 +200,7 @@ async function init() {
       // No session stored but JWT is valid - create new session
       console.log("[main] No session stored, creating new session...");
       try {
-        const session = await eduApi.createSession(auth.student_id, auth.token);
+        const session = await eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID());
         SessionManager.saveSession(session.session_id, session.token);
         currentView = {
           kind: "chat",

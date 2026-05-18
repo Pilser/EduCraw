@@ -7,6 +7,7 @@ mod auth_routes;
 mod common;
 mod files;
 mod sessions;
+mod sse;
 mod students;
 mod threads;
 mod ws;
@@ -74,6 +75,7 @@ pub fn routes() -> Router<AppState> {
         .merge(sessions::routes())
         .merge(threads::routes())
         .merge(ws::routes())
+        .merge(sse::routes())
         .merge(files::routes())
         .route("/health", get(health))
         // Public model list (enabled only) — used by frontend model picker.

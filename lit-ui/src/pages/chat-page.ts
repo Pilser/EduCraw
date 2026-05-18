@@ -1,17 +1,15 @@
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { createWsStreamFn, type StreamCallbacks } from "../core/ws-stream-fn.js";
-import { eduApi } from "../core/edu-api.js";
+import { eduApi, type SseEvent } from "../core/edu-api.js";
 import { SessionManager } from "../core/session-manager.js";
-import { WsManager } from "../core/ws-manager.js";
 import type {
   LoginResponse,
   EduModel,
-  SessionListItem,
   BackendAssistantMessage,
   BackendMessage,
   BackendUserMessage,
   BackendToolCallBlock,
+  BackendContentBlock,
 } from "../core/edu-types.js";
 import "../ChatPanel.js";
 import type { ChatPanel } from "../ChatPanel.js";
@@ -56,7 +54,7 @@ export class ChatPage extends LitElement {
   private fileDrawer?: FileDrawer;
   private previewModal?: FilePreviewModal;
   private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
-  private wsStreamFn?: (input: string, callbacks: StreamCallbacks) => void;
+  private currentAbort: (() => void) | null = null;
   private activeModelId = "grok-4-1-fast-reasoning";
   private activeModelDisplayName = "grok-4-1-fast-reasoning";
 
@@ -82,6 +80,7 @@ export class ChatPage extends LitElement {
   }
 
   override async firstUpdated() {
+    await this.ensureValidSession();
     try {
       await this.initChat();
       this._ready = true;
@@ -103,22 +102,7 @@ export class ChatPage extends LitElement {
         ai.requestUpdate();
       }
 
-      const wsManager = WsManager.getExistingInstance(
-        this.sessionId,
-        this.sessionToken,
-      );
-      if (wsManager) {
-        console.log("[chat-page] Waiting for WebSocket connection...");
-        const connected = await wsManager.waitForConnection(10000);
-        if (connected) {
-          console.log("[chat-page] WebSocket connected - loading recent session");
-          this.loadMostRecentSession();
-        } else {
-          console.error(
-            "[chat-page] WebSocket connection timeout - cannot load session",
-          );
-        }
-      }
+      this.loadMostRecentSession();
     } catch (err) {
       if (this.isAuthError(err)) {
         console.warn(
@@ -150,6 +134,24 @@ export class ChatPage extends LitElement {
     }
   }
 
+  private async ensureValidSession() {
+    try {
+      await eduApi.getSessionModels(this.sessionId, this.auth.token);
+    } catch (err) {
+      if (this.isAuthError(err)) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("404") || msg.includes("not found")) {
+        console.warn("[chat-page] Session not found during validation, refreshing...");
+        const refreshed = await this.handleSessionRefresh();
+        if (!refreshed) {
+          throw new Error("Session expired and could not be refreshed");
+        }
+        return;
+      }
+      console.warn("[chat-page] Session validation warning:", msg);
+    }
+  }
+
   private async initChat() {
     this.activeModelId = "grok-4-1-fast-reasoning";
     this.activeModelDisplayName = "grok-4-1-fast-reasoning";
@@ -166,46 +168,6 @@ export class ChatPage extends LitElement {
       if (this.isAuthError(err)) throw err;
       console.error("Failed to fetch session models:", err);
     }
-
-    console.log("[chat-page] Creating persistent WsManager connection");
-    WsManager.getInstance({
-      sessionId: this.sessionId,
-      token: this.sessionToken,
-      onReconnected: () => {
-        console.log("[chat-page] WebSocket reconnected - reloading session");
-        this.handleReconnection();
-      },
-      onError: (error) => {
-        console.error("[chat-page] WsManager error:", error.message);
-        if (error.message.includes("JWT token expired")) {
-          // JWT expired - user needs to re-login
-          console.warn("[chat-page] JWT expired - dispatching session-expired (will force login)");
-          this.dispatchSessionExpired();
-        } else if (error.message.includes("Session expired")) {
-          // Session expired but JWT may still be valid - try to refresh
-          console.warn("[chat-page] Session expired - attempting session refresh");
-          this.handleSessionRefresh();
-        } else if (
-          error.message.includes("Session expired") ||
-          error.message.includes("authentication failed")
-        ) {
-          console.warn("[chat-page] Session/auth expired - dispatching event");
-          this.dispatchSessionExpired();
-        }
-      },
-      onMessage: () => {},
-    });
-
-    this.wsStreamFn = createWsStreamFn({
-      sessionId: this.sessionId,
-      authToken: this.sessionToken,
-      onStreamStart: () => {
-        if (this.showLanding) {
-          this.showLanding = false;
-          this.requestUpdate();
-        }
-      },
-    });
 
     this.chatPanel = document.createElement("pi-chat-panel") as ChatPanel;
     this.chatPanel.init({
@@ -244,55 +206,41 @@ export class ChatPage extends LitElement {
     });
   }
 
-  private handleReconnection() {
-    const lastThreadId = SessionManager.loadLastThreadId(this.sessionId);
-    if (lastThreadId) {
-      console.log(
-        `[chat-page] Reloading last session ${lastThreadId} after reconnection`,
-      );
-      this.loadSessionById(lastThreadId);
-    } else {
-      console.log(
-        "[chat-page] No previous session to reload - starting fresh after reconnection",
-      );
-    }
-  }
-
-  /** Handle session expiry - try to create a new session without re-login */
-  private async handleSessionRefresh() {
+  /** Handle session expiry — create new session IN-PLACE, return it for retry. */
+  private async handleSessionRefresh(): Promise<{ sessionId: string; sessionToken: string } | null> {
     console.log("[chat-page] Attempting to refresh session...");
     try {
+      const newSessionId = crypto.randomUUID();
       const session = await eduApi.createSession(
         this.auth.student_id,
         this.auth.token,
+        undefined,
+        newSessionId,
       );
       console.log(
         `[chat-page] Session refreshed: ${session.session_id}`,
       );
-      
-      // Update stored session
+
+      // Update in-place — no @new-session event (avoids losing messages)
+      this.sessionId = session.session_id;
+      this.sessionToken = session.token;
+      this.lastLoadedThreadId = null;
+
+      // Persist (clearSession removes stale thread ref + old session before saving new)
+      SessionManager.clearSession();
       SessionManager.saveSession(session.session_id, session.token);
-      
-      // Dispatch event to update the view with new session
-      this.dispatchEvent(
-        new CustomEvent("new-session", {
-          bubbles: true,
-          composed: true,
-          detail: {
-            sessionId: session.session_id,
-            sessionToken: session.token,
-          },
-        }),
-      );
+
+      return { sessionId: session.session_id, sessionToken: session.token };
     } catch (err) {
       console.error("[chat-page] Session refresh failed:", err);
       // If refresh fails, JWT may also be expired - force re-login
       this.dispatchSessionExpired();
+      return null;
     }
   }
 
   private async handleSend(text: string) {
-    if (!this.wsStreamFn || this.isStreaming) return;
+    if (this.isStreaming) return;
 
     const userMsg: BackendUserMessage = {
       role: "user",
@@ -308,81 +256,284 @@ export class ChatPage extends LitElement {
       this.currentTitle = this.generateTitleFromText(text);
     }
 
-    const callbacks: StreamCallbacks = {
-      onTextStart: () => {
-        this.streamingMessage = {
-          role: "assistant",
-          content: [],
-          timestamp: Date.now(),
-        };
-        this.updateStreaming();
-      },
-      onTextDelta: (delta: string) => {
-        if (!this.streamingMessage) return;
-        const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
-        if (lastBlock && lastBlock.type === "text") {
-          (lastBlock as any).text += delta;
-        } else {
-          this.streamingMessage.content.push({ type: "text", text: delta });
-        }
-        this.updateStreaming();
-      },
-      onTextEnd: () => {
-        this.updateStreaming();
-      },
-      onThinkingStart: () => {
-        if (!this.streamingMessage) return;
-        this.streamingMessage.content.push({
-          type: "thinking",
-          thinking: "",
-        } as any);
-        this.updateStreaming();
-      },
-      onThinkingDelta: (delta: string) => {
-        if (!this.streamingMessage) return;
-        const lastBlock = this.streamingMessage.content[this.streamingMessage.content.length - 1];
-        if (lastBlock && lastBlock.type === "thinking") {
-          (lastBlock as any).thinking += delta;
-        }
-        this.updateStreaming();
-      },
-      onThinkingEnd: () => {
-        this.updateStreaming();
-      },
-      onToolCallStart: (toolCall: BackendToolCallBlock) => {
-        if (!this.streamingMessage) return;
-        this.streamingMessage.content.push(toolCall);
-        this.updateStreaming();
-      },
-      onToolCallEnd: (toolCall: BackendToolCallBlock) => {
-        this.updateStreaming();
-      },
-      onDone: (msg: BackendAssistantMessage) => {
-        this.messages = [...this.messages, msg];
-        this.isStreaming = false;
-        this.streamingMessage = null;
-        this.updateUI();
-      },
-      onError: (error: Error) => {
-        console.error("[chat-page] Stream error:", error);
-        this.isStreaming = false;
-        this.streamingMessage = null;
-        this.updateUI();
-      },
+    const assistantMsg: BackendAssistantMessage = {
+      role: "assistant",
+      content: [],
+      timestamp: Date.now(),
     };
 
-    this.wsStreamFn(text, callbacks);
-    this.updateUI();
+    let currentTextBlock: BackendContentBlock | null = null;
+    let currentThinkingBlock: BackendContentBlock | null = null;
+    const pendingTools: { id: string; name: string }[] = [];
+    let streamEnded = false;
+    let needsRetry = false;
+
+    const { events, abort } = eduApi.sendInput(
+      this.sessionId,
+      this.sessionToken,
+      text,
+    );
+    this.currentAbort = abort;
+
+    const processEvent = (ev: SseEvent) => {
+      if (streamEnded) return;
+      const frame = ev.data;
+      const frameType = ev.event;
+
+      if (frameType !== "token_usage") {
+        console.log(
+          "[sse-stream] frame:",
+          frameType,
+          frameType === "assistant_text"
+            ? `"${(frame.text as string).slice(0, 40)}..."`
+            : "",
+        );
+      }
+
+      switch (frameType) {
+        case "chat_start":
+          if (this.showLanding) {
+            this.showLanding = false;
+            this.requestUpdate();
+          }
+          break;
+
+        case "session_terminated": {
+          streamEnded = true;
+          needsRetry = true;
+          console.log("[sse-stream] Session terminated — will retry after stream ends");
+          break;
+        }
+
+        case "chat_end": {
+          currentThinkingBlock = null;
+          if (currentTextBlock) {
+            // Flush current text block if needed
+          }
+          assistantMsg.stopReason = "stop";
+          this.isStreaming = false;
+          this.streamingMessage = null;
+          this.messages = [...this.messages, assistantMsg];
+          this.updateUI();
+          streamEnded = true;
+          break;
+        }
+
+        case "assistant_text": {
+          currentThinkingBlock = null;
+          const delta = frame.text as string;
+          if (!currentTextBlock) {
+            currentTextBlock = { type: "text", text: delta };
+            assistantMsg.content = [...assistantMsg.content, currentTextBlock];
+            if (!this.streamingMessage) {
+              this.streamingMessage = {
+                role: "assistant",
+                content: [],
+                timestamp: Date.now(),
+              };
+            }
+            this.streamingMessage.content = [...assistantMsg.content];
+          } else {
+            (currentTextBlock as any).text += delta;
+            this.streamingMessage!.content = [...assistantMsg.content];
+          }
+          this.updateStreaming();
+          break;
+        }
+
+        case "thinking": {
+          const thinkText = (frame.thinking as string) || "";
+          if (currentThinkingBlock === null) {
+            currentThinkingBlock = {
+              type: "thinking",
+              thinking: thinkText,
+            };
+            assistantMsg.content = [...assistantMsg.content, currentThinkingBlock];
+            if (!this.streamingMessage) {
+              this.streamingMessage = {
+                role: "assistant",
+                content: [],
+                timestamp: Date.now(),
+              };
+            }
+            this.streamingMessage.content = [...assistantMsg.content];
+          } else {
+            (currentThinkingBlock as any).thinking += thinkText;
+            this.streamingMessage!.content = [...assistantMsg.content];
+          }
+          this.updateStreaming();
+          break;
+        }
+
+        case "tool_start": {
+          currentTextBlock = null;
+          currentThinkingBlock = null;
+
+          const name = (frame.name as string) || "unknown";
+          const argsStr = (frame.input as string) || "{}";
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(argsStr);
+          } catch {
+            args = { input: argsStr };
+          }
+
+          const toolCall: BackendToolCallBlock = {
+            type: "toolCall",
+            id: crypto.randomUUID(),
+            name,
+            arguments: args,
+          };
+
+          assistantMsg.content = [...assistantMsg.content, toolCall];
+          pendingTools.push({ id: toolCall.id, name: toolCall.name });
+
+          if (!this.streamingMessage) {
+            this.streamingMessage = {
+              role: "assistant",
+              content: [],
+              timestamp: Date.now(),
+            };
+          }
+          this.streamingMessage.content = [...assistantMsg.content];
+          this.updateStreaming();
+          break;
+        }
+
+        case "tool_end": {
+          const pending = pendingTools.shift();
+          if (!pending) break;
+
+          const status = (frame.status as string) || "unknown";
+          const exitCode = (frame.exit_code as number) ?? 0;
+          const stdout = (frame.stdout as string) || "";
+          const stderr = (frame.stderr as string) || "";
+
+          const tc = assistantMsg.content.find(
+            (c) => c.type === "toolCall" && c.id === pending.id,
+          ) as BackendToolCallBlock | undefined;
+          if (tc) {
+            tc.resultStatus = status;
+            tc.resultStdout = stdout;
+            tc.resultStderr = stderr;
+            tc.resultExitCode = exitCode;
+          }
+
+          if (this.streamingMessage) {
+            this.streamingMessage.content = [...assistantMsg.content];
+          }
+          this.updateStreaming();
+          break;
+        }
+
+        case "token_usage": {
+          if (frame.used) {
+            const used = frame.used as number;
+            assistantMsg.usage = {
+              input: used,
+              output: 0,
+              cacheRead: (frame.cache_read_tokens as number) || 0,
+              cacheWrite: (frame.cache_write_tokens as number) || 0,
+              totalTokens: used,
+              cost: {
+                input: frame.cost ? (frame.cost as any).amount || 0 : 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: frame.cost ? (frame.cost as any).amount || 0 : 0,
+              },
+            };
+          }
+          break;
+        }
+
+        case "chat_error": {
+          console.error("[sse-stream] Chat error:", frame.error);
+          assistantMsg.stopReason = "error";
+          assistantMsg.errorMessage = frame.error;
+          this.isStreaming = false;
+          this.streamingMessage = null;
+          this.messages = [...this.messages, assistantMsg];
+          this.updateUI();
+          streamEnded = true;
+          break;
+        }
+
+        case "restriction": {
+          assistantMsg.stopReason = "restriction";
+          assistantMsg.errorMessage = (frame.message as string) || "Access restricted";
+          this.isStreaming = false;
+          this.streamingMessage = null;
+          this.messages = [...this.messages, assistantMsg];
+          this.updateUI();
+          streamEnded = true;
+          break;
+        }
+
+        case "model_changed":
+        case "session_created":
+        case "session_info_update":
+        case "config_update":
+        case "available_commands":
+        case "mode_update":
+        case "plan_update":
+        case "user_text":
+          break;
+
+        default:
+          break;
+      }
+    };
+
+    try {
+      for await (const ev of events) {
+        processEvent(ev);
+        if (streamEnded && !needsRetry) break;
+        if (needsRetry) break; // exit loop, handle retry below
+      }
+    } catch (err) {
+      console.error("[sse-stream] Stream error:", err);
+      if (!streamEnded) {
+        assistantMsg.stopReason = "error";
+        assistantMsg.errorMessage =
+          err instanceof Error ? err.message : "Stream error";
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.messages = [...this.messages, assistantMsg];
+        this.updateUI();
+      }
+    } finally {
+      this.currentAbort = null;
+      if (!streamEnded) {
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.updateUI();
+      }
+    }
+
+    // — Handle session termination retry AFTER the event stream closes —
+    if (needsRetry) {
+      this.messages = this.messages.filter((m) => m.role !== "assistant" || (m as BackendAssistantMessage).content?.length);
+      this.isStreaming = false;
+      this.streamingMessage = null;
+      console.log("[sse-stream] Refreshing session for retry...");
+      const refreshed = await this.handleSessionRefresh();
+      if (refreshed) {
+        console.log("[sse-stream] Retrying message with new session:", refreshed.sessionId);
+        this.handleSend(text);
+      }
+    }
   }
 
   private handleCancel() {
-    const wsManager = WsManager.getExistingInstance(
-      this.sessionId,
-      this.sessionToken,
-    );
-    if (wsManager) {
-      wsManager.send({ type: "cancel" });
+    if (this.currentAbort) {
+      this.currentAbort();
+      this.currentAbort = null;
     }
+    // Also notify backend to cancel the prompt
+    eduApi.cancelInput(this.sessionId, this.sessionToken).catch((err) => {
+      console.warn("[chat-page] Cancel request failed:", err);
+    });
     this.isStreaming = false;
     this.streamingMessage = null;
     this.updateUI();
@@ -428,34 +579,31 @@ export class ChatPage extends LitElement {
   }
 
   private async loadSessionById(threadId: string) {
-    const wsManager = WsManager.getExistingInstance(
-      this.sessionId,
-      this.sessionToken,
-    );
-    if (!wsManager) {
-      console.error("[replay] WsManager not found - cannot load session");
-      return;
-    }
-
-    console.log(`[replay] Loading session ${threadId} via persistent WsManager`);
+    console.log(`[replay] Loading session ${threadId} via SSE`);
 
     const replayedMessages: BackendMessage[] = [];
     let currentAssistant: BackendAssistantMessage | null = null;
     let currentText = "";
     let currentThinking = "";
     let pendingToolCallId: string | null = null;
-    let replayComplete = false;
 
-    const originalOnMessage = (wsManager as any).onMessage;
+    const { events, abort } = eduApi.replayThread(
+      this.sessionId,
+      this.sessionToken,
+      threadId,
+    );
 
-    (wsManager as any).onMessage = (frame: any) => {
-      if (replayComplete) {
-        if (originalOnMessage) originalOnMessage(frame);
-        return;
-      }
+    const timeout = setTimeout(() => {
+      console.warn("[replay] Load timeout — aborting");
+      abort();
+    }, 15000);
 
-      try {
-        switch (frame.type) {
+    try {
+      for await (const ev of events) {
+        const frame = ev.data;
+
+        try {
+          switch (ev.event) {
           case "user_text": {
             if (currentAssistant) {
               if (currentText) {
@@ -602,10 +750,6 @@ export class ChatPage extends LitElement {
             }
 
             this.updateUI();
-
-            replayComplete = true;
-            (wsManager as any).onMessage = originalOnMessage;
-            console.log("[replay] Restored original WsManager onMessage handler");
             break;
           }
 
@@ -618,59 +762,28 @@ export class ChatPage extends LitElement {
               errorMsg.includes("401") ||
               errorMsg.includes("403")
             ) {
-              // Check if it's a JWT expiry or session expiry
               const auth = SessionManager.loadAuth();
               if (auth && SessionManager.isTokenValid(auth.token)) {
-                // JWT is valid, session expired - try to refresh
                 this.handleSessionRefresh();
               } else {
-                // JWT expired - force re-login
                 this.dispatchSessionExpired();
               }
             }
-            replayComplete = true;
-            (wsManager as any).onMessage = originalOnMessage;
             break;
           }
-
-          default:
-            if (originalOnMessage) originalOnMessage(frame);
-            break;
+          }
+        } catch (err) {
+          console.error("[replay] Error processing frame:", err);
         }
-      } catch (err) {
-        console.error("[replay] Error processing frame:", err);
       }
-    };
-
-    const sent = wsManager.send({
-      type: "load_session",
-      thread_id: threadId,
-    });
-
-    if (!sent) {
-      console.error("[replay] Failed to send load_session - WS not open");
-      (wsManager as any).onMessage = originalOnMessage;
-      return;
+    } catch (err) {
+      console.error("[replay] SSE stream error:", err);
+    } finally {
+      clearTimeout(timeout);
     }
-
-    setTimeout(() => {
-      if (!replayComplete) {
-        console.warn("[replay] Load timeout - restoring original handler");
-        if (currentAssistant) {
-          if (currentText) currentAssistant.content.push({ type: "text", text: currentText });
-          if (currentThinking) (currentAssistant.content as any[]).push({ type: "thinking", thinking: currentThinking });
-          replayedMessages.push(currentAssistant);
-        }
-        this.messages = replayedMessages;
-        this.showLanding = false;
-        this.updateUI();
-        replayComplete = true;
-        (wsManager as any).onMessage = originalOnMessage;
-      }
-    }, 15000);
   }
 
-  private async loadMostRecentSession() {
+  private async loadMostRecentSession(): Promise<void> {
     if (!this.sessionId) return;
 
     console.log("[replay] Listing threads via REST");

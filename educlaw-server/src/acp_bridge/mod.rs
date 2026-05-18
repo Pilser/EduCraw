@@ -31,4 +31,7 @@ pub use commands::{
 
 pub use custom_requests::ImportSessionResponse;
 
-pub use session::run_acp_session;
+pub use session::{
+    handle_cancel, handle_input_sse, handle_replay_sse, init_acp_session, run_acp_session,
+    SseEvent, SseEventStream,
+};

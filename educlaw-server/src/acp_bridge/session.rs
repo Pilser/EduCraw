@@ -23,7 +23,7 @@ use std::time::Duration;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use sacp::schema::{
-    CancelNotification, ContentBlock, ImageContent, NewSessionRequest, PromptRequest, SessionId,
+    CancelNotification, ContentBlock, NewSessionRequest, PromptRequest, SessionId,
     StopReason, TextContent,
 };
 use sacp::{Agent as SacpAgent, ConnectionTo};
@@ -36,6 +36,7 @@ use crate::session::broker::now_secs;
 use crate::session::registry::{ManagedSession, SessionRegistry};
 
 use super::client::spawn_sacp_client;
+use super::commands::handle_load_session as acp_handle_load_session;
 use super::images;
 use super::messages::ClientMessage;
 use super::model_poller::spawn_model_poller;
@@ -717,7 +718,7 @@ async fn handle_client_message(
             // Set loading flag to skip token accounting during session replay
             loading_flag.store(true, Ordering::Relaxed);
 
-            match super::handle_load_session(&cx, thread_id.clone()).await {
+            match acp_handle_load_session(&cx, thread_id.clone()).await {
                 Ok(()) => {
                     // LoadSession succeeded - the thread_id is now our active ACP session_id
                     let loaded_sid = SessionId::new(thread_id.clone());
@@ -757,4 +758,558 @@ async fn handle_client_message(
         }
 
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SSE Migration — new types and functions
+// ════════════════════════════════════════════════════════════════════════════
+
+/// SSE event that flows from the backend to the HTTP response stream.
+#[derive(Debug, Clone)]
+pub enum SseEvent {
+    /// A JSON frame string ready to be wrapped as an SSE event.
+    Text(String),
+    /// End the current SSE stream (close connection).
+    Close,
+}
+
+/// An SSE event stream that can be consumed by an axum handler to produce
+/// a `text/event-stream` response body.
+pub struct SseEventStream {
+    pub rx: mpsc::Receiver<SseEvent>,
+}
+
+/// Initialise the ACP session (spawn goose, register in registry) without any
+/// WebSocket.  Called lazily from the first `POST /sessions/{id}/input` when
+/// no managed session exists yet.
+pub async fn init_acp_session(
+    goose_bin: PathBuf,
+    workspace: PathBuf,
+    goose_path_root: PathBuf,
+    session_config_dir: PathBuf,
+    env_vars: Vec<(String, String)>,
+    model: Option<String>,
+    pool: SqlitePool,
+    session_id: String,
+    student_id: String,
+    _logs_dir: PathBuf,
+    system_prompt: Option<String>,
+    registry: Arc<SessionRegistry>,
+) -> Result<()> {
+    // Already initialised?
+    if registry.get(&session_id).await.is_some() {
+        return Ok(());
+    }
+
+    tokio::fs::create_dir_all(&goose_path_root).await.ok();
+
+    if let Some(ref prompt) = system_prompt {
+        let prompt_dir = goose_path_root.join("config").join("prompts");
+        tokio::fs::create_dir_all(&prompt_dir).await.ok();
+        tokio::fs::write(prompt_dir.join("system.md"), prompt)
+            .await
+            .ok();
+    }
+
+    // Spawn goose
+    let goose_cmd = format!("{} acp", goose_bin.display());
+    let mut cmd = tokio::process::Command::new("unshare");
+    let is_root = unsafe { libc::getuid() } == 0;
+    if is_root {
+        cmd.args([
+            "--mount", "--pid", "--fork", "sh", "-c", &goose_cmd,
+        ]);
+    } else {
+        cmd.args([
+            "--user", "--map-root-user", "--mount", "--pid", "--fork",
+            "sh", "-c", &goose_cmd,
+        ]);
+    }
+    cmd.current_dir(&workspace);
+    cmd.env_clear();
+    cmd.env("GOOSE_PATH_ROOT", goose_path_root.display().to_string());
+    for (k, v) in &env_vars {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+
+    tracing::info!(
+        session_id = %session_id,
+        model = ?model,
+        "📦 [GOOSE] Spawning ACP subprocess (SSE init)..."
+    );
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::Session(format!("failed to spawn goose: {e}"))
+    })?;
+
+    let pid = child.id().ok_or_else(|| {
+        AppError::Session("goose spawn produced no PID".to_string())
+    })?;
+
+    tracing::info!(session_id = %session_id, pid = pid, "✓ [GOOSE] Subprocess spawned (SSE init)");
+
+    let child_stdin = child.stdin.take().expect("stdin piped");
+    let child_stdout = child.stdout.take().expect("stdout piped");
+    let child_stderr = child.stderr.take().expect("stderr piped");
+
+    // Drain stderr
+    let sid_stderr = session_id.clone();
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let mut lines = tokio::io::BufReader::new(child_stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.contains("error") || line.contains("Error") || line.contains("ERROR") {
+                tracing::error!(target: "goose_stderr", session_id = %sid_stderr, "✗ {}", line);
+            } else if line.contains("warn") || line.contains("Warn") {
+                tracing::warn!(target: "goose_stderr", session_id = %sid_stderr, "⚠️  {}", line);
+            } else {
+                tracing::info!(target: "goose_stderr", session_id = %sid_stderr, "📋 {}", line);
+            }
+        }
+    });
+
+    let model_arc = Arc::new(Mutex::new(model.clone()));
+    let loading_flag = Arc::new(AtomicBool::new(false));
+
+    let (notif_tx_new, _notif_rx) =
+        mpsc::channel::<(Option<serde_json::Value>, Option<Vec<u8>>)>(128);
+    let notif_tx_shared = Arc::new(Mutex::new(notif_tx_new));
+
+    // Resolve provider
+    let provider = match &model {
+        Some(model_name) => {
+            match db_models::get_model_by_name(&pool, model_name).await {
+                Ok(Some(m)) => m.provider,
+                _ => None,
+            }
+        }
+        None => None,
+    };
+
+    let (cx, acp_session_id_holder, available_models_from_goose) = spawn_sacp_client(
+        child_stdin,
+        child_stdout,
+        workspace.clone(),
+        model.clone(),
+        provider,
+        notif_tx_shared.clone(),
+        pool.clone(),
+        student_id.clone(),
+        session_id.clone(),
+        loading_flag.clone(),
+        model_arc.clone(),
+    )
+    .await?;
+
+    let available_models_arc = Arc::new(Mutex::new(available_models_from_goose));
+
+    tracing::info!(session_id = %session_id, "✓ [SESSION] SSE-init ready");
+
+    spawn_model_poller(
+        session_config_dir.join("pending_model.txt"),
+        cx.clone(),
+        acp_session_id_holder.clone(),
+        session_id.clone(),
+        pool.clone(),
+        model_arc.clone(),
+        // Model poller ctrl_tx is a dummy channel since there's no persistent WS
+        {
+            let (tx, _) = mpsc::channel::<String>(1);
+            tx
+        },
+    );
+
+    let managed = ManagedSession::new(
+        cx.clone(),
+        child,
+        pid,
+        notif_tx_shared.clone(),
+        acp_session_id_holder.clone(),
+        model_arc,
+        available_models_arc,
+        loading_flag,
+        student_id.clone(),
+        pool.clone(),
+        registry.disconnect_timeout,
+        session_config_dir.clone(),
+    );
+    registry.register(session_id.clone(), managed).await;
+
+    Ok(())
+}
+
+/// Process user input for an existing managed session and return an SSE event
+/// stream.  This replaces the WS input loop's `Input` arm.
+pub async fn handle_input_sse(
+    session_id: &str,
+    registry: &Arc<SessionRegistry>,
+    data: String,
+    image: Option<String>,
+    mime_type: Option<String>,
+    pool: SqlitePool,
+    student_id: &str,
+    workspace: &PathBuf,
+    last_input_at: Arc<AtomicU64>,
+) -> Result<SseEventStream> {
+    let managed = registry
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+
+    // Check if goose child has exited
+    {
+        let mut child_guard = managed.child.lock().await;
+        if let Some(ref mut c) = *child_guard {
+            if let Ok(Some(_status)) = c.try_wait() {
+                // Goose is dead — clean up registry and tell the frontend
+                *child_guard = None;
+                drop(child_guard);
+                registry.remove(session_id).await;
+                tracing::info!(session_id = %session_id, "💀 [SSE] Goose dead — removed from registry");
+
+                let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
+                let frame = serde_json::json!({
+                    "type": "session_terminated",
+                    "reason": "goose_dead",
+                })
+                .to_string();
+                let _ = sse_tx.send(SseEvent::Text(frame)).await;
+                let _ = sse_tx.send(SseEvent::Close).await;
+                return Ok(SseEventStream { rx: sse_rx });
+            }
+        }
+    }
+
+    // Restriction gate
+    let restricted = db_students::get_student(&pool, student_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.restriction_status.is_some())
+        .unwrap_or(false);
+
+    if restricted {
+        let message = db_students::get_student(&pool, student_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.restriction_message)
+            .unwrap_or_else(|| {
+                "Your account has been restricted. Please contact your administrator.".to_string()
+            });
+        let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
+        let frame = serde_json::json!({"type": "restriction", "message": message}).to_string();
+        let _ = sse_tx.send(SseEvent::Text(frame)).await;
+        let _ = sse_tx.send(SseEvent::Close).await;
+        return Ok(SseEventStream { rx: sse_rx });
+    }
+
+    last_input_at.store(now_secs(), Ordering::Relaxed);
+    if data.trim().is_empty() && image.is_none() {
+        // Empty input — return an immediate close
+        let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
+        let _ = sse_tx.send(SseEvent::Close).await;
+        return Ok(SseEventStream { rx: sse_rx });
+    }
+
+    // Create the SSE channel for this request
+    let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(256);
+
+    // Create notification channel and redirect sacp callback
+    let (notif_tx_req, mut notif_rx_req) =
+        mpsc::channel::<(Option<serde_json::Value>, Option<Vec<u8>>)>(128);
+    *managed.notif_tx_shared.lock().await = notif_tx_req;
+
+    // Spawn notification forwarding task
+    let sse_tx_notif = sse_tx.clone();
+    tokio::spawn(async move {
+        while let Some((json_frame, _binary_frame)) = notif_rx_req.recv().await {
+            if let Some(j) = json_frame {
+                if let Ok(text) = serde_json::to_string(&j) {
+                    if sse_tx_notif.send(SseEvent::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Send chat_start
+    let _ = sse_tx
+        .send(SseEvent::Text(r#"{"type":"chat_start"}"#.to_string()))
+        .await;
+
+    // Build content blocks
+    let mut content_blocks = Vec::new();
+    if !data.trim().is_empty() {
+        content_blocks.push(ContentBlock::Text(TextContent::new(data.clone())));
+    }
+    if let Some(img_data) = image {
+        if let Some((base64, parsed_mime)) = images::parse_image_data(&img_data) {
+            let actual_mime = mime_type.unwrap_or(parsed_mime);
+            if let Some(img_content) = images::create_image_content(&base64, &actual_mime) {
+                content_blocks.push(ContentBlock::Image(img_content));
+            }
+        }
+    }
+
+    // Spawn prompt task
+    let cx_prompt = managed.cx.clone();
+    let sid_holder_prompt = managed.acp_session_id.clone();
+    let sse_tx_prompt = sse_tx.clone();
+    let session_id_for_prompt = session_id.to_string();
+    let workspace_for_prompt = workspace.clone();
+    let pool_for_prompt = pool.clone();
+
+    tokio::spawn(async move {
+        let sid_prompt = {
+            let mut holder = sid_holder_prompt.lock().await;
+            if let Some(existing_sid) = holder.as_ref() {
+                existing_sid.clone()
+            } else {
+                // First prompt — create NewSession
+                let provider = {
+                    let model_name = db_sess::get_session(&pool_for_prompt, &session_id_for_prompt)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.model);
+                    match model_name {
+                        Some(ref mn) => {
+                            db_models::get_model_by_name(&pool_for_prompt, mn)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|m| m.provider)
+                        }
+                        None => None,
+                    }
+                };
+                let mut nsr = NewSessionRequest::new(&workspace_for_prompt);
+                if let Some(ref provider) = provider {
+                    let mut meta = serde_json::Map::new();
+                    meta.insert("provider".to_string(), serde_json::Value::String(provider.clone()));
+                    nsr = nsr.meta(meta);
+                }
+                match cx_prompt.send_request(nsr).block_task().await {
+                    Ok(new_sess_resp) => {
+                        let new_sid = new_sess_resp.session_id.clone();
+                        let frame = serde_json::json!({
+                            "type": "session_created",
+                            "session_id": new_sid.0,
+                        })
+                        .to_string();
+                        let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
+                        *holder = Some(new_sid.clone());
+                        new_sid
+                    }
+                    Err(e) => {
+                        let frame = serde_json::json!({
+                            "type": "chat_error",
+                            "error": format!("Failed to create session: {}", e),
+                        })
+                        .to_string();
+                        let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
+                        let _ = sse_tx_prompt.send(SseEvent::Close).await;
+                        return;
+                    }
+                }
+            }
+        };
+
+        let resp = cx_prompt
+            .send_request(PromptRequest::new(sid_prompt, content_blocks))
+            .block_task()
+            .await;
+
+        // Token accounting (same as WS path)
+        if let Ok(ref r) = resp {
+            if let Some(usage) = &r.usage {
+                let input_tokens = usage.input_tokens as i64;
+                let output_tokens = usage.output_tokens as i64;
+                if input_tokens + output_tokens > 0 {
+                    let pool_clone = pool_for_prompt.clone();
+                    let sid_clone = session_id_for_prompt.clone();
+                    let student_id_clone = match db_sess::get_session(&pool_for_prompt, &session_id_for_prompt).await {
+                        Ok(Some(s)) => s.student_id,
+                        _ => String::new(),
+                    };
+                    let model_name_clone = db_sess::get_session(&pool_for_prompt, &session_id_for_prompt)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.model)
+                        .unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string());
+                    if !student_id_clone.is_empty() {
+                        tokio::spawn(async move {
+                            use crate::db::token_usage as db_tokens;
+                            let tokens = db_tokens::TurnTokens {
+                                model: model_name_clone.clone(),
+                                input_tokens,
+                                output_tokens,
+                                cache_creation_input_tokens: 0,
+                                cache_read_input_tokens: 0,
+                            };
+                            let _ = db_tokens::record_turn(&pool_clone, &sid_clone, &tokens).await;
+                            use super::token_calculator;
+                            let _ = token_calculator::calculate_and_deduct(
+                                &pool_clone, &student_id_clone, &sid_clone,
+                                &model_name_clone, input_tokens, output_tokens,
+                            ).await;
+                        });
+                    }
+                }
+            }
+        }
+
+        let frame = match resp {
+            Ok(r) => {
+                match r.stop_reason {
+                    StopReason::EndTurn | StopReason::Cancelled => {
+                        r#"{"type":"chat_end"}"#.to_string()
+                    }
+                    other => serde_json::json!({
+                        "type": "chat_error",
+                        "error": format!("stop_reason: {other:?}")
+                    })
+                    .to_string(),
+                }
+            }
+            Err(e) => {
+                serde_json::json!({
+                    "type": "chat_error",
+                    "error": e.to_string()
+                })
+                .to_string()
+            }
+        };
+        let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
+        let _ = sse_tx_prompt.send(SseEvent::Close).await;
+    });
+
+    Ok(SseEventStream { rx: sse_rx })
+}
+
+/// Cancel the current in-flight prompt for a managed session.
+pub async fn handle_cancel(
+    session_id: &str,
+    registry: &Arc<SessionRegistry>,
+) -> Result<()> {
+    let managed = registry
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+
+    let Some(sid) = managed.acp_session_id.lock().await.clone() else {
+        return Ok(()); // No active session to cancel — no-op
+    };
+
+    if let Err(e) = managed.cx.send_notification(CancelNotification::new(sid)) {
+        tracing::warn!(session_id = %session_id, error = %e, "cancel notification failed");
+    } else {
+        tracing::info!(session_id = %session_id, "✓ [SSE] Cancel sent");
+    }
+
+    Ok(())
+}
+
+/// Load a thread and replay its history as an SSE event stream.
+pub async fn handle_replay_sse(
+    session_id: &str,
+    thread_id: &str,
+    registry: &Arc<SessionRegistry>,
+    pool: SqlitePool,
+    session_config_dir: PathBuf,
+) -> Result<SseEventStream> {
+    let managed = registry
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+
+    let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(256);
+
+    // Fresh notification channel for this replay
+    let (notif_tx_req, mut notif_rx_req) =
+        mpsc::channel::<(Option<serde_json::Value>, Option<Vec<u8>>)>(128);
+    *managed.notif_tx_shared.lock().await = notif_tx_req;
+
+    // Forward notifications to SSE
+    let sse_tx_notif = sse_tx.clone();
+    tokio::spawn(async move {
+        while let Some((json_frame, _binary_frame)) = notif_rx_req.recv().await {
+            if let Some(j) = json_frame {
+                if let Ok(text) = serde_json::to_string(&j) {
+                    if sse_tx_notif.send(SseEvent::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Restart model poller so pending model switches work during replay
+    spawn_model_poller(
+        session_config_dir.join("pending_model.txt"),
+        managed.cx.clone(),
+        managed.acp_session_id.clone(),
+        session_id.to_string(),
+        pool.clone(),
+        managed.model_arc.clone(),
+        {
+            let (tx, _) = mpsc::channel::<String>(1);
+            tx
+        },
+    );
+
+    let cx = managed.cx.clone();
+    let loading_flag = managed.loading_flag.clone();
+    let acp_sid_holder = managed.acp_session_id.clone();
+    let tid = thread_id.to_string();
+
+    let sse_tx_load = sse_tx.clone();
+    tokio::spawn(async move {
+        loading_flag.store(true, Ordering::Relaxed);
+
+        match acp_handle_load_session(&cx, tid.clone()).await {
+            Ok(()) => {
+                let loaded_sid = SessionId::new(tid.clone());
+                *acp_sid_holder.lock().await = Some(loaded_sid);
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                loading_flag.store(false, Ordering::Relaxed);
+
+                let frame = serde_json::json!({
+                    "type": "load_session_complete",
+                    "thread_id": tid,
+                })
+                .to_string();
+                let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
+            }
+            Err(e) => {
+                loading_flag.store(false, Ordering::Relaxed);
+                let frame = serde_json::json!({
+                    "type": "error",
+                    "message": format!("Failed to load session: {}", e),
+                })
+                .to_string();
+                let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
+            }
+        }
+        let _ = sse_tx_load.send(SseEvent::Close).await;
+    });
+
+    Ok(SseEventStream { rx: sse_rx })
 }
