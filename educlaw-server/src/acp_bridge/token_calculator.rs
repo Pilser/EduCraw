@@ -3,8 +3,7 @@
 // Token calculation module for handling input/output token deductions
 // with separate multipliers applied.
 
-use sqlx::SqlitePool;
-use crate::db::{models as db_models, students as db_students, token_usage as db_tokens};
+use crate::db::backend::DbBackend;
 
 /// Calculate and record token deduction with separate input/output multipliers.
 /// 
@@ -16,7 +15,7 @@ use crate::db::{models as db_models, students as db_students, token_usage as db_
 /// 
 /// Note: Goose sends per-turn token counts, not cumulative totals.
 pub async fn calculate_and_deduct(
-    pool: &SqlitePool,
+    backend: &dyn DbBackend,
     student_id: &str,
     session_id: &str,
     model_name: &str,
@@ -33,7 +32,7 @@ pub async fn calculate_and_deduct(
     }
 
     // Get model multipliers (input and output)
-    let (input_multiplier, output_multiplier) = match db_models::get_model_multipliers(pool, model_name).await {
+    let (input_multiplier, output_multiplier) = match backend.get_model_multipliers(model_name).await {
         Ok((im, om)) => (im, om),
         Err(e) => {
             tracing::warn!(
@@ -74,14 +73,13 @@ pub async fn calculate_and_deduct(
     }
 
     // Get current balance before deduction
-    let balance_before = db_students::get_token_balance(pool, student_id).await?;
+    let balance_before = backend.get_token_balance(student_id).await?;
 
     // Deduct tokens (can go negative)
-    let balance_after = db_students::deduct_tokens(pool, student_id, total_tokens_deducted).await?;
+    let balance_after = backend.deduct_tokens(student_id, total_tokens_deducted).await?;
 
     // Record deduction in audit log with full breakdown
-    db_tokens::record_deduction(
-        pool,
+    backend.record_deduction(
         student_id,
         session_id,
         model_name,

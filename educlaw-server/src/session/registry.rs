@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::db::backend::DbBackend;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
@@ -43,7 +44,7 @@ pub struct ManagedSession {
 
     // Session metadata
     pub student_id: String,
-    pub pool: sqlx::SqlitePool,
+    pub backend: Arc<dyn DbBackend>,
 
     // Path needed to restart the model-switch poller on reconnect
     pub session_config_dir: PathBuf,
@@ -63,7 +64,7 @@ impl ManagedSession {
         available_models_arc: Arc<Mutex<Vec<String>>>,
         loading_flag: Arc<AtomicBool>,
         student_id: String,
-        pool: sqlx::SqlitePool,
+        backend: Arc<dyn DbBackend>,
         disconnect_timeout: Duration,
         session_config_dir: PathBuf,
     ) -> Self {
@@ -80,7 +81,7 @@ impl ManagedSession {
             disconnected_at: Arc::new(Mutex::new(None)),
             disconnect_timeout,
             student_id,
-            pool,
+            backend,
             session_config_dir,
         }
     }

@@ -26,7 +26,6 @@ use crate::acp_bridge::{
     handle_export_session, handle_fork_session, handle_import_session, handle_list_sessions,
     init_acp_session, ForkSessionResult, ImportSessionResponse, SessionListItem,
 };
-use crate::db::sessions as db_sess;
 use crate::error::{AppError, Result};
 use crate::session::dirs::SessionDirs;
 use crate::session::registry::ManagedSession;
@@ -57,7 +56,7 @@ async fn get_managed_session(
     }
 
     // Session not in registry — spawn goose and register it (lazy init)
-    let session = db_sess::get_session(&state.pool, session_id)
+    let session = state.backend.get_session(session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
@@ -115,7 +114,7 @@ async fn get_managed_session(
         dirs.config.clone(),
         env_vars,
         model,
-        state.pool.clone(),
+        state.backend.clone(),
         session_id.to_string(),
         student_id,
         logs_dir,

@@ -2,7 +2,39 @@
 
 ## Context
 
-The HelixDB backend is fully wired and functional. This doc guides the removal of all SQLite code from `educlaw-server`. After this, `educlaw-helix` is the **only** database backend.
+The HelixDB backend is fully wired and functional. All API handlers and `acp_bridge/` modules (except the unused `stats.rs`) have been migrated to use `DbBackend`. This doc guides the removal of all remaining SQLite code from `educlaw-server`. After this, `educlaw-helix` is the **only** database backend.
+
+---
+
+## Current State (Pre-Removal Audit)
+
+### ✅ Already Migrated to DbBackend
+- All API handlers in `api/*.rs` — use `state.backend.*()`
+- `acp_bridge/client.rs` — uses `Arc<dyn DbBackend>`
+- `acp_bridge/session.rs` — uses `Arc<dyn DbBackend>`
+- `acp_bridge/token_calculator.rs` — uses `&dyn DbBackend`
+- `acp_bridge/model_poller.rs` — uses `Arc<dyn DbBackend>`
+- `acp_bridge/notifications.rs` — no DB calls (pure frame conversion)
+- `acp_bridge/commands.rs` — no DB calls (pure ACP forwarding)
+- `acp_bridge/permissions.rs` — no DB calls (pure logic)
+- `acp_bridge/images.rs` — no DB calls (pure image parsing)
+- `acp_bridge/custom_requests.rs` — no DB calls (re-exports)
+
+### ⚠️ Remaining SQLite References (All Will Be Removed)
+
+| Location | What | Action |
+|----------|------|--------|
+| `db/*.rs` (all 9 files) | Entire SQLite module directory | **Delete entire directory** |
+| `main.rs:18` | `use sqlx::sqlite::SqlitePoolOptions` | Remove import + pool creation |
+| `api/mod.rs:15,27,45` | `SqlitePool` in `AppState` | Remove `pool` field from `AppState` |
+| `db/backend.rs` | `SqliteBackend` impl (~500 lines) | Delete entire file, keep trait re-export |
+| `error.rs:14` | `Db(#[from] sqlx::Error)` | Replace with Helix error variant |
+| `api/admin.rs:1265` | `#[derive(Serialize, sqlx::FromRow)]` on unused `TokenDeductionRecord` | Remove `sqlx::FromRow` (struct is dead code — function uses `backend.deduction_history()`) |
+| `acp_bridge/stats.rs` | Full file uses `SqlitePool` directly | **Delete file** — commented out in `mod.rs`, never compiled |
+| `acp_bridge/client.rs:121` | Commented-out `pool.clone()` | Remove comment |
+
+### ✅ No Remaining `state.pool` Usage
+- Grep for `state\.pool` in `api/` returns **zero matches** — all migrated.
 
 ---
 
@@ -53,45 +85,34 @@ sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "mac
 
 Delete these files entirely:
 ```
-educlaw-server/src/db/schema.rs      # SQLite DDL migrations
-educlaw-server/src/db/models.rs      # SQLite model queries
-educlaw-server/src/db/sessions.rs    # SQLite session queries
-educlaw-server/src/db/students.rs    # SQLite student queries
-educlaw-server/src/db/cohorts.rs     # SQLite cohort queries
-educlaw-server/src/db/subjects.rs    # SQLite subject queries
-educlaw-server/src/db/assignments.rs # SQLite assignment queries (if still exists)
-educlaw-server/src/db/token_usage.rs # SQLite token usage queries
-educlaw-server/src/db/token_codes.rs # SQLite token code queries
-```
+educlaw-server/src/db/                         # DELETE ENTIRE DIRECTORY
+├── mod.rs
+├── schema.rs      # SQLite DDL migrations
+├── models.rs      # SQLite model queries
+├── sessions.rs    # SQLite session queries
+├── students.rs    # SQLite student queries
+├── cohorts.rs     # SQLite cohort queries
+├── subjects.rs    # SQLite subject queries
+├── assignments.rs # SQLite assignment queries (if still exists)
+├── token_usage.rs # SQLite token usage queries
+├── token_codes.rs # SQLite token code queries
+└── backend.rs     # SqliteBackend impl + trait (trait re-exported elsewhere)
 
-Delete the `educlaw-server/src/db/` directory entirely.
+educlaw-server/src/acp_bridge/stats.rs         # DELETE — unused, commented out in mod.rs
+```
 
 ---
 
 ## Phase 3: Clean Up `db/backend.rs`
 
-This file currently contains:
-1. `DbBackend` trait (KEEP — but move to a cleaner location)
-2. `SqliteBackend` impl (DELETE — ~500 lines)
-3. `HelixBackend` wrapper (DELETE — no longer needed, use `educlaw_helix::HelixClient` directly)
-4. Type conversion functions (KEEP — but simplify)
+The entire `db/backend.rs` file is **deleted** (part of Phase 2 directory removal).
 
-**Replace the entire file** with just the trait and a thin adapter:
+The `DbBackend` trait lives in `educlaw-helix` and is used directly. No wrapper or adapter needed.
 
+If any file imports `crate::db::backend::DbBackend`, change to:
 ```rust
-// educlaw-server/src/backend.rs
-use async_trait::async_trait;
-use educlaw_helix::{HelixClient, DbBackend as HelixDb, Result as HelixResult};
-use educlaw_helix::{Model, Student, Session, Cohort, Subject, TokenCode, TokenDeduction, StudentTotals, SessionTotals, TurnTokens, RedeemResult};
-
-// Re-export the trait so API handlers use this path
-pub use educlaw_helix::DbBackend;
-
-// Type aliases for local types if any API handlers still reference them
-pub type BackendResult<T> = Result<T, crate::error::AppError>;
+use educlaw_helix::DbBackend;
 ```
-
-Since `educlaw_helix::HelixClient` already implements `educlaw_helix::DbBackend`, you don't need `SqliteBackend` or `HelixBackend` wrapper anymore. Use `HelixClient` directly.
 
 ---
 
@@ -148,18 +169,17 @@ Update `new()` constructor to not take `pool`.
 
 ---
 
-## Phase 6: Fix Remaining `state.pool` References
+## Phase 6: Fix Remaining `sqlx` References in Non-DB Files
 
-These files still reference `state.pool` directly (not through `DbBackend`):
+These files have residual `sqlx` references that must be cleaned up:
 
 | File | Line | Usage | Fix |
 |------|------|-------|-----|
-| `api/sse.rs` | 66, 135, 157, 206 | `db_sess::get_session(&state.pool, ...)` | Use `state.backend.get_session()` |
-| `api/threads.rs` | 60, 118 | `db_sess::get_session(&state.pool, ...)` | Use `state.backend.get_session()` |
-| `api/files.rs` | 199 | `students::get_student(&state.pool, ...)` | Use `state.backend.get_student()` |
-| `api/sessions.rs` | 252 | `state.pool.clone()` for watchdog | Remove — watchdog doesn't need DB, or pass backend |
+| `api/admin.rs` | 1265 | `#[derive(Serialize, sqlx::FromRow)]` on `TokenDeductionRecord` | Remove `sqlx::FromRow` — struct is dead code, function uses `backend.deduction_history()` |
+| `error.rs` | 14 | `Db(#[from] sqlx::Error)` | Replace with `Helix(#[from] educlaw_helix::HelixError)` or similar |
+| `acp_bridge/client.rs` | 121 | Commented-out `// pool.clone(),` | Remove the comment |
 
-Update each to use `state.backend.method()` instead.
+**No `state.pool` references remain** — grep returns zero matches in `api/`.
 
 ---
 
@@ -169,6 +189,8 @@ After deleting modules, fix import errors:
 
 ```rust
 // DELETE from any file:
+use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use crate::db::students;
 use crate::db::sessions;
 use crate::db::models;
@@ -177,20 +199,24 @@ use crate::db::subjects;
 use crate::db::token_codes;
 use crate::db::token_usage;
 use crate::db::schema;
+use crate::db::backend::{DbBackend, SqliteBackend, HelixBackend};
 ```
 
-Replace with:
-```rust
-use crate::db::backend::DbBackend;
-```
+Affected files:
+- `main.rs` — remove `SqlitePoolOptions`, `init_db`, `SqliteBackend` imports
+- `api/mod.rs` — remove `SqlitePool` import and `pool` field from `AppState`
+- `error.rs` — replace `sqlx::Error` with Helix error type
+- `api/admin.rs` — remove `sqlx::FromRow` from `TokenDeductionRecord` derive
 
 ---
 
 ## Phase 8: Update `mod.rs` Files
 
-**`educlaw-server/src/db/mod.rs`** — DELETE the entire file (directory is gone).
+**`educlaw-server/src/db/mod.rs`** — DELETED (directory is gone).
 
 **`educlaw-server/src/main.rs`** — Remove `mod db;` declaration.
+
+**`educlaw-server/src/acp_bridge/mod.rs`** — Remove `mod stats;` line (already commented out, delete the comment too).
 
 ---
 
@@ -217,23 +243,34 @@ All must pass with NO `--features` flag (helix is now the default and only backe
 ```
 educlaw-server/src/
 ├── main.rs              # No SQLite, only HelixClient init
-├── error.rs             # AppError with From<HelixError>
+├── error.rs             # AppError with Helix error variant (no sqlx)
 ├── auth.rs              # Unchanged
-├── backend.rs           # Re-exports educlaw_helix::DbBackend
 ├── api/
-│   ├── mod.rs           # AppState without pool
+│   ├── mod.rs           # AppState without pool field
 │   ├── common.rs        # AppState struct
-│   ├── admin.rs         # Uses state.backend.*
+│   ├── admin.rs         # Uses state.backend.*, no sqlx::FromRow
 │   ├── students.rs      # Uses state.backend.*
 │   ├── sessions.rs      # Uses state.backend.*
 │   ├── auth_routes.rs   # Uses state.backend.*
 │   ├── threads.rs       # Uses state.backend.*
 │   ├── sse.rs           # Uses state.backend.*
 │   └── files.rs         # Uses state.backend.*
-├── acp_bridge/          # Unchanged (calls backend for token recording)
+├── acp_bridge/
+│   ├── mod.rs           # No stats module
+│   ├── client.rs        # Uses Arc<dyn DbBackend>
+│   ├── session.rs       # Uses Arc<dyn DbBackend>
+│   ├── token_calculator.rs  # Uses &dyn DbBackend
+│   ├── model_poller.rs  # Uses Arc<dyn DbBackend>
+│   ├── notifications.rs # Pure frame conversion (no DB)
+│   ├── commands.rs      # Pure ACP forwarding (no DB)
+│   ├── permissions.rs   # Pure logic (no DB)
+│   ├── images.rs        # Pure image parsing (no DB)
+│   └── custom_requests.rs  # Re-exports (no DB)
 ├── session/             # Unchanged
 └── security/            # Unchanged
 ```
+
+No `db/` directory. No `stats.rs`. No `sqlx` anywhere.
 
 ---
 
@@ -261,12 +298,14 @@ BIND_ADDR=0.0.0.0:8080
 
 - [ ] `cargo check` passes with no features flag
 - [ ] `cargo build --release` produces binary
-- [ ] Server starts with `DB_BACKEND=helix` in `.env`
+- [ ] Server starts with HelixDB env vars
 - [ ] All API routes work (test with curl or frontend)
 - [ ] Session creation works (creates Session node + edges in HelixDB)
 - [ ] Token recording works during active sessions
 - [ ] Admin panel loads students, cohorts, subjects, models
 - [ ] Student login works
 - [ ] Token code redemption works
-- [ ] No `sqlx`, `SqlitePool`, or `DATABASE_URL` references remain in code
+- [ ] **Zero** `sqlx`, `SqlitePool`, `sqlite`, or `DATABASE_URL` references remain in code
+- [ ] **Zero** `db/` directory exists
+- [ ] **Zero** `acp_bridge/stats.rs` exists
 - [ ] `educraw.db` file is no longer created or used

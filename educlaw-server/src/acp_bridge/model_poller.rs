@@ -14,10 +14,9 @@ use sacp::schema::{
     SessionConfigId, SessionConfigOptionValue, SessionId, SetSessionConfigOptionRequest,
 };
 use sacp::{Agent as SacpAgent, ConnectionTo};
-use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
-use crate::db::{models as db_models, sessions as db_sess, students as db_students};
+use crate::db::backend::DbBackend;
 
 /// Spawns the model-switch poller as a fire-and-forget tokio task.
 ///
@@ -32,7 +31,7 @@ pub fn spawn_model_poller(
     cx: ConnectionTo<SacpAgent>,
     acp_session_id_holder: Arc<tokio::sync::Mutex<Option<SessionId>>>,
     session_id: String,
-    pool: SqlitePool,
+    backend: Arc<dyn DbBackend>,
     model_arc: Arc<tokio::sync::Mutex<Option<String>>>,
     ctrl_tx: mpsc::Sender<String>,
 ) {
@@ -63,9 +62,9 @@ pub fn spawn_model_poller(
             };
 
             // Validate student is allowed to use this model (permission enforcement)
-            let allowed_to_switch = match db_sess::get_session(&pool, &session_id).await {
+            let allowed_to_switch = match backend.get_session(&session_id).await {
                 Ok(Some(sess)) => {
-                    match crate::db::models::models_for_student(&pool, &sess.student_id).await {
+                    match backend.models_for_student(&sess.student_id).await {
                         Ok(allowed_models) => {
                             if allowed_models.contains(&model_name) {
                                 tracing::info!(
@@ -114,7 +113,7 @@ pub fn spawn_model_poller(
 
             // Look up full model from DB (provider + thinking_params)
             let (provider_id, thinking_params) =
-                match db_models::get_model_by_name(&pool, &model_name).await {
+                match backend.get_model_by_name(&model_name).await {
                     Ok(Some(model)) => {
                         let mut thinking = model.parsed_thinking_params();
 
@@ -214,7 +213,7 @@ pub fn spawn_model_poller(
                     *model_arc.lock().await = Some(model_name.clone());
 
                     if let Err(e) =
-                        db_sess::set_session_model(&pool, &session_id, &model_name).await
+                        backend.set_session_model(&session_id, &model_name).await
                     {
                         tracing::warn!(
                             session_id = %session_id,
@@ -224,9 +223,9 @@ pub fn spawn_model_poller(
                     }
 
                     // Save to student record for persistence across logins
-                    if let Ok(Some(sess)) = db_sess::get_session(&pool, &session_id).await {
+                    if let Ok(Some(sess)) = backend.get_session(&session_id).await {
                         if let Err(e) =
-                            db_students::set_last_model(&pool, &sess.student_id, &model_name).await
+                            backend.set_last_model(&sess.student_id, &model_name).await
                         {
                             tracing::warn!(
                                 student_id = %sess.student_id,

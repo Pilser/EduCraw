@@ -16,11 +16,11 @@ use sacp::schema::{
 };
 use sacp::{Agent as SacpAgent, ByteStreams, Client, ConnectionTo};
 use serde_json::Value;
-use sqlx::SqlitePool;
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+use crate::db::backend::DbBackend;
 use crate::error::{AppError, Result};
 
 use super::notifications::notification_to_frames;
@@ -36,7 +36,7 @@ pub async fn spawn_sacp_client(
     model: Option<String>,
     provider: Option<String>,
     notif_tx: Arc<Mutex<mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,
-    pool: SqlitePool,
+    backend: Arc<dyn DbBackend>,
     student_id: String,
     session_id: String,
     loading_flag: Arc<AtomicBool>,
@@ -79,7 +79,7 @@ pub async fn spawn_sacp_client(
             .builder()
             .on_receive_notification(
                 {
-                    let pool = pool.clone();
+                    let _backend = backend.clone();
                     let student_id = student_id.clone();
                     let tx = notif_tx;
                     let educlaw_session_id = educlaw_session_id.clone();

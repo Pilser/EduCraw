@@ -15,10 +15,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::SqlitePool;
 use tokio::time::sleep;
 
-use crate::db::sessions;
+use crate::db::backend::DbBackend;
 use crate::session::{
     broker::{now_secs, SessionBroker},
     dirs::cleanup_session_dir,
@@ -46,7 +45,7 @@ pub struct WatchdogConfig {
 pub async fn run_watchdog(
     config: WatchdogConfig,
     broker: Arc<SessionBroker>,
-    pool: SqlitePool,
+    backend: Arc<dyn DbBackend>,
 ) {
     let mut warned = false;
 
@@ -63,7 +62,7 @@ pub async fn run_watchdog(
 
         // Hard timeout: terminate
         if elapsed >= config.idle_timeout {
-            let _ = sessions::set_session_state(&pool, &config.session_id, "ended").await;
+            let _ = backend.set_session_state(&config.session_id, "ended").await;
 
             broker
                 .write_to_pty(
@@ -76,7 +75,7 @@ pub async fn run_watchdog(
             broker.remove_entry(&config.session_id).await;
 
             // Kill claw's process tree (if it exists)
-            if let Ok(Some(sess)) = sessions::get_session(&pool, &config.session_id).await {
+            if let Ok(Some(sess)) = backend.get_session(&config.session_id).await {
                 if let Some(pid) = sess.namespace_pid {
                     kill_process_tree(pid, 5).await;
                 }
@@ -137,7 +136,7 @@ pub async fn run_watchdog(
         }
 
         // Check if an external DELETE already ended the session in DB.
-        match sessions::get_session(&pool, &config.session_id).await {
+        match backend.get_session(&config.session_id).await {
             Ok(Some(s)) if s.state == "ended" => break,
             Ok(None) => break,
             _ => {}

@@ -249,7 +249,7 @@ async fn create_session(
             registry: Some(Arc::clone(&state.registry)),
         },
         Arc::clone(&state.broker),
-        state.pool.clone(),
+        state.backend.clone(),
     ));
 
     let token = state.auth.sign_session_token(

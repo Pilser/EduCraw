@@ -25,7 +25,6 @@ use crate::acp_bridge::{
     handle_cancel, handle_input_sse, handle_replay_sse, init_acp_session, SseEvent, SseEventStream,
 };
 use crate::auth::bearer_token;
-use crate::db::sessions as db_sess;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 use crate::session::dirs::SessionDirs;
@@ -63,7 +62,7 @@ async fn session_input(
         return Err(AppError::Unauthorized);
     }
 
-    let session = db_sess::get_session(&state.pool, &session_id)
+    let session = state.backend.get_session(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
@@ -132,7 +131,7 @@ async fn session_input(
             dirs.config.clone(),
             env_vars,
             model,
-            state.pool.clone(),
+            state.backend.clone(),
             session_id.clone(),
             student_id.clone(),
             logs_dir,
@@ -154,7 +153,7 @@ async fn session_input(
         body.data,
         body.image,
         body.mime_type,
-        state.pool.clone(),
+        state.backend.clone(),
         &student_id,
         &dirs.merged,
         last_input_at,
@@ -203,7 +202,7 @@ async fn session_replay(
         &session_id,
         &thread_id,
         &state.registry,
-        state.pool.clone(),
+        state.backend.clone(),
         dirs.config.clone(),
     )
     .await?;

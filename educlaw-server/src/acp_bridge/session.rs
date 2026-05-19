@@ -17,10 +17,10 @@ use sacp::schema::{
     CancelNotification, ContentBlock, NewSessionRequest, PromptRequest, SessionId,
     StopReason, TextContent,
 };
-use sqlx::SqlitePool;
 use tokio::sync::{mpsc, Mutex};
 
-use crate::db::{models as db_models, sessions as db_sess, students as db_students};
+use crate::db::backend::DbBackend;
+use crate::db::token_usage::TurnTokens;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 use crate::session::registry::{ManagedSession, SessionRegistry};
@@ -29,6 +29,7 @@ use super::client::spawn_sacp_client;
 use super::commands::handle_load_session as acp_handle_load_session;
 use super::images;
 use super::model_poller::spawn_model_poller;
+use super::token_calculator;
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -60,7 +61,7 @@ pub async fn init_acp_session(
     session_config_dir: PathBuf,
     env_vars: Vec<(String, String)>,
     model: Option<String>,
-    pool: SqlitePool,
+    backend: Arc<dyn DbBackend>,
     session_id: String,
     student_id: String,
     _logs_dir: PathBuf,
@@ -163,7 +164,7 @@ pub async fn init_acp_session(
     // Resolve provider
     let provider = match &model {
         Some(model_name) => {
-            match db_models::get_model_by_name(&pool, model_name).await {
+            match backend.get_model_by_name(model_name).await {
                 Ok(Some(m)) => m.provider,
                 _ => None,
             }
@@ -178,7 +179,7 @@ pub async fn init_acp_session(
         model.clone(),
         provider,
         notif_tx_shared.clone(),
-        pool.clone(),
+        backend.clone(),
         student_id.clone(),
         session_id.clone(),
         loading_flag.clone(),
@@ -195,7 +196,7 @@ pub async fn init_acp_session(
         cx.clone(),
         acp_session_id_holder.clone(),
         session_id.clone(),
-        pool.clone(),
+        backend.clone(),
         model_arc.clone(),
         // Model poller ctrl_tx is a dummy channel — no persistent connection needed
         {
@@ -214,7 +215,7 @@ pub async fn init_acp_session(
         available_models_arc,
         loading_flag,
         student_id.clone(),
-        pool.clone(),
+        backend.clone(),
         registry.disconnect_timeout,
         session_config_dir.clone(),
     );
@@ -231,7 +232,7 @@ pub async fn handle_input_sse(
     data: String,
     image: Option<String>,
     mime_type: Option<String>,
-    pool: SqlitePool,
+    backend: Arc<dyn DbBackend>,
     student_id: &str,
     workspace: &PathBuf,
     last_input_at: Arc<AtomicU64>,
@@ -266,7 +267,7 @@ pub async fn handle_input_sse(
     }
 
     // Restriction gate
-    let restricted = db_students::get_student(&pool, student_id)
+    let restricted = backend.get_student(student_id)
         .await
         .ok()
         .flatten()
@@ -274,7 +275,7 @@ pub async fn handle_input_sse(
         .unwrap_or(false);
 
     if restricted {
-        let message = db_students::get_student(&pool, student_id)
+        let message = backend.get_student(student_id)
             .await
             .ok()
             .flatten()
@@ -344,7 +345,7 @@ pub async fn handle_input_sse(
     let sse_tx_prompt = sse_tx.clone();
     let session_id_for_prompt = session_id.to_string();
     let workspace_for_prompt = workspace.clone();
-    let pool_for_prompt = pool.clone();
+    let backend_for_prompt = backend.clone();
 
     tokio::spawn(async move {
         let sid_prompt = {
@@ -354,14 +355,14 @@ pub async fn handle_input_sse(
             } else {
                 // First prompt — create NewSession
                 let provider = {
-                    let model_name = db_sess::get_session(&pool_for_prompt, &session_id_for_prompt)
+                    let model_name = backend_for_prompt.get_session(&session_id_for_prompt)
                         .await
                         .ok()
                         .flatten()
                         .and_then(|s| s.model);
                     match model_name {
                         Some(ref mn) => {
-                            db_models::get_model_by_name(&pool_for_prompt, mn)
+                            backend_for_prompt.get_model_by_name(mn)
                                 .await
                                 .ok()
                                 .flatten()
@@ -413,13 +414,13 @@ pub async fn handle_input_sse(
                 let input_tokens = usage.input_tokens as i64;
                 let output_tokens = usage.output_tokens as i64;
                 if input_tokens + output_tokens > 0 {
-                    let pool_clone = pool_for_prompt.clone();
+                    let backend_clone = backend_for_prompt.clone();
                     let sid_clone = session_id_for_prompt.clone();
-                    let student_id_clone = match db_sess::get_session(&pool_for_prompt, &session_id_for_prompt).await {
+                    let student_id_clone = match backend_for_prompt.get_session(&session_id_for_prompt).await {
                         Ok(Some(s)) => s.student_id,
                         _ => String::new(),
                     };
-                    let model_name_clone = db_sess::get_session(&pool_for_prompt, &session_id_for_prompt)
+                    let model_name_clone = backend_for_prompt.get_session(&session_id_for_prompt)
                         .await
                         .ok()
                         .flatten()
@@ -427,18 +428,16 @@ pub async fn handle_input_sse(
                         .unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string());
                     if !student_id_clone.is_empty() {
                         tokio::spawn(async move {
-                            use crate::db::token_usage as db_tokens;
-                            let tokens = db_tokens::TurnTokens {
+                            let tokens = TurnTokens {
                                 model: model_name_clone.clone(),
                                 input_tokens,
                                 output_tokens,
                                 cache_creation_input_tokens: 0,
                                 cache_read_input_tokens: 0,
                             };
-                            let _ = db_tokens::record_turn(&pool_clone, &sid_clone, &tokens).await;
-                            use super::token_calculator;
+                            let _ = backend_clone.record_turn(&sid_clone, &tokens).await;
                             let _ = token_calculator::calculate_and_deduct(
-                                &pool_clone, &student_id_clone, &sid_clone,
+                                &*backend_clone, &student_id_clone, &sid_clone,
                                 &model_name_clone, input_tokens, output_tokens,
                             ).await;
                         });
@@ -503,7 +502,7 @@ pub async fn handle_replay_sse(
     session_id: &str,
     thread_id: &str,
     registry: &Arc<SessionRegistry>,
-    pool: SqlitePool,
+    backend: Arc<dyn DbBackend>,
     session_config_dir: PathBuf,
 ) -> Result<SseEventStream> {
     let managed = registry
@@ -538,7 +537,7 @@ pub async fn handle_replay_sse(
         managed.cx.clone(),
         managed.acp_session_id.clone(),
         session_id.to_string(),
-        pool.clone(),
+        backend.clone(),
         managed.model_arc.clone(),
         {
             let (tx, _) = mpsc::channel::<String>(1);
