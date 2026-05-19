@@ -1,0 +1,12 @@
+[project]
+name = "EduCraw"
+queries = "db"
+container_runtime = "docker"
+
+[local.dev]
+port = 9090
+image = "ghcr.io/helixdb/enterprise-dev"
+tag = "latest"
+storage = "disk"
+
+[enterprise]

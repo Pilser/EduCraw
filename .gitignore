@@ -47,3 +47,8 @@ AGENTS.md
 sessions.db
 lit-ui-docs
 MEMORY
+.helix/
+*.log
+.agents/
+examples/
+skills-lock.json
