@@ -19,9 +19,15 @@ use sqlx::sqlite::SqlitePoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::auth::AuthConfig;
+use crate::db::backend::{DbBackend, SqliteBackend};
+#[cfg(feature = "helix")]
+use crate::db::backend::HelixBackend;
 use crate::db::schema::init_db;
 use crate::session::broker::SessionBroker;
 use crate::session::registry::SessionRegistry;
+
+#[cfg(feature = "helix")]
+use educlaw_helix::{HelixClient, HelixConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -99,10 +105,36 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // ── Backend selection ────────────────────────────────────────────────
+    let backend: Arc<dyn DbBackend> = {
+        #[cfg(feature = "helix")]
+        {
+            match std::env::var("DB_BACKEND").as_deref() {
+                Ok("helix") => {
+                    tracing::info!("using HelixDB backend");
+                    educlaw_helix::validate_queries()?;
+                    let config = HelixConfig::from_env();
+                    let client = HelixClient::new(config);
+                    educlaw_helix::init_schema(&client).await?;
+                    Arc::new(HelixBackend::new(client))
+                }
+                _ => {
+                    tracing::info!("using SQLite backend");
+                    Arc::new(SqliteBackend::new(pool.clone()))
+                }
+            }
+        }
+        #[cfg(not(feature = "helix"))]
+        {
+            tracing::info!("using SQLite backend (helix feature disabled)");
+            Arc::new(SqliteBackend::new(pool.clone()))
+        }
+    };
+
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(pool, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root);
+    let state = api::AppState::new(pool, backend, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root);
 
     let app = Router::new()
         .merge(api::routes())

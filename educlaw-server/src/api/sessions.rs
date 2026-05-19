@@ -23,8 +23,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::bearer_token;
-use crate::db::sessions::{self as db_sess, Session};
-use crate::db::{models as db_models, students, subjects, token_usage as db_tokens};
+use crate::db::backend::{DbBackend, Session, Student};
 use crate::error::{AppError, Result};
 use crate::session::{
     broker::now_secs,
@@ -34,6 +33,11 @@ use crate::session::{
 };
 
 use super::AppState;
+
+fn student_home_path(students_root: &str, s: &Student) -> std::path::PathBuf {
+    let component = s.home_dir.as_deref().unwrap_or(&s.username);
+    std::path::PathBuf::from(students_root).join(component)
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -69,7 +73,7 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<impl IntoResponse> {
-    let student = students::get_student(&state.pool, &body.student_id)
+    let student = state.backend.get_student(&body.student_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {} not found", body.student_id)))?;
 
@@ -78,13 +82,7 @@ async fn create_session(
         .filter(|id| Uuid::parse_str(id).is_ok())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    // lower = {subjects_root}/{cohort_id}/{...subject slugs...} — read-only via OverlayFS
-    //   cohort.id is a slug (e.g. "primary-2b"), not a UUID — already human-readable.
-    // upper = {students_root}/{username}/ — student persistent home, read-write.
-    //   username is unique and human-readable; the agent sees paths like
-    //   /srv/educlaw/data/students/alice/ instead of an opaque UUID.
     let lower = if student.cohort_id.is_empty() {
-        // No cohort assigned: fall back to an empty dir so OverlayFS still mounts cleanly.
         let fallback = std::path::PathBuf::from(&state.subjects_root).join("_empty");
         std::fs::create_dir_all(&fallback)
             .map_err(|e| AppError::Session(format!("failed to create fallback lower dir: {e}")))?;
@@ -92,16 +90,13 @@ async fn create_session(
     } else {
         std::path::PathBuf::from(&state.subjects_root).join(&student.cohort_id)
     };
-    let upper = students::student_home_path(&state.students_root, &student);
+    let upper = student_home_path(&state.students_root, &student);
 
     let dirs = SessionDirs::new(&state.workspace_root, &session_id, lower, upper);
 
-    // Prepare filesystem layout
     dirs.create_all()
         .map_err(|e| AppError::Session(format!("failed to create session dirs: {e}")))?;
 
-    // Generate system prompt override (tutor intro) for this student.
-    // This is JSON-encoded and stored in student.json so the ACP session can use it.
     let system_prompt_b64 = {
         let display_name = if student.display_name.trim().is_empty() {
             student.username.clone()
@@ -137,29 +132,17 @@ async fn create_session(
         serde_json::to_string(&intro).unwrap_or_default()
     };
 
-    // Write initial settings.json so claw can configure permissions.
-    // init.sh will merge its own keys (systemPrompt, permissionMode) into this.
-    //
-    // The `permissions.deny` list suppresses tools that are irrelevant for student
-    // math/physics sessions so they are never sent to the model in the tools array.
-    // Kept: bash, read_file, read_image, write_file, edit_file, glob_search,
-    //       grep_search, NotebookEdit, WebFetch, WebSearch, ToolSearch, REPL.
     let initial_settings = serde_json::json!({
         "permissions": {
             "deny": [
-                // Worker & Team tools — sub-agent orchestration, not needed for students
                 "WorkerCreate", "WorkerGet", "WorkerObserve", "WorkerResolveTrust",
                 "WorkerAwaitReady", "WorkerSendPrompt", "WorkerRestart", "WorkerTerminate",
                 "TeamCreate", "TeamDelete",
-                // Cron / scheduling
                 "CronCreate", "CronDelete", "CronList",
-                // Task management tools
                 "TodoWrite", "Agent", "Sleep", "SendUserMessage", "AskUserQuestion",
                 "TaskCreate", "TaskGet", "TaskList", "TaskStop", "TaskUpdate", "TaskOutput",
-                // MCP / remote tools
                 "ListMcpResources", "ReadMcpResource", "McpAuth", "RemoteTrigger",
                 "MCP", "TestingPermission",
-                // System / config tools
                 "Skill", "PowerShell", "LSP", "Config",
                 "EnterPlanMode", "ExitPlanMode", "StructuredOutput"
             ]
@@ -171,8 +154,6 @@ async fn create_session(
     )
     .map_err(|e| AppError::Session(format!("failed to write session settings: {e}")))?;
 
-    // Copy credentials.json from the user's default claw config home so the
-    // per-session CLAW_CONFIG_HOME has working API credentials (OAuth token etc.).
     let default_claw_home = std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".claw"))
         .ok();
@@ -184,29 +165,17 @@ async fn create_session(
         }
     }
 
-    // Mount OverlayFS
     mount_overlay(&dirs).await?;
 
-    // Resolve subject slugs for this cohort
     let subject_ids: Vec<String> = if student.cohort_id.is_empty() {
         vec![]
     } else {
-        subjects::list_subjects(&state.pool, &student.cohort_id)
-            .await?
+        state.backend.list_subjects(&student.cohort_id).await?
             .into_iter()
             .map(|s| s.slug)
             .collect()
     };
 
-    // Build the student JSON blob used for:
-    //   - EDUCLAW_STUDENT_JSON env var (init.sh reads this for settings.json)
-    //   - student.json on disk (ws.rs re-reads it for each PTY spawn)
-    // system_prompt_b64 is included so ws.rs can forward EDUCLAW_SYSTEM_PROMPT.
-    // cohort_id and subject_ids are included for MCP access control;
-    // init.sh must NOT include subject_ids in the system prompt.
-
-    // Write student.json to config dir so ws.rs can forward EDUCLAW_STUDENT_JSON
-    // and EDUCLAW_SYSTEM_PROMPT to the interactive PTY spawn.
     let student_json_obj = serde_json::json!({
         "student_id":       student.id,
         "username":         student.username,
@@ -221,18 +190,12 @@ async fn create_session(
     std::fs::write(dirs.config.join("student.json"), &student_json)
         .map_err(|e| AppError::Session(format!("failed to write student.json: {e}")))?;
 
-    // Model priority (highest → lowest):
-    //   1. request body `model` field (explicit override from frontend)
-    //   2. student.last_model (persisted preference from previous session)
-    //   3. first model in the student's DB-assigned model list
-    //   4. first globally-enabled model in the `models` table
-    //   5. CLAW_MODEL env var
     let effective_model = if let Some(m) = body.model.clone().filter(|m| !m.is_empty()) {
         Some(m)
     } else if let Some(last) = student.last_model.clone().filter(|m| !m.is_empty()) {
         Some(last)
     } else {
-        let student_models = db_models::models_for_student(&state.pool, &student.id)
+        let student_models = state.backend.models_for_student(&student.id)
             .await
             .unwrap_or_default();
         student_models
@@ -249,7 +212,6 @@ async fn create_session(
         tracing::warn!("no model set anywhere; claw will use its compiled default");
     }
 
-    // Persist session record
     let session = Session {
         id: session_id.clone(),
         student_id: student.id.clone(),
@@ -259,12 +221,11 @@ async fn create_session(
         model: effective_model.clone(),
         last_input_at: None,
         last_token_checkpoint: 0,
-        started_at: String::new(), // set by DB DEFAULT
+        started_at: String::new(),
         ended_at: None,
     };
-    db_sess::insert_session(&state.pool, &session).await?;
+    state.backend.insert_session(&session).await?;
 
-    // Create broker entry + spawn idle watchdog
     let last_input_at = Arc::new(AtomicU64::new(now_secs()));
     state
         .broker
@@ -291,7 +252,6 @@ async fn create_session(
         state.pool.clone(),
     ));
 
-    // Session-scoped JWT for the WebSocket handshake
     let token = state.auth.sign_session_token(
         &student.id,
         &student.role,
@@ -300,8 +260,7 @@ async fn create_session(
         &session_id,
     )?;
 
-    // Update student last_seen (non-fatal)
-    let _ = students::touch_last_seen(&state.pool, &student.id).await;
+    let _ = state.backend.touch_last_seen(&student.id).await;
 
     tracing::info!(
         session_id = %session_id,
@@ -325,7 +284,7 @@ async fn get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let session = db_sess::get_session(&state.pool, &session_id)
+    let session = state.backend.get_session(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
     Ok(Json(session))
@@ -355,8 +314,7 @@ async fn set_model(
 ) -> Result<impl IntoResponse> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
-    // Allow the session owner, teacher, or admin.
-    let session = db_sess::get_session(&state.pool, &session_id)
+    let session = state.backend.get_session(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
     if claims.role == "student" && claims.sub != session.student_id {
@@ -368,22 +326,14 @@ async fn set_model(
         return Err(AppError::BadRequest("model must not be empty".to_string()));
     }
 
-    // Persist new model in DB.
-    db_sess::set_session_model(&state.pool, &session_id, &model).await?;
+    state.backend.set_session_model(&session_id, &model).await?;
+    state.backend.set_last_model(&session.student_id, &model).await?;
 
-    // Also update student's last_model preference for persistence across sessions
-    students::set_last_model(&state.pool, &session.student_id, &model).await?;
-
-    // Signal the running pty_bridge by writing a side-channel file.
-    // pty_bridge watches for this file and injects `/model <name>\n` into
-    // claw's stdin, then removes the file.
     let dirs =
         crate::session::dirs::SessionDirs::for_existing_session(&state.workspace_root, &session_id);
     let signal_path = dirs.config.join("pending_model.txt");
     let _ = std::fs::write(&signal_path, &model);
 
-    // Write per-session thinking param overrides (if any) to a side-channel
-    // file that model_poller reads and merges with DB defaults.
     if let Some(ref params) = body.thinking_params {
         if !params.is_empty() {
             let thinking_path = dirs.config.join("pending_thinking.json");
@@ -403,45 +353,16 @@ async fn get_token_usage(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let totals = db_tokens::session_totals(&state.pool, &session_id).await?;
+    let totals = state.backend.session_totals(&session_id).await?;
     Ok(Json(totals))
 }
-
-// ── GET /sessions/:id/models ──────────────────────────────────────────────
 
 async fn get_session_models(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let session = db_sess::get_session(&state.pool, &session_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
-
-    if session.state != "active" {
-        return Err(AppError::BadRequest(format!(
-            "session {} is not active (state: {})",
-            session_id, session.state
-        )));
-    }
-
-    // Get full Model objects with specs (provider, think_mode, visual_support)
-    let models = db_models::full_models_for_student(&state.pool, &session.student_id).await?;
-
-    // Priority: student.last_model (persisted preference) → session.model → default
-    let student_last_model = students::get_student(&state.pool, &session.student_id)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|s| s.last_model);
-
-    let active = student_last_model
-        .or(session.model)
-        .unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string());
-
-    Ok(Json(serde_json::json!({
-        "models": models,
-        "active": active,
-    })))
+    let result = state.backend.get_session_models(&session_id).await?;
+    Ok(Json(result))
 }
 
 // ── Terminate session ─────────────────────────────────────────────────────
@@ -450,11 +371,10 @@ async fn terminate_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let session = db_sess::get_session(&state.pool, &session_id)
+    let session = state.backend.get_session(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
-    // Kill goose process tree via registry (unshare wrapper PID)
     if let Some(managed) = state.registry.get(&session_id).await {
         kill_process_tree(managed.pid as i64, 5).await;
         let mut child_guard = managed.child.lock().await;
@@ -463,18 +383,16 @@ async fn terminate_session(
         tracing::info!(session_id = %session_id, pid = managed.pid, "goose process tree killed via registry");
     }
 
-    // Kill the process tree via namespace_pid (legacy claw path) and wait for it to exit BEFORE unmounting
     if let Some(pid) = session.namespace_pid {
         kill_process_tree(pid, 5).await;
     }
 
-    // Best-effort overlay unmount
     let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
     if !umount_overlay(&dirs.merged).await {
         tracing::warn!(session_id = %session_id, "overlay umount failed — cleanup may fail");
     }
 
-    db_sess::set_session_state(&state.pool, &session_id, "ended").await?;
+    state.backend.set_session_state(&session_id, "ended").await?;
     state.broker.remove_entry(&session_id).await;
     crate::session::dirs::cleanup_session_dir(&state.workspace_root, &session_id);
     crate::security::cgroups::teardown_session_cgroup(&session_id).await;

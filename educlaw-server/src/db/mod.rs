@@ -1,5 +1,6 @@
 // educlaw-server/src/db/mod.rs
 
+pub mod backend;
 pub mod cohorts;
 pub mod models;
 pub mod schema;

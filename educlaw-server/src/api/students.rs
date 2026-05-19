@@ -18,11 +18,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::{self, bearer_token};
-use crate::db::{
-    cohorts,
-    students::{self, Student},
-    subjects, token_codes,
-};
+use crate::db::backend::Student;
 use crate::error::{AppError, Result};
 
 use super::{common, AppState};
@@ -69,7 +65,7 @@ async fn create_student(
         cohort_id: body.cohort_id.unwrap_or_default(),
         home_dir: Some(home_dir),
         uid_slot: None,
-        created_at: String::new(), // set by DB DEFAULT
+        created_at: String::new(),
         last_seen: None,
         token_limit: None,
         token_balance: 0,
@@ -78,7 +74,7 @@ async fn create_student(
         last_model: None,
     };
 
-    students::insert_student(&state.pool, &student).await?;
+    state.backend.insert_student(&student).await?;
 
     // Copy goose config template to student's persistent directory
     common::setup_goose_config(&student.id, &state.students_root);
@@ -96,7 +92,7 @@ async fn create_student(
 // ── List students ─────────────────────────────────────────────────────────
 
 async fn list_students(State(state): State<AppState>) -> Result<impl IntoResponse> {
-    let all = students::list_students(&state.pool).await?;
+    let all = state.backend.list_students().await?;
     Ok(Json(all))
 }
 
@@ -106,7 +102,7 @@ async fn get_student(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let student = students::get_student(&state.pool, &id)
+    let student = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id} not found")))?;
     Ok(Json(student))
@@ -123,18 +119,12 @@ async fn get_my_token_balance(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
-    // Extract student ID from JWT
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
 
-    // Get current student's balance
-    let student = students::get_student(&state.pool, &claims.sub)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
+    let balance = state.backend.get_token_balance(&claims.sub).await?;
 
-    Ok(Json(TokenBalanceResponse {
-        balance: student.token_balance,
-    }))
+    Ok(Json(TokenBalanceResponse { balance }))
 }
 
 // ── GET /me ────────────────────────────────────────────────────────────────
@@ -149,37 +139,16 @@ struct MeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     cohort_title: Option<String>,
     token_balance: i64,
-    available_cohorts: Vec<cohorts::Cohort>,
+    available_cohorts: Vec<crate::db::cohorts::Cohort>,
 }
 
 async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Result<impl IntoResponse> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
 
-    let student = students::get_student(&state.pool, &claims.sub)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
+    let me = state.backend.get_me(&claims.sub).await?;
 
-    let cohort_title = if student.cohort_id.is_empty() {
-        None
-    } else {
-        cohorts::get_cohort(&state.pool, &student.cohort_id)
-            .await?
-            .map(|c| c.title)
-    };
-
-    let available_cohorts = cohorts::list_cohorts(&state.pool).await?;
-
-    Ok(Json(MeResponse {
-        id: student.id,
-        username: student.username,
-        display_name: student.display_name,
-        role: student.role,
-        cohort_id: student.cohort_id,
-        cohort_title,
-        token_balance: student.token_balance,
-        available_cohorts,
-    }))
+    Ok(Json(me))
 }
 
 // ── PATCH /me ──────────────────────────────────────────────────────────────
@@ -200,11 +169,10 @@ async fn update_me(
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
 
-    let student = students::get_student(&state.pool, &claims.sub)
+    let student = state.backend.get_student(&claims.sub)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {}", claims.sub)))?;
 
-    // Password change: verify current first
     let new_hash = if let Some(ref new_pw) = body.new_password {
         if new_pw.len() < 6 {
             return Err(AppError::BadRequest(
@@ -222,54 +190,46 @@ async fn update_me(
         None
     };
 
-    // Validate cohort if changing
     if let Some(ref cid) = body.cohort_id {
         if !cid.is_empty() {
-            if cohorts::get_cohort(&state.pool, cid).await?.is_none() {
+            if state.backend.get_cohort(cid).await?.is_none() {
                 return Err(AppError::BadRequest(format!("Cohort '{}' not found", cid)));
             }
         }
     }
 
-    students::update_student(
-        &state.pool,
-        &claims.sub,
-        body.display_name.as_deref(),
-        body.cohort_id.as_deref(),
-        new_hash.as_deref(),
-    )
-    .await?;
+    let updates = serde_json::json!({
+        "display_name": body.display_name,
+        "cohort_id": body.cohort_id,
+        "password_hash": new_hash,
+    });
+    let result = state.backend.update_me_api(&claims.sub, &updates).await?;
 
-    // Re-read updated student
-    let updated = students::get_student(&state.pool, &claims.sub)
-        .await?
-        .unwrap();
-
-    // Resolve fresh subject_ids
-    let subject_ids: Vec<String> = if updated.cohort_id.is_empty() {
+    let updated_cohort_id = result["student"]["cohort_id"].as_str().unwrap_or("").to_string();
+    let subject_ids: Vec<String> = if updated_cohort_id.is_empty() {
         vec![]
     } else {
-        subjects::list_subjects(&state.pool, &updated.cohort_id)
-            .await?
+        state.backend.list_subjects(&updated_cohort_id).await?
             .into_iter()
             .map(|s| s.slug)
             .collect()
     };
 
-    // Issue fresh JWT with new cohort/subject_ids
+    let updated_display_name = result["student"]["display_name"].as_str().unwrap_or("").to_string();
+
     let token = state.auth.sign_student_token(
-        &updated.id,
-        &updated.role,
-        &updated.cohort_id,
+        &claims.sub,
+        &result["student"]["role"].as_str().unwrap_or("student"),
+        &updated_cohort_id,
         subject_ids.clone(),
     )?;
 
-    tracing::info!(student_id = %updated.id, "student updated own profile");
+    tracing::info!(student_id = %claims.sub, "student updated own profile");
 
     Ok(Json(serde_json::json!({
         "token":        token,
-        "display_name": updated.display_name,
-        "cohort_id":    updated.cohort_id,
+        "display_name": updated_display_name,
+        "cohort_id":    updated_cohort_id,
         "subject_ids":  subject_ids,
     })))
 }
@@ -294,19 +254,19 @@ async fn redeem_code_handler(
         return Err(AppError::BadRequest("code is required".into()));
     }
 
-    let result = token_codes::redeem_code(&state.pool, &code, &claims.sub).await?;
+    let result = state.backend.redeem_code(&code, &claims.sub).await?;
     match result {
-        token_codes::RedeemResult::NotFound => {
+        crate::db::backend::RedeemResult::NotFound => {
             return Err(AppError::BadRequest(
                 "Code not found. Please check and try again.".into(),
             ));
         }
-        token_codes::RedeemResult::AlreadyUsed => {
+        crate::db::backend::RedeemResult::AlreadyUsed => {
             return Err(AppError::BadRequest(
                 "This code has already been used.".into(),
             ));
         }
-        token_codes::RedeemResult::Success {
+        crate::db::backend::RedeemResult::Success {
             tokens,
             new_balance,
         } => {

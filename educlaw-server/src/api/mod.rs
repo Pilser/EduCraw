@@ -16,7 +16,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::auth::AuthConfig;
-use crate::db::models as db_models;
+use crate::db::backend::{DbBackend, SqliteBackend};
 use crate::session::broker::SessionBroker;
 use crate::session::registry::SessionRegistry;
 
@@ -25,6 +25,7 @@ use crate::session::registry::SessionRegistry;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
+    pub backend: Arc<dyn DbBackend>,
     pub auth: AuthConfig,
     pub workspace_root: String,
     pub goose_bin: String,
@@ -42,6 +43,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         pool: SqlitePool,
+        backend: Arc<dyn DbBackend>,
         auth: AuthConfig,
         workspace_root: String,
         goose_bin: String,
@@ -52,6 +54,7 @@ impl AppState {
     ) -> Self {
         Self {
             pool,
+            backend,
             auth,
             workspace_root,
             goose_bin,
@@ -86,7 +89,7 @@ async fn health() -> Json<serde_json::Value> {
 async fn list_enabled_models(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Json<serde_json::Value> {
-    match db_models::list_enabled(&state.pool).await {
+    match state.backend.list_enabled_models().await {
         Ok(rows) => Json(serde_json::json!(rows)),
         Err(_) => Json(serde_json::json!([])),
     }

@@ -34,14 +34,16 @@ use sqlx;
 use uuid::Uuid;
 
 use crate::auth::{bearer_token, hash_password, Claims};
-use crate::db::{
-    cohorts as db_cohorts, models as db_models, sessions as db_sess,
-    students, subjects as db_subjects, token_codes, token_usage as db_tokens,
-};
+use crate::db::backend::{DbBackend, Student};
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 
 use super::{common, AppState};
+
+fn student_home_path(students_root: &str, s: &Student) -> std::path::PathBuf {
+    let component = s.home_dir.as_deref().unwrap_or(&s.username);
+    std::path::PathBuf::from(students_root).join(component)
+}
 
 // ── Router ────────────────────────────────────────────────────────────────
 
@@ -182,7 +184,7 @@ async fn list_students(
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
 
-    let rows = students::list_students(&state.pool).await?;
+    let rows = state.backend.list_students().await?;
 
     let live: std::collections::HashSet<String> = state
         .broker
@@ -192,7 +194,7 @@ async fn list_students(
         .map(|(sid, _)| sid)
         .collect();
 
-    let active_sessions = db_sess::list_active_sessions(&state.pool).await?;
+    let active_sessions = state.backend.list_active_sessions().await?;
     let active_student_ids: std::collections::HashSet<String> = active_sessions
         .iter()
         .filter(|s| live.contains(&s.id))
@@ -242,7 +244,7 @@ async fn create_student(
     let id = Uuid::new_v4().to_string();
     let home_dir = format!("{}_{}", body.username, &id[..8]);
 
-    let student = students::Student {
+    let student = Student {
         id,
         username: body.username,
         password_hash,
@@ -260,9 +262,8 @@ async fn create_student(
         last_model: None,
     };
 
-    students::insert_student(&state.pool, &student).await?;
+    state.backend.insert_student(&student).await?;
 
-    // Copy goose config template to student's persistent directory
     common::setup_goose_config(&student.id, &state.students_root);
 
     tracing::info!(student_id = %student.id, username = %student.username, "admin: student created");
@@ -289,7 +290,7 @@ async fn update_student(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    students::get_student(&state.pool, &id)
+    state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
@@ -299,20 +300,16 @@ async fn update_student(
         .map(hash_password)
         .transpose()?;
 
-    students::update_student(
-        &state.pool,
-        &id,
-        body.display_name.as_deref(),
-        body.cohort_id.as_deref(),
-        new_hash.as_deref(),
-    )
-    .await?;
+    let updates = serde_json::json!({
+        "display_name": body.display_name,
+        "cohort_id": body.cohort_id,
+        "password_hash": new_hash,
+    });
+    state.backend.update_me_api(&id, &updates).await?;
 
     tracing::info!(student_id = %id, "admin: student updated");
     Ok(StatusCode::NO_CONTENT)
 }
-
-// ── DELETE /admin/students/:id ────────────────────────────────────────────
 
 async fn delete_student(
     State(state): State<AppState>,
@@ -320,19 +317,17 @@ async fn delete_student(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    let student = students::get_student(&state.pool, &id)
+    let student = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
-    // Remove student's persistent directories from disk
-    let home_path = students::student_home_path(&state.students_root, &student);
+    let home_path = student_home_path(&state.students_root, &student);
     if home_path.exists() {
         if let Err(e) = std::fs::remove_dir_all(&home_path) {
             tracing::warn!(student_id = %id, path = %home_path.display(), error = %e, "failed to remove student home directory");
         }
     }
 
-    // Also remove the UUID-based directory (created by goose/session init)
     let uuid_path = std::path::PathBuf::from(&state.students_root).join(&student.id);
     if uuid_path.exists() {
         if let Err(e) = std::fs::remove_dir_all(&uuid_path) {
@@ -340,7 +335,7 @@ async fn delete_student(
         }
     }
 
-    students::delete_student(&state.pool, &id).await?;
+    state.backend.delete_student(&id).await?;
     tracing::info!(student_id = %id, "admin: student deleted");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -363,7 +358,7 @@ async fn list_sessions(
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
 
-    let db_sessions = db_sess::list_active_sessions(&state.pool).await?;
+    let db_sessions = state.backend.list_active_sessions().await?;
     let live: std::collections::HashMap<String, u64> =
         state.broker.list_entries().await.into_iter().collect();
 
@@ -387,8 +382,6 @@ async fn list_sessions(
     Ok(Json(views))
 }
 
-// ── DELETE /admin/sessions/:id ────────────────────────────────────────────
-
 async fn terminate_session(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
@@ -396,11 +389,10 @@ async fn terminate_session(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    let session = db_sess::get_session(&state.pool, &id)
+    let session = state.backend.get_session(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {id}")))?;
 
-    // Kill the process tree and wait for it to exit BEFORE unmounting
     if let Some(pid) = session.namespace_pid {
         crate::session::namespace::kill_process_tree(pid, 5).await;
     }
@@ -408,7 +400,7 @@ async fn terminate_session(
     if !crate::session::namespace::umount_overlay(std::path::Path::new(&session.overlay_mount)).await {
         tracing::warn!(session_id = %id, "admin: overlay umount failed — cleanup may fail");
     }
-    db_sess::set_session_state(&state.pool, &id, "ended").await?;
+    state.backend.set_session_state(&id, "ended").await?;
     state.broker.remove_entry(&id).await;
     crate::session::dirs::cleanup_session_dir(&state.workspace_root, &id);
     crate::security::cgroups::teardown_session_cgroup(&id).await;
@@ -424,7 +416,7 @@ async fn list_cohorts(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
-    let rows = db_cohorts::list_cohorts(&state.pool).await?;
+    let rows = state.backend.list_cohorts().await?;
     Ok(Json(rows))
 }
 
@@ -456,12 +448,12 @@ async fn create_cohort(
         ));
     }
 
-    let cohort = db_cohorts::Cohort {
+    let cohort = crate::db::backend::Cohort {
         id: body.slug.clone(),
         title: body.title,
         created_at: String::new(),
     };
-    db_cohorts::insert_cohort(&state.pool, &cohort).await?;
+    state.backend.insert_cohort(&cohort).await?;
 
     tracing::info!(cohort_id = %cohort.id, "admin: cohort created");
     Ok((
@@ -487,7 +479,7 @@ async fn update_cohort(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    db_cohorts::get_cohort(&state.pool, &id)
+    state.backend.get_cohort(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("cohort {id}")))?;
 
@@ -506,7 +498,6 @@ async fn update_cohort(
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
 
-    // Rename directory on disk if slug changed.
     if new_slug != id {
         let old_dir = Path::new(&subjects_root).join(&id);
         let new_dir = Path::new(&subjects_root).join(new_slug);
@@ -515,16 +506,14 @@ async fn update_cohort(
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("rename cohort dir: {e}")))?;
         }
-        db_cohorts::rename_cohort(&state.pool, &id, new_slug, &body.title).await?;
+        state.backend.rename_cohort(&id, new_slug, &body.title).await?;
     } else {
-        db_cohorts::update_cohort_title(&state.pool, &id, &body.title).await?;
+        state.backend.update_cohort_title(&id, &body.title).await?;
     }
 
     tracing::info!(old_id = %id, new_id = %new_slug, "admin: cohort updated");
     Ok(Json(serde_json::json!({ "id": new_slug })))
 }
-
-// ── DELETE /admin/cohorts/:id ─────────────────────────────────────────────
 
 async fn delete_cohort(
     State(state): State<AppState>,
@@ -533,11 +522,10 @@ async fn delete_cohort(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    db_cohorts::get_cohort(&state.pool, &id)
+    state.backend.get_cohort(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("cohort {id}")))?;
 
-    // Delete cohort dir from disk (best-effort — don't fail if missing).
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
     let cohort_dir = Path::new(&subjects_root).join(&id);
@@ -547,7 +535,7 @@ async fn delete_cohort(
             .map_err(|e| AppError::Internal(anyhow::anyhow!("remove cohort dir: {e}")))?;
     }
 
-    db_cohorts::delete_cohort(&state.pool, &id).await?;
+    state.backend.delete_cohort(&id).await?;
     tracing::info!(cohort_id = %id, "admin: cohort deleted");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -566,7 +554,7 @@ async fn list_subjects_handler(
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
     let cohort_id = q.cohort_id.as_deref().unwrap_or("");
-    let rows = db_subjects::list_subjects(&state.pool, cohort_id).await?;
+    let rows = state.backend.list_subjects(cohort_id).await?;
     Ok(Json(rows))
 }
 
@@ -586,7 +574,6 @@ async fn create_subject(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    // Validate slug: alphanumeric, dash, underscore only.
     if body.slug.is_empty()
         || !body
             .slug
@@ -598,16 +585,15 @@ async fn create_subject(
         ));
     }
 
-    let subject = db_subjects::Subject {
+    let subject = crate::db::backend::Subject {
         id: Uuid::new_v4().to_string(),
         cohort_id: body.cohort_id.clone(),
         slug: body.slug.clone(),
         title: body.title,
         created_at: String::new(),
     };
-    db_subjects::insert_subject(&state.pool, &subject).await?;
+    state.backend.insert_subject(&subject).await?;
 
-    // Create the subject directory on disk: {subjects_root}/{cohort_id}/{slug}/
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
     let subject_dir = Path::new(&subjects_root)
@@ -617,7 +603,6 @@ async fn create_subject(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create subject dir: {e}")))?;
 
-    // Write a minimal subject.json metadata file.
     let meta = serde_json::json!({
         "id": subject.id,
         "cohort_id": subject.cohort_id,
@@ -658,7 +643,7 @@ async fn update_subject_handler(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    let subject = db_subjects::get_subject(&state.pool, &id)
+    let subject = state.backend.get_subject(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("subject {id}")))?;
 
@@ -677,7 +662,6 @@ async fn update_subject_handler(
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
 
-    // Rename disk directory if slug changed.
     if new_slug != subject.slug {
         let old_dir = Path::new(&subjects_root)
             .join(&subject.cohort_id)
@@ -692,7 +676,6 @@ async fn update_subject_handler(
         }
     }
 
-    // Update subject.json in the (possibly new) directory.
     let subject_dir = Path::new(&subjects_root)
         .join(&subject.cohort_id)
         .join(new_slug);
@@ -706,13 +689,11 @@ async fn update_subject_handler(
         let _ = tokio::fs::write(subject_dir.join("subject.json"), meta.to_string()).await;
     }
 
-    db_subjects::update_subject(&state.pool, &id, new_slug, &body.title).await?;
+    state.backend.update_subject(&id, new_slug, &body.title).await?;
 
     tracing::info!(subject_id = %id, new_slug = %new_slug, "admin: subject updated");
     Ok(Json(serde_json::json!({ "id": id, "slug": new_slug })))
 }
-
-// ── DELETE /admin/subjects/:id ────────────────────────────────────────────
 
 async fn delete_subject_handler(
     State(state): State<AppState>,
@@ -721,7 +702,7 @@ async fn delete_subject_handler(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    let subject = db_subjects::get_subject(&state.pool, &id)
+    let subject = state.backend.get_subject(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("subject {id}")))?;
 
@@ -736,7 +717,7 @@ async fn delete_subject_handler(
             .map_err(|e| AppError::Internal(anyhow::anyhow!("remove subject dir: {e}")))?;
     }
 
-    db_subjects::delete_subject(&state.pool, &id).await?;
+    state.backend.delete_subject(&id).await?;
     tracing::info!(subject_id = %id, "admin: subject deleted");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -748,7 +729,7 @@ async fn list_models(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
-    let rows = db_models::list_models(&state.pool).await?;
+    let rows = state.backend.list_models().await?;
     Ok(Json(rows))
 }
 
@@ -786,8 +767,7 @@ async fn create_model(
             "multipliers must be non-negative".into(),
         ));
     }
-    let id = db_models::insert_model(
-        &state.pool,
+    let id = state.backend.insert_model(
         &body.name,
         &body.display_name,
         body.input_multiplier,
@@ -820,6 +800,18 @@ struct UpdateModelBody {
     enabled: bool,
 }
 
+#[derive(Deserialize)]
+struct UpdateModelSpecsBody {
+    provider: Option<String>,
+    think_mode: Option<i64>,
+    visual_support: i64,
+}
+
+#[derive(Deserialize)]
+struct UpdateThinkingBody {
+    thinking_params: Option<serde_json::Value>,
+}
+
 async fn update_model(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
@@ -827,17 +819,8 @@ async fn update_model(
     Json(body): Json<UpdateModelBody>,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    db_models::set_enabled(&state.pool, &id, body.enabled).await?;
+    state.backend.set_enabled(&id, body.enabled).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-// ── PUT /admin/models/:id/specs ──────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct UpdateModelSpecsBody {
-    provider: Option<String>,
-    think_mode: Option<i64>,
-    visual_support: i64,
 }
 
 async fn update_model_specs_handler(
@@ -847,8 +830,7 @@ async fn update_model_specs_handler(
     Json(body): Json<UpdateModelSpecsBody>,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    db_models::update_model_specs(
-        &state.pool,
+    state.backend.update_model_specs(
         &id,
         body.provider.as_deref(),
         body.think_mode,
@@ -859,26 +841,14 @@ async fn update_model_specs_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── DELETE /admin/models/:id ──────────────────────────────────────────────
-
 async fn delete_model_handler(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    db_models::delete_model(&state.pool, &id).await?;
+    state.backend.delete_model(&id).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-// ── PUT /admin/models/:id/thinking ────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct UpdateThinkingBody {
-    /// Arbitrary JSON object with provider-specific thinking parameters.
-    /// e.g. {"thinking_type":"enabled","budget_tokens":16000}
-    /// Pass null to clear.
-    thinking_params: Option<serde_json::Value>,
 }
 
 async fn update_thinking_params_handler(
@@ -905,7 +875,7 @@ async fn update_thinking_params_handler(
         None => None,
     };
 
-    db_models::update_thinking_params(&state.pool, &id, params_str.as_deref()).await?;
+    state.backend.update_thinking_params(&id, params_str.as_deref()).await?;
     tracing::info!(model_id = %id, has_params = params_str.is_some(), "admin: thinking params updated");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1066,15 +1036,13 @@ async fn ban_student_handler(
     Json(body): Json<BanStudentBody>,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    students::get_student(&state.pool, &id)
+    state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
-    students::ban_student(&state.pool, &id, body.message.as_deref()).await?;
+    state.backend.ban_student(&id, body.message.as_deref()).await?;
     tracing::info!(student_id = %id, has_message = body.message.is_some(), "admin: student banned");
     Ok(StatusCode::NO_CONTENT)
 }
-
-// ── POST /admin/students/:id/unban ────────────────────────────────────────
 
 async fn unban_student_handler(
     State(state): State<AppState>,
@@ -1082,12 +1050,10 @@ async fn unban_student_handler(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    students::unban_student(&state.pool, &id).await?;
+    state.backend.unban_student(&id).await?;
     tracing::info!(student_id = %id, "admin: student unbanned");
     Ok(StatusCode::NO_CONTENT)
 }
-
-// ── GET|PUT /admin/students/:id/models ──────────────────────────────────
 
 async fn get_student_models(
     State(state): State<AppState>,
@@ -1096,10 +1062,7 @@ async fn get_student_models(
 ) -> Result<impl IntoResponse> {
     tracing::debug!("[GET-MODELS] received request for student_id={}", id);
     require_staff(&state, &headers)?;
-    // Return the raw assignment (empty = no specific assignment → student sees all enabled).
-    // Do NOT use models_for_student which applies the fallback — the admin panel
-    // needs to know the real stored state so checkboxes are accurate.
-    let models = db_models::raw_assignments_for_student(&state.pool, &id).await?;
+    let models = state.backend.raw_assignments_for_student(&id).await?;
     tracing::debug!(
         "[GET-MODELS] returning {} models for student_id={}",
         models.len(),
@@ -1110,7 +1073,6 @@ async fn get_student_models(
 
 #[derive(Deserialize)]
 struct SetStudentModelsBody {
-    /// List of model names (empty = revert to global list).
     models: Vec<String>,
 }
 
@@ -1121,12 +1083,10 @@ async fn set_student_models_handler(
     Json(body): Json<SetStudentModelsBody>,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    db_models::set_student_models(&state.pool, &id, &body.models).await?;
+    state.backend.set_student_models(&id, &body.models).await?;
     tracing::info!(student_id = %id, count = body.models.len(), "admin: student models updated");
     Ok(StatusCode::NO_CONTENT)
 }
-
-// ── GET /admin/students/:id/token-usage ──────────────────────────────────
 
 async fn student_token_usage(
     State(state): State<AppState>,
@@ -1134,10 +1094,10 @@ async fn student_token_usage(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
-    let student = students::get_student(&state.pool, &id)
+    let student = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
-    let totals = db_tokens::student_total_tokens(&state.pool, &id).await?;
+    let totals = state.backend.student_total_tokens(&id).await?;
     Ok(Json(serde_json::json!({
         "student_id": id,
         "total_input_tokens": totals.total_input_tokens,
@@ -1175,13 +1135,11 @@ async fn set_model_multipliers(
         ));
     }
 
-    // Verify model exists
-    let _ = db_models::get_model_by_name(&state.pool, &name)
+    let _ = state.backend.get_model_by_name(&name)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("model {name}")))?;
 
-    db_models::set_multipliers(
-        &state.pool,
+    state.backend.set_multipliers(
         &name,
         body.input_multiplier,
         body.output_multiplier,
@@ -1216,7 +1174,7 @@ async fn get_token_balance(
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
 
-    let student = students::get_student(&state.pool, &id)
+    let student = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
@@ -1225,14 +1183,6 @@ async fn get_token_balance(
         token_balance: student.token_balance,
         token_limit: student.token_limit,
     }))
-}
-
-// ── POST /admin/students/:id/topup ─────────────────────────────────────
-
-#[derive(Deserialize)]
-struct TopupTokensBody {
-    /// Number of tokens to add
-    amount: i64,
 }
 
 async fn topup_tokens_handler(
@@ -1253,12 +1203,11 @@ async fn topup_tokens_handler(
         return Err(AppError::BadRequest("amount must be positive".into()));
     }
 
-    // Verify student exists
-    let _ = students::get_student(&state.pool, &id)
+    let _ = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
-    let new_balance = students::topup_tokens(&state.pool, &id, body.amount).await?;
+    let new_balance = state.backend.topup_tokens(&id, body.amount).await?;
 
     tracing::info!(
         student_id = %id,
@@ -1272,14 +1221,6 @@ async fn topup_tokens_handler(
         "tokens_added": body.amount,
         "new_balance": new_balance,
     })))
-}
-
-// ── POST /admin/students/:id/deduct ────────────────────────────────────
-
-#[derive(Deserialize)]
-struct DeductTokensBody {
-    /// Number of tokens to remove
-    amount: i64,
 }
 
 async fn deduct_tokens_handler(
@@ -1299,12 +1240,11 @@ async fn deduct_tokens_handler(
         return Err(AppError::BadRequest("amount must be positive".into()));
     }
 
-    // Verify student exists
-    let _ = students::get_student(&state.pool, &id)
+    let _ = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
-    let new_balance = students::deduct_tokens(&state.pool, &id, body.amount).await?;
+    let new_balance = state.backend.deduct_tokens(&id, body.amount).await?;
 
     tracing::info!(
         student_id = %id,
@@ -1347,25 +1287,11 @@ async fn get_token_deductions(
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
 
-    let _ = students::get_student(&state.pool, &id)
+    let _ = state.backend.get_student(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
-    let rows: Vec<TokenDeductionRecord> = sqlx::query_as(
-        "SELECT id, session_id, model_name,
-                input_multiplier, output_multiplier,
-                input_tokens_used, output_tokens_used,
-                input_tokens_deducted, output_tokens_deducted,
-                tokens_used, tokens_deducted,
-                balance_before, balance_after, recorded_at
-         FROM token_deductions
-         WHERE student_id = ?
-         ORDER BY recorded_at DESC
-         LIMIT 100",
-    )
-    .bind(&id)
-    .fetch_all(&state.pool)
-    .await?;
+    let rows = state.backend.deduction_history(&id).await?;
 
     Ok(Json(serde_json::json!({
         "student_id": id,
@@ -1375,6 +1301,16 @@ async fn get_token_deductions(
 }
 
 // ── POST /admin/token-codes ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct TopupTokensBody {
+    amount: i64,
+}
+
+#[derive(Deserialize)]
+struct DeductTokensBody {
+    amount: i64,
+}
 
 #[derive(Deserialize)]
 struct GenerateTokenCodesBody {
@@ -1394,7 +1330,7 @@ async fn generate_token_codes(
     if body.count <= 0 || body.count > 500 {
         return Err(AppError::BadRequest("count must be 1-500".into()));
     }
-    let codes = token_codes::generate_codes(&state.pool, body.tokens, body.count).await?;
+    let codes = state.backend.generate_codes(body.tokens, body.count).await?;
     tracing::info!(
         tokens = body.tokens,
         count = body.count,
@@ -1402,8 +1338,6 @@ async fn generate_token_codes(
     );
     Ok(Json(serde_json::json!({ "codes": codes })))
 }
-
-// ── GET /admin/token-codes ──────────────────────────────────────────────
 
 async fn list_token_codes(
     State(state): State<AppState>,
@@ -1417,11 +1351,9 @@ async fn list_token_codes(
         "false" | "0" => Some(false),
         _ => None,
     });
-    let codes = token_codes::list_codes(&state.pool, tokens, used).await?;
+    let codes = state.backend.list_codes(tokens, used).await?;
     Ok(Json(codes))
 }
-
-// ── DELETE /admin/token-codes/:id ───────────────────────────────────────
 
 async fn delete_token_code_handler(
     State(state): State<AppState>,
@@ -1429,11 +1361,9 @@ async fn delete_token_code_handler(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
-    token_codes::delete_code(&state.pool, &id).await?;
+    state.backend.delete_code(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
-
-// ── GET /admin/token-codes/export?tokens= ───────────────────────────────
 
 async fn export_token_codes(
     State(state): State<AppState>,
@@ -1445,7 +1375,7 @@ async fn export_token_codes(
         .get("tokens")
         .and_then(|v| v.parse::<i64>().ok())
         .ok_or_else(|| AppError::BadRequest("tokens query param required".into()))?;
-    let codes = token_codes::export_codes(&state.pool, tokens).await?;
+    let codes = state.backend.export_codes(tokens).await?;
     let output = codes
         .into_iter()
         .map(|c| {

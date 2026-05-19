@@ -16,7 +16,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::db::{cohorts, students, subjects};
+use crate::db::backend::{DbBackend, Student};
 use crate::error::{AppError, Result};
 
 use super::{common, AppState};
@@ -41,14 +41,13 @@ async fn student_login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<impl IntoResponse> {
-    let student = students::get_student_by_username(&state.pool, &body.username)
+    let student = state.backend.get_student_by_username(&body.username)
         .await?
         .ok_or_else(|| {
             tracing::warn!(username = %body.username, "login: unknown username");
             AppError::Unauthorized
         })?;
 
-    // Constant-time Argon2id verification
     if !auth::verify_password(&body.password, &student.password_hash)? {
         tracing::warn!(username = %body.username, student_id = %student.id, "login: incorrect password");
         return Err(AppError::Unauthorized);
@@ -62,11 +61,10 @@ async fn student_login(
         return Err(AppError::Restricted(msg));
     }
 
-    // Resolve subject slugs for this cohort so they go into the JWT.
     let subject_ids: Vec<String> = if student.cohort_id.is_empty() {
         vec![]
     } else {
-        subjects::list_subjects(&state.pool, &student.cohort_id)
+        state.backend.list_subjects(&student.cohort_id)
             .await?
             .into_iter()
             .map(|s| s.slug)
@@ -80,8 +78,7 @@ async fn student_login(
         subject_ids.clone(),
     )?;
 
-    // Update last_seen (non-fatal)
-    let _ = students::touch_last_seen(&state.pool, &student.id).await;
+    let _ = state.backend.touch_last_seen(&student.id).await;
 
     tracing::info!(username = %body.username, student_id = %student.id, "student logged in");
 
@@ -132,7 +129,6 @@ async fn student_register(
     let username = body.username.trim();
     let display_name = body.display_name.trim();
 
-    // Validation
     if display_name.is_empty() {
         return Err(AppError::BadRequest("Display name is required".into()));
     }
@@ -158,18 +154,16 @@ async fn student_register(
         return Err(AppError::BadRequest("Passwords do not match".into()));
     }
 
-    // Check username uniqueness
-    if students::get_student_by_username(&state.pool, username)
+    if state.backend.get_student_by_username(username)
         .await?
         .is_some()
     {
         return Err(AppError::Conflict("Username already taken".into()));
     }
 
-    // Verify cohort_id if provided
     let cohort_id = body.cohort_id.unwrap_or_default();
     if !cohort_id.is_empty() {
-        if cohorts::get_cohort(&state.pool, &cohort_id)
+        if state.backend.get_cohort(&cohort_id)
             .await?
             .is_none()
         {
@@ -185,7 +179,7 @@ async fn student_register(
     let id = Uuid::new_v4().to_string();
     let home_dir = format!("{}_{}", username, &id[..8]);
 
-    let student = students::Student {
+    let student = Student {
         id,
         username: username.to_string(),
         password_hash,
@@ -203,16 +197,14 @@ async fn student_register(
         last_model: None,
     };
 
-    students::insert_student(&state.pool, &student).await?;
+    state.backend.insert_student(&student).await?;
 
-    // Copy goose config template to student's persistent directory
     common::setup_goose_config(&student.id, &state.students_root);
 
-    // Resolve subject_ids for the cohort
     let subject_ids: Vec<String> = if cohort_id.is_empty() {
         vec![]
     } else {
-        subjects::list_subjects(&state.pool, &cohort_id)
+        state.backend.list_subjects(&cohort_id)
             .await?
             .into_iter()
             .map(|s| s.slug)
@@ -241,9 +233,7 @@ async fn student_register(
     ))
 }
 
-// ── Public cohort list ─────────────────────────────────────────────────────
-
 async fn list_cohorts_public(State(state): State<AppState>) -> Result<impl IntoResponse> {
-    let rows = cohorts::list_cohorts(&state.pool).await?;
+    let rows = state.backend.list_cohorts().await?;
     Ok(Json(rows))
 }

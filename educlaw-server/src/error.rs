@@ -41,6 +41,30 @@ pub enum AppError {
     Internal(#[from] anyhow::Error),
 }
 
+impl AppError {
+    #[cfg(feature = "helix")]
+    pub fn from_helix(err: educlaw_helix::HelixError) -> Self {
+        match err {
+            educlaw_helix::HelixError::QueryNotFound(msg) => AppError::NotFound(msg),
+            educlaw_helix::HelixError::ApiError { status, body } => {
+                AppError::Internal(anyhow::anyhow!("Helix API error {}: {}", status, body))
+            }
+            educlaw_helix::HelixError::Http(e) => {
+                AppError::Internal(anyhow::anyhow!("HTTP error: {}", e))
+            }
+            educlaw_helix::HelixError::InvalidJson(e) => {
+                AppError::Internal(anyhow::anyhow!("Invalid JSON: {}", e))
+            }
+            educlaw_helix::HelixError::MissingParam(msg) => {
+                AppError::BadRequest(format!("Missing parameter: {}", msg))
+            }
+            educlaw_helix::HelixError::ParseError(msg) => {
+                AppError::Internal(anyhow::anyhow!("Parse error: {}", msg))
+            }
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {

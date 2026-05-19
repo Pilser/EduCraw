@@ -154,3 +154,23 @@ pub async fn record_deduction(
     .await?;
     Ok(())
 }
+
+/// Token deduction record for API responses (audit trail).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TokenDeductionRecord {
+    pub id: String,
+    pub student_id: String,
+    pub session_id: String,
+    pub model_name: String,
+    pub input_multiplier: f64,
+    pub output_multiplier: f64,
+    pub input_tokens_used: i64,
+    pub output_tokens_used: i64,
+    pub input_tokens_deducted: i64,
+    pub output_tokens_deducted: i64,
+    pub tokens_used: i64,
+    pub tokens_deducted: i64,
+    pub balance_before: i64,
+    pub balance_after: i64,
+    pub recorded_at: String,
+}
