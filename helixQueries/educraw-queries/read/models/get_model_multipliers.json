@@ -1,0 +1,28 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}},
+            {"Project": [
+              {"source": "input_multiplier", "alias": "input_multiplier"},
+              {"source": "output_multiplier", "alias": "output_multiplier"}
+            ]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["model"]
+  },
+  "parameters": {
+    "name": ""
+  },
+  "parameter_types": {
+    "name": "String"
+  }
+}

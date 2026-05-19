@@ -1,0 +1,39 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "allowed",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "ALLOWED_MODEL"},
+            {"Has": ["enabled", {"Bool": true}]},
+            {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "all_enabled",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Has": ["enabled", {"Bool": true}]},
+            {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]},
+            {"ValueMap": null}
+          ],
+          "condition": {"VarEmpty": "allowed"}
+        }
+      }
+    ],
+    "returns": ["allowed", "all_enabled"]
+  },
+  "parameters": {
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"}
+  }
+}

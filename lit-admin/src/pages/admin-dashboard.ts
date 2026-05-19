@@ -6,7 +6,6 @@ import { LogOut, Shield } from "lucide";
 import "../tabs/StudentsTab.js";
 import "../tabs/CohortsTab.js";
 import "../tabs/SubjectsTab.js";
-import "../tabs/AssignmentsTab.js";
 import "../tabs/SessionsTab.js";
 import "../tabs/ModelsTab.js";
 import "../tabs/TokenCodesTab.js";
@@ -15,7 +14,6 @@ type TabName =
   | "students"
   | "cohorts"
   | "subjects"
-  | "assignments"
   | "sessions"
   | "models"
   | "token-codes";
@@ -30,7 +28,6 @@ const TABS: TabDef[] = [
   { id: "students", label: "Students" },
   { id: "cohorts", label: "Cohorts" },
   { id: "subjects", label: "Subjects" },
-  { id: "assignments", label: "Assignments" },
   { id: "sessions", label: "Live Sessions" },
   { id: "models", label: "AI Models" },
   { id: "token-codes", label: "Token Codes" },
@@ -127,8 +124,6 @@ export class AdminDashboard extends LitElement {
         return html`<cohorts-tab .token=${t} .role=${r}></cohorts-tab>`;
       case "subjects":
         return html`<subjects-tab .token=${t} .role=${r}></subjects-tab>`;
-      case "assignments":
-        return html`<assignments-tab .token=${t} .role=${r}></assignments-tab>`;
       case "sessions":
         return html`<sessions-tab .token=${t} .role=${r}></sessions-tab>`;
       case "models":

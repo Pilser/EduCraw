@@ -1,0 +1,56 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"AddN": {
+              "label": "Model",
+              "properties": [
+                ["name", {"Expr": {"Param": "name"}}],
+                ["display_name", {"Expr": {"Param": "display_name"}}],
+                ["enabled", {"Expr": {"Param": "enabled"}}],
+                ["input_multiplier", {"Expr": {"Param": "input_multiplier"}}],
+                ["output_multiplier", {"Expr": {"Param": "output_multiplier"}}],
+                ["sort_priority", {"Expr": {"Param": "sort_priority"}}],
+                ["provider", {"Expr": {"Param": "provider"}}],
+                ["think_mode", {"Expr": {"Param": "think_mode"}}],
+                ["visual_support", {"Expr": {"Param": "visual_support"}}],
+                ["thinking_params", {"Expr": {"Param": "thinking_params"}}]
+              ]
+            }},
+            {"Project": [{"source": "$id", "alias": "id"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["model"]
+  },
+  "parameters": {
+    "name": "",
+    "display_name": "",
+    "enabled": true,
+    "input_multiplier": 1.0,
+    "output_multiplier": 1.0,
+    "sort_priority": 1,
+    "provider": null,
+    "think_mode": null,
+    "visual_support": 0,
+    "thinking_params": null
+  },
+  "parameter_types": {
+    "name": "String",
+    "display_name": "String",
+    "enabled": "Bool",
+    "input_multiplier": "F64",
+    "output_multiplier": "F64",
+    "sort_priority": "I64",
+    "provider": "String",
+    "think_mode": "I64",
+    "visual_support": "I64",
+    "thinking_params": "String"
+  }
+}

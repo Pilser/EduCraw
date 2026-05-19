@@ -1,0 +1,27 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "ALLOWED_MODEL"},
+            {"Has": ["enabled", {"Bool": true}]},
+            {"OrderByMultiple": [["sort_priority", "Asc"], ["name", "Asc"]]},
+            {"Values": ["name"]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"}
+  }
+}

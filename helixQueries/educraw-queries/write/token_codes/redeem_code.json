@@ -1,0 +1,57 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "token_code",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"Compare": {"left": {"Property": "code"}, "op": "Eq", "right": {"Param": "code"}}}},
+            {"Store": "token_code"},
+            {"Where": {"IsNull": "used_by"}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "redeemed",
+          "steps": [
+            {"N": {"Var": "token_code"}},
+            {"SetProperty": ["used_by", {"Expr": {"Param": "student_id"}}]},
+            {"SetProperty": ["used_at", {"Expr": "Timestamp"}]},
+            {"AddE": {
+              "label": "USED_BY",
+              "to": {"Param": "student_id"},
+              "properties": []
+            }}
+          ],
+          "condition": {"VarNotEmpty": "token_code"}
+        }
+      },
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"SetProperty": ["token_balance", {"Expr": {"Add": [{"Property": "token_balance"}, {"Param": "code_tokens"}]}}]},
+            {"Project": [{"source": "token_balance", "alias": "token_balance"}]}
+          ],
+          "condition": {"VarNotEmpty": "token_code"}
+        }
+      }
+    ],
+    "returns": ["token_code", "redeemed", "student"]
+  },
+  "parameters": {
+    "code": "",
+    "student_id": [0],
+    "code_tokens": 0
+  },
+  "parameter_types": {
+    "code": "String",
+    "student_id": {"Array": "I64"},
+    "code_tokens": "I64"
+  }
+}

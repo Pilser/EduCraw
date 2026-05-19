@@ -1,0 +1,72 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"AddN": {
+              "label": "Session",
+              "properties": [
+                ["state", {"Expr": {"Param": "state"}}],
+                ["overlay_mount", {"Expr": {"Param": "overlay_mount"}}],
+                ["last_token_checkpoint", {"Constant": {"I64": 0}}]
+              ]
+            }},
+            {"AddE": {
+              "label": "HAS_SESSION",
+              "to": {"Param": "student_id"},
+              "properties": []
+            }},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Param": "cohort_id"},
+              "properties": []
+            }},
+            {"Choose": {
+              "condition": {"VarNotEmpty": "model_name"},
+              "then_traversal": {"steps": [
+                {"AddE": {
+                  "label": "USED_MODEL",
+                  "to": {"NWhere": {"And": [
+                    {"Eq": ["$label", {"String": "Model"}]},
+                    {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}
+                  ]}},
+                  "properties": []
+                }}
+              ]},
+              "else_traversal": null
+            }}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session", "student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "cohort_id": [0],
+    "state": "active",
+    "overlay_mount": "",
+    "model_name": ""
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "cohort_id": {"Array": "I64"},
+    "state": "String",
+    "overlay_mount": "String",
+    "model_name": "String"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "USED_MODEL"}},
+            {"AddE": {
+              "label": "USED_MODEL",
+              "to": {"NWhere": {"And": [
+                {"Eq": ["$label", {"String": "Model"}]},
+                {"Eq": ["name", {"String": ""}]}
+              ]}},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session"]
+  },
+  "parameters": {
+    "session_id": [0],
+    "model_name": ""
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"},
+    "model_name": "String"
+  }
+}

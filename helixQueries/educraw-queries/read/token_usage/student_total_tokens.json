@@ -1,0 +1,69 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "input_total",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "HAS_TOKEN_USAGE"},
+            {"AggregateBy": ["Sum", "input_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "output_total",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "HAS_TOKEN_USAGE"},
+            {"AggregateBy": ["Sum", "output_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "cache_creation_total",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "HAS_TOKEN_USAGE"},
+            {"AggregateBy": ["Sum", "cache_creation_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "cache_read_total",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "HAS_TOKEN_USAGE"},
+            {"AggregateBy": ["Sum", "cache_read_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "turn_count",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "HAS_TOKEN_USAGE"},
+            "Count"
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["input_total", "output_total", "cache_creation_total", "cache_read_total", "turn_count"]
+  },
+  "parameters": {
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"}
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "ForEach": {
+          "param": "codes",
+          "body": [
+            {
+              "Query": {
+                "name": "created",
+                "steps": [
+                  {"AddN": {
+                    "label": "TokenCode",
+                    "properties": [
+                      ["code", {"Expr": {"Param": "code"}}],
+                      ["tokens", {"Expr": {"Param": "tokens"}}]
+                    ]
+                  }}
+                ],
+                "condition": null
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "returns": ["created"]
+  },
+  "parameters": {
+    "codes": []
+  },
+  "parameter_types": {
+    "codes": {"Array": "Object"}
+  }
+}

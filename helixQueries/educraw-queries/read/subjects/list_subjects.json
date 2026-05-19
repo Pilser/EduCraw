@@ -1,0 +1,27 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "subjects",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}},
+            {"Out": "HAS_SUBJECT"},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["subjects"]
+  },
+  "parameters": {
+    "cohort_id": ""
+  },
+  "parameter_types": {
+    "cohort_id": "String"
+  }
+}

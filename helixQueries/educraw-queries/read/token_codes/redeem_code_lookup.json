@@ -1,0 +1,25 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "code",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"Compare": {"left": {"Property": "code"}, "op": "Eq", "right": {"Param": "code"}}}},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["code"]
+  },
+  "parameters": {
+    "code": ""
+  },
+  "parameter_types": {
+    "code": "String"
+  }
+}

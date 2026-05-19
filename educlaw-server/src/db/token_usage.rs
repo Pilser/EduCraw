@@ -76,21 +76,35 @@ pub async fn session_totals(
     .await
 }
 
+/// Aggregated token totals for a student across all sessions.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct StudentTokenTotals {
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_cache_creation_tokens: i64,
+    pub total_cache_read_tokens: i64,
+    pub turn_count: i64,
+}
+
 /// Sum ALL token usage across every session belonging to a student.
 pub async fn student_total_tokens(
     pool: &SqlitePool,
     student_id: &str,
-) -> Result<i64, sqlx::Error> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(tu.input_tokens + tu.output_tokens), 0)
+) -> Result<StudentTokenTotals, sqlx::Error> {
+    sqlx::query_as::<_, StudentTokenTotals>(
+        "SELECT
+            COALESCE(SUM(tu.input_tokens),          0) AS total_input_tokens,
+            COALESCE(SUM(tu.output_tokens),         0) AS total_output_tokens,
+            COALESCE(SUM(tu.cache_creation_tokens), 0) AS total_cache_creation_tokens,
+            COALESCE(SUM(tu.cache_read_tokens),     0) AS total_cache_read_tokens,
+            COUNT(*)                                   AS turn_count
          FROM token_usage tu
          JOIN sessions s ON s.id = tu.session_id
          WHERE s.student_id = ?",
     )
     .bind(student_id)
     .fetch_one(pool)
-    .await?;
-    Ok(row.0)
+    .await
 }
 
 /// Record a token deduction with separate input/output multipliers applied (audit trail).
@@ -110,19 +124,12 @@ pub async fn record_deduction(
     balance_after: i64,
 ) -> Result<(), sqlx::Error> {
     let id = Uuid::new_v4().to_string();
-    // Calculate average multiplier for legacy 'multiplier' column (weighted by token count)
     let total_tokens = input_tokens_used + output_tokens_used;
-    let avg_multiplier = if total_tokens > 0 {
-        ((input_tokens_used as f64 * input_multiplier) + (output_tokens_used as f64 * output_multiplier)) 
-            / total_tokens as f64
-    } else {
-        1.0
-    };
-    
+
     sqlx::query(
         "INSERT INTO token_deductions
             (id, student_id, session_id, model_name,
-             multiplier, input_multiplier, output_multiplier,
+             input_multiplier, output_multiplier,
              input_tokens_used, output_tokens_used,
              input_tokens_deducted, output_tokens_deducted,
              tokens_used, tokens_deducted,
@@ -133,7 +140,6 @@ pub async fn record_deduction(
     .bind(student_id)
     .bind(session_id)
     .bind(model_name)
-    .bind(avg_multiplier)
     .bind(input_multiplier)
     .bind(output_multiplier)
     .bind(input_tokens_used)

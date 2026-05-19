@@ -1,0 +1,31 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "students",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "active_sessions",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Session"}]}},
+            {"Has": ["state", {"String": "active"}]},
+            {"In": "HAS_SESSION"},
+            {"Values": ["$id"]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["students", "active_sessions"]
+  }
+}

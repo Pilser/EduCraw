@@ -1,0 +1,24 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "result",
+          "steps": [
+            {"N": {"Param": "code_id"}},
+            "Drop"
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["result"]
+  },
+  "parameters": {
+    "code_id": [0]
+  },
+  "parameter_types": {
+    "code_id": {"Array": "I64"}
+  }
+}

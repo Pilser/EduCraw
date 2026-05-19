@@ -1,0 +1,55 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Choose": {
+              "condition": {"VarNotEmpty": "display_name"},
+              "then_traversal": {"steps": [
+                {"SetProperty": ["display_name", {"Expr": {"Param": "display_name"}}]}
+              ]},
+              "else_traversal": null
+            }},
+            {"Choose": {
+              "condition": {"VarNotEmpty": "password_hash"},
+              "then_traversal": {"steps": [
+                {"SetProperty": ["password_hash", {"Expr": {"Param": "password_hash"}}]}
+              ]},
+              "else_traversal": null
+            }},
+            {"Choose": {
+              "condition": {"VarNotEmpty": "new_cohort_id"},
+              "then_traversal": {"steps": [
+                {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}}, "label": "IN_COHORT"}},
+                {"AddE": {
+                  "label": "IN_COHORT",
+                  "to": {"Param": "new_cohort_id"},
+                  "properties": []
+                }}
+              ]},
+              "else_traversal": null
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "display_name": "",
+    "password_hash": "",
+    "new_cohort_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "display_name": "String",
+    "password_hash": "String",
+    "new_cohort_id": {"Array": "I64"}
+  }
+}

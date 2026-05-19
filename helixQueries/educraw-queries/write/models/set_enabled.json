@@ -1,0 +1,26 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"N": {"Param": "model_id"}},
+            {"SetProperty": ["enabled", {"Expr": {"Param": "enabled"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["model"]
+  },
+  "parameters": {
+    "model_id": [0],
+    "enabled": true
+  },
+  "parameter_types": {
+    "model_id": {"Array": "I64"},
+    "enabled": "Bool"
+  }
+}

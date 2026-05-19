@@ -13,7 +13,8 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             name            TEXT NOT NULL UNIQUE,
             display_name    TEXT NOT NULL,
             enabled         INTEGER NOT NULL DEFAULT 1,
-            multiplier      REAL NOT NULL DEFAULT 1.0,
+            input_multiplier REAL NOT NULL DEFAULT 1.0,
+            output_multiplier REAL NOT NULL DEFAULT 1.0,
             provider        TEXT,
             think_mode      INTEGER,
             visual_support  INTEGER NOT NULL DEFAULT 0,
@@ -24,15 +25,14 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    // Migrate existing multiplier → input_multiplier, add output_multiplier
+    // Migrate existing multiplier → input_multiplier, add output_multiplier (idempotent for old DBs)
     let _ = sqlx::query("ALTER TABLE models ADD COLUMN input_multiplier REAL NOT NULL DEFAULT 1.0")
         .execute(pool)
         .await;
     let _ = sqlx::query("ALTER TABLE models ADD COLUMN output_multiplier REAL NOT NULL DEFAULT 1.0")
         .execute(pool)
         .await;
-    // Backfill: copy existing multiplier to both new columns
-    let _ = sqlx::query("UPDATE models SET input_multiplier = multiplier, output_multiplier = multiplier WHERE input_multiplier = 1.0 AND output_multiplier = 1.0")
+    let _ = sqlx::query("UPDATE models SET input_multiplier = multiplier, output_multiplier = multiplier WHERE input_multiplier = 1.0 AND output_multiplier = 1.0 AND multiplier != 1.0")
         .execute(pool)
         .await;
 
@@ -69,21 +69,6 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_subjects_cohort ON subjects(cohort_id)")
         .execute(pool)
         .await?;
-
-    // ── assignments ───────────────────────────────────────────────────────────
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS assignments (
-            id          TEXT PRIMARY KEY,
-            subject_id  TEXT NOT NULL REFERENCES subjects(id),
-            title       TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            due_date    TEXT,
-            created_by  TEXT NOT NULL,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-        )",
-    )
-    .execute(pool)
-    .await?;
 
     // ── students ──────────────────────────────────────────────────────────────
     sqlx::query(
@@ -168,10 +153,6 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await?;
 
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_assignments_subject ON assignments(subject_id)")
-        .execute(pool)
-        .await?;
-
     // ── token_usage ───────────────────────────────────────────────────────────
     // One row per API turn; each row stores the deltas reported by claw for
     // that single turn so we can sum over a session or across all sessions.
@@ -202,7 +183,12 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
             student_id        TEXT NOT NULL REFERENCES students(id),
             session_id        TEXT NOT NULL REFERENCES sessions(id),
             model_name        TEXT NOT NULL,
-            multiplier        REAL NOT NULL,
+            input_tokens_used INTEGER NOT NULL DEFAULT 0,
+            output_tokens_used INTEGER NOT NULL DEFAULT 0,
+            input_multiplier  REAL NOT NULL DEFAULT 1.0,
+            output_multiplier REAL NOT NULL DEFAULT 1.0,
+            input_tokens_deducted INTEGER NOT NULL DEFAULT 0,
+            output_tokens_deducted INTEGER NOT NULL DEFAULT 0,
             tokens_used       INTEGER NOT NULL,
             tokens_deducted   INTEGER NOT NULL,
             balance_before    INTEGER NOT NULL,
@@ -212,26 +198,6 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
-
-    // Add new columns for separate input/output tracking
-    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN input_tokens_used INTEGER NOT NULL DEFAULT 0")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN output_tokens_used INTEGER NOT NULL DEFAULT 0")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN input_multiplier REAL NOT NULL DEFAULT 1.0")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN output_multiplier REAL NOT NULL DEFAULT 1.0")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN input_tokens_deducted INTEGER NOT NULL DEFAULT 0")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE token_deductions ADD COLUMN output_tokens_deducted INTEGER NOT NULL DEFAULT 0")
-        .execute(pool)
-        .await;
 
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_token_deductions_student ON token_deductions(student_id)",

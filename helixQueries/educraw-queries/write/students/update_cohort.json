@@ -1,0 +1,31 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}}, "label": "IN_COHORT"}},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Param": "cohort_id"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "cohort_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "cohort_id": {"Array": "I64"}
+  }
+}

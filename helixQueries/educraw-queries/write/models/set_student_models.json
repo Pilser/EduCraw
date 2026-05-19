@@ -1,0 +1,50 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "ALLOWED_MODEL"}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "ForEach": {
+          "param": "models",
+          "body": [
+            {
+              "Query": {
+                "name": "edge",
+                "steps": [
+                  {"N": {"Param": "student_id"}},
+                  {"AddE": {
+                    "label": "ALLOWED_MODEL",
+                    "to": {"NWhere": {"And": [
+                      {"Eq": ["$label", {"String": "Model"}]},
+                      {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}
+                    ]}},
+                    "properties": []
+                  }}
+                ],
+                "condition": null
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "returns": ["student", "edge"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "models": []
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "models": {"Array": "Object"}
+  }
+}

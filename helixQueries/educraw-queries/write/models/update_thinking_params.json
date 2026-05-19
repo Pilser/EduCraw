@@ -1,0 +1,26 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"N": {"Param": "model_id"}},
+            {"SetProperty": ["thinking_params", {"Expr": {"Param": "thinking_params"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["model"]
+  },
+  "parameters": {
+    "model_id": [0],
+    "thinking_params": ""
+  },
+  "parameter_types": {
+    "model_id": {"Array": "I64"},
+    "thinking_params": "String"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"}
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"SetProperty": ["state", {"Expr": {"Param": "state"}}]},
+            {"Choose": {
+              "condition": {"Eq": ["state", {"String": "ended"}]},
+              "then_traversal": {"steps": [
+                {"SetProperty": ["ended_at", {"Expr": "Timestamp"}]}
+              ]},
+              "else_traversal": null
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session"]
+  },
+  "parameters": {
+    "session_id": [0],
+    "state": "active"
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"},
+    "state": "String"
+  }
+}

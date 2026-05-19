@@ -1,0 +1,24 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session"]
+  },
+  "parameters": {
+    "session_id": [0]
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"}
+  }
+}

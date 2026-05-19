@@ -1,0 +1,69 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "totals",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Out": "HAS_USAGE"},
+            {"AggregateBy": ["Sum", "input_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "output",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Out": "HAS_USAGE"},
+            {"AggregateBy": ["Sum", "output_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "cache_creation",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Out": "HAS_USAGE"},
+            {"AggregateBy": ["Sum", "cache_creation_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "cache_read",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Out": "HAS_USAGE"},
+            {"AggregateBy": ["Sum", "cache_read_tokens"]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "turn_count",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Out": "HAS_USAGE"},
+            "Count"
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["totals", "output", "cache_creation", "cache_read", "turn_count"]
+  },
+  "parameters": {
+    "session_id": [0]
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"}
+  }
+}

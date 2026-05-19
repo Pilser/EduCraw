@@ -18,9 +18,7 @@
 // Subjects
 //   GET    /admin/subjects?cohort_id=   — list subjects (filter by cohort)
 //   POST   /admin/subjects              — create a subject (cohort_id + slug required)
-// Assignments
-//   GET    /admin/assignments?subject_id=  — list assignments (all, or filter by subject)
-//   POST   /admin/assignments              — create an assignment
+// Models
 
 use std::path::Path;
 
@@ -37,7 +35,7 @@ use uuid::Uuid;
 
 use crate::auth::{bearer_token, hash_password, Claims};
 use crate::db::{
-    assignments as db_assign, cohorts as db_cohorts, models as db_models, sessions as db_sess,
+    cohorts as db_cohorts, models as db_models, sessions as db_sess,
     students, subjects as db_subjects, token_codes, token_usage as db_tokens,
 };
 use crate::error::{AppError, Result};
@@ -88,11 +86,6 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/admin/subjects/:id",
             put(update_subject_handler).delete(delete_subject_handler),
-        )
-        // Assignments
-        .route(
-            "/admin/assignments",
-            get(list_assignments).post(create_assignment),
         )
         // Models
         .route("/admin/models", get(list_models).post(create_model))
@@ -748,70 +741,6 @@ async fn delete_subject_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── GET /admin/assignments?subject_id= ───────────────────────────────────
-
-#[derive(Deserialize)]
-struct ListAssignmentsQuery {
-    subject_id: Option<String>,
-}
-
-async fn list_assignments(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<ListAssignmentsQuery>,
-) -> Result<impl IntoResponse> {
-    require_staff(&state, &headers)?;
-
-    let rows = match q.subject_id.as_deref() {
-        Some(sid) => db_assign::list_assignments_for_subject(&state.pool, sid).await?,
-        None => {
-            // Return all assignments — useful for admin overview
-            sqlx::query_as::<_, db_assign::Assignment>(
-                "SELECT * FROM assignments ORDER BY created_at DESC",
-            )
-            .fetch_all(&state.pool)
-            .await?
-        }
-    };
-
-    Ok(Json(rows))
-}
-
-// ── POST /admin/assignments ───────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct CreateAssignmentBody {
-    subject_id: String,
-    title: String,
-    description: Option<String>,
-    due_date: Option<String>,
-}
-
-async fn create_assignment(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<CreateAssignmentBody>,
-) -> Result<impl IntoResponse> {
-    let c = require_staff(&state, &headers)?;
-
-    let assignment = db_assign::Assignment {
-        id: Uuid::new_v4().to_string(),
-        subject_id: body.subject_id,
-        title: body.title,
-        description: body.description.unwrap_or_default(),
-        due_date: body.due_date,
-        created_by: c.sub,
-        created_at: String::new(),
-    };
-    db_assign::insert_assignment(&state.pool, &assignment).await?;
-
-    tracing::info!(assignment_id = %assignment.id, "admin: assignment created");
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({ "id": assignment.id })),
-    ))
-}
-
 // ── GET /admin/models ─────────────────────────────────────────────────────
 
 async fn list_models(
@@ -1208,10 +1137,14 @@ async fn student_token_usage(
     let student = students::get_student(&state.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
-    let total = db_tokens::student_total_tokens(&state.pool, &id).await?;
+    let totals = db_tokens::student_total_tokens(&state.pool, &id).await?;
     Ok(Json(serde_json::json!({
         "student_id": id,
-        "total_tokens_used": total,
+        "total_input_tokens": totals.total_input_tokens,
+        "total_output_tokens": totals.total_output_tokens,
+        "total_cache_creation_tokens": totals.total_cache_creation_tokens,
+        "total_cache_read_tokens": totals.total_cache_read_tokens,
+        "turn_count": totals.turn_count,
         "token_limit": student.token_limit,
         "restriction_status": student.restriction_status,
         "restriction_message": student.restriction_message,
@@ -1394,7 +1327,12 @@ struct TokenDeductionRecord {
     id: String,
     session_id: String,
     model_name: String,
-    multiplier: f64,
+    input_multiplier: f64,
+    output_multiplier: f64,
+    input_tokens_used: i64,
+    output_tokens_used: i64,
+    input_tokens_deducted: i64,
+    output_tokens_deducted: i64,
     tokens_used: i64,
     tokens_deducted: i64,
     balance_before: i64,
@@ -1409,14 +1347,16 @@ async fn get_token_deductions(
 ) -> Result<impl IntoResponse> {
     require_staff(&state, &headers)?;
 
-    // Verify student exists
     let _ = students::get_student(&state.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {id}")))?;
 
-    // Query token_deductions table for this student
     let rows: Vec<TokenDeductionRecord> = sqlx::query_as(
-        "SELECT id, session_id, model_name, multiplier, tokens_used, tokens_deducted,
+        "SELECT id, session_id, model_name,
+                input_multiplier, output_multiplier,
+                input_tokens_used, output_tokens_used,
+                input_tokens_deducted, output_tokens_deducted,
+                tokens_used, tokens_deducted,
                 balance_before, balance_after, recorded_at
          FROM token_deductions
          WHERE student_id = ?

@@ -1,9 +1,7 @@
 import type {
   AdminSession,
   AdminStudent,
-  Assignment,
   Cohort,
-  CreateAssignmentBody,
   CreateStudentBody,
   LoginResponse,
   Model,
@@ -295,31 +293,6 @@ export const adminApi = {
     return requestNoContent(`/admin/subjects/${id}`, {
       method: "DELETE",
       headers: authHeader(token),
-    });
-  },
-
-  // ── Assignments ───────────────────────────────────────
-
-  async listAssignments(
-    token: string,
-    subjectId?: string,
-  ): Promise<Assignment[]> {
-    const qs = subjectId
-      ? `?subject_id=${encodeURIComponent(subjectId)}`
-      : "";
-    return request<Assignment[]>(`/admin/assignments${qs}`, {
-      headers: authHeader(token),
-    });
-  },
-
-  async createAssignment(
-    token: string,
-    body: CreateAssignmentBody,
-  ): Promise<{ id: string }> {
-    return request<{ id: string }>("/admin/assignments", {
-      method: "POST",
-      headers: authHeader(token),
-      body: JSON.stringify(body),
     });
   },
 

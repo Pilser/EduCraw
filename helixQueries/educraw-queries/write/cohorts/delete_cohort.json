@@ -1,0 +1,25 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "result",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
+            "Drop"
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["result"]
+  },
+  "parameters": {
+    "id": ""
+  },
+  "parameter_types": {
+    "id": "String"
+  }
+}

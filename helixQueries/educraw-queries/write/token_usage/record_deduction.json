@@ -1,0 +1,90 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "deduction",
+          "steps": [
+            {"AddN": {
+              "label": "TokenDeduction",
+              "properties": [
+                ["model_name", {"Expr": {"Param": "model_name"}}],
+                ["input_multiplier", {"Expr": {"Param": "input_multiplier"}}],
+                ["output_multiplier", {"Expr": {"Param": "output_multiplier"}}],
+                ["input_tokens_used", {"Expr": {"Param": "input_tokens_used"}}],
+                ["output_tokens_used", {"Expr": {"Param": "output_tokens_used"}}],
+                ["input_tokens_deducted", {"Expr": {"Param": "input_tokens_deducted"}}],
+                ["output_tokens_deducted", {"Expr": {"Param": "output_tokens_deducted"}}],
+                ["tokens_used", {"Expr": {"Param": "tokens_used"}}],
+                ["tokens_deducted", {"Expr": {"Param": "tokens_deducted"}}],
+                ["balance_before", {"Expr": {"Param": "balance_before"}}],
+                ["balance_after", {"Expr": {"Param": "balance_after"}}]
+              ]
+            }}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link_student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"AddE": {
+              "label": "HAS_DEDUCTION",
+              "to": {"Var": "deduction"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link_session",
+          "steps": [
+            {"N": {"Var": "deduction"}},
+            {"AddE": {
+              "label": "OF_SESSION",
+              "to": {"Param": "session_id"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["deduction", "link_student", "link_session"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "session_id": [0],
+    "model_name": "",
+    "input_multiplier": 1.0,
+    "output_multiplier": 1.0,
+    "input_tokens_used": 0,
+    "output_tokens_used": 0,
+    "input_tokens_deducted": 0,
+    "output_tokens_deducted": 0,
+    "tokens_used": 0,
+    "tokens_deducted": 0,
+    "balance_before": 0,
+    "balance_after": 0
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "session_id": {"Array": "I64"},
+    "model_name": "String",
+    "input_multiplier": "F64",
+    "output_multiplier": "F64",
+    "input_tokens_used": "I64",
+    "output_tokens_used": "I64",
+    "input_tokens_deducted": "I64",
+    "output_tokens_deducted": "I64",
+    "tokens_used": "I64",
+    "tokens_deducted": "I64",
+    "balance_before": "I64",
+    "balance_after": "I64"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "sessions",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Session"}]}},
+            {"Has": ["state", {"String": "active"}]},
+            {"OrderBy": ["started_at", "Desc"]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["sessions"]
+  }
+}

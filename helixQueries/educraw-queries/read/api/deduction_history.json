@@ -1,0 +1,27 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "deductions",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"In": "HAS_DEDUCTION"},
+            {"OrderBy": ["recorded_at", "Desc"]},
+            {"Limit": 100},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["deductions"]
+  },
+  "parameters": {
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"}
+  }
+}

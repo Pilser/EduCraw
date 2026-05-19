@@ -1,0 +1,25 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"SetProperty": ["restriction_status", {"Value": "Null"}]},
+            {"SetProperty": ["restriction_message", {"Value": "Null"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"}
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}},
+            {"SetProperty": ["input_multiplier", {"Expr": {"Param": "input_multiplier"}}]},
+            {"SetProperty": ["output_multiplier", {"Expr": {"Param": "output_multiplier"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["model"]
+  },
+  "parameters": {
+    "name": "",
+    "input_multiplier": 1.0,
+    "output_multiplier": 1.0
+  },
+  "parameter_types": {
+    "name": "String",
+    "input_multiplier": "F64",
+    "output_multiplier": "F64"
+  }
+}

@@ -1,6 +1,5 @@
 // educlaw-server/src/db/mod.rs
 
-pub mod assignments;
 pub mod cohorts;
 pub mod models;
 pub mod schema;

@@ -1,0 +1,73 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "usage",
+          "steps": [
+            {"AddN": {
+              "label": "TokenUsage",
+              "properties": [
+                ["student_id", {"Expr": {"Param": "student_id"}}],
+                ["model", {"Expr": {"Param": "model"}}],
+                ["input_tokens", {"Expr": {"Param": "input_tokens"}}],
+                ["output_tokens", {"Expr": {"Param": "output_tokens"}}],
+                ["cache_creation_tokens", {"Expr": {"Param": "cache_creation_tokens"}}],
+                ["cache_read_tokens", {"Expr": {"Param": "cache_read_tokens"}}]
+              ]
+            }}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link_session",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"AddE": {
+              "label": "HAS_USAGE",
+              "to": {"Var": "usage"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link_student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"AddE": {
+              "label": "HAS_TOKEN_USAGE",
+              "to": {"Var": "usage"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["usage", "link_session", "link_student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "session_id": [0],
+    "model": "",
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "session_id": {"Array": "I64"},
+    "model": "String",
+    "input_tokens": "I64",
+    "output_tokens": "I64",
+    "cache_creation_tokens": "I64",
+    "cache_read_tokens": "I64"
+  }
+}

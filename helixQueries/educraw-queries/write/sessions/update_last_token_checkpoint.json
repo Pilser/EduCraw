@@ -1,0 +1,26 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"SetProperty": ["last_token_checkpoint", {"Expr": {"Param": "checkpoint"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session"]
+  },
+  "parameters": {
+    "session_id": [0],
+    "checkpoint": 0
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"},
+    "checkpoint": "I64"
+  }
+}

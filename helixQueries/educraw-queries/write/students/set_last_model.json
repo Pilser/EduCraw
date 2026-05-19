@@ -1,0 +1,34 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "LAST_USED_MODEL"}},
+            {"AddE": {
+              "label": "LAST_USED_MODEL",
+              "to": {"NWhere": {"And": [
+                {"Eq": ["$label", {"String": "Model"}]},
+                {"Eq": ["name", {"String": ""}]}
+              ]}},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "model_name": ""
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "model_name": "String"
+  }
+}

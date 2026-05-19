@@ -1,0 +1,32 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"N": {"Param": "model_id"}},
+            {"SetProperty": ["provider", {"Expr": {"Param": "provider"}}]},
+            {"SetProperty": ["think_mode", {"Expr": {"Param": "think_mode"}}]},
+            {"SetProperty": ["visual_support", {"Expr": {"Param": "visual_support"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["model"]
+  },
+  "parameters": {
+    "model_id": [0],
+    "provider": "",
+    "think_mode": 0,
+    "visual_support": 0
+  },
+  "parameter_types": {
+    "model_id": {"Array": "I64"},
+    "provider": "String",
+    "think_mode": "I64",
+    "visual_support": "I64"
+  }
+}

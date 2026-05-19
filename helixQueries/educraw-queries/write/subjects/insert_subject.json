@@ -1,0 +1,42 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "subject",
+          "steps": [
+            {"AddN": {
+              "label": "Subject",
+              "properties": [
+                ["slug", {"Expr": {"Param": "slug"}}],
+                ["title", {"Expr": {"Param": "title"}}],
+                ["cohort_id", {"Expr": {"Param": "cohort_id"}}]
+              ]
+            }},
+            {"AddE": {
+              "label": "HAS_SUBJECT",
+              "to": {"NWhere": {"And": [
+                {"Eq": ["$label", {"String": "Cohort"}]},
+                {"Eq": ["id", {"String": ""}]}
+              ]}},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["subject"]
+  },
+  "parameters": {
+    "cohort_id": "",
+    "slug": "",
+    "title": ""
+  },
+  "parameter_types": {
+    "cohort_id": "String",
+    "slug": "String",
+    "title": "String"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "cohort",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
+            {"SetProperty": ["title", {"Expr": {"Param": "new_title"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["cohort"]
+  },
+  "parameters": {
+    "id": "",
+    "new_title": ""
+  },
+  "parameter_types": {
+    "id": "String",
+    "new_title": "String"
+  }
+}

@@ -45,6 +45,7 @@ export interface TokenDeduction {
   output_tokens_used: number;
   input_tokens_deducted: number;
   output_tokens_deducted: number;
+  tokens_used: number;
   tokens_deducted: number;
   balance_before: number;
   balance_after: number;
@@ -71,23 +72,6 @@ export interface Subject {
   slug: string;
   title: string;
   created_at: string;
-}
-
-export interface Assignment {
-  id: string;
-  subject_id: string;
-  title: string;
-  description: string;
-  due_date: string | null;
-  created_by: string;
-  created_at: string;
-}
-
-export interface CreateAssignmentBody {
-  subject_id: string;
-  title: string;
-  description?: string;
-  due_date?: string;
 }
 
 export interface AdminSession {

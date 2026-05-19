@@ -1,0 +1,25 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "username"}, "op": "Eq", "right": {"Param": "username"}}}},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "username": ""
+  },
+  "parameter_types": {
+    "username": "String"
+  }
+}

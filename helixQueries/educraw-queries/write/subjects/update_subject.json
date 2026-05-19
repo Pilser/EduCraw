@@ -1,0 +1,29 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "subject",
+          "steps": [
+            {"N": {"Param": "subject_id"}},
+            {"SetProperty": ["slug", {"Expr": {"Param": "new_slug"}}]},
+            {"SetProperty": ["title", {"Expr": {"Param": "new_title"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["subject"]
+  },
+  "parameters": {
+    "subject_id": [0],
+    "new_slug": "",
+    "new_title": ""
+  },
+  "parameter_types": {
+    "subject_id": {"Array": "I64"},
+    "new_slug": "String",
+    "new_title": "String"
+  }
+}

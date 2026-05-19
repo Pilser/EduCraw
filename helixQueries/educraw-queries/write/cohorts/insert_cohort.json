@@ -1,0 +1,31 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "cohort",
+          "steps": [
+            {"AddN": {
+              "label": "Cohort",
+              "properties": [
+                ["id", {"Expr": {"Param": "id"}}],
+                ["title", {"Expr": {"Param": "title"}}]
+              ]
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["cohort"]
+  },
+  "parameters": {
+    "id": "",
+    "title": ""
+  },
+  "parameter_types": {
+    "id": "String",
+    "title": "String"
+  }
+}

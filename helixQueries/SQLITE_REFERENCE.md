@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS models (
     name            TEXT NOT NULL UNIQUE,
     display_name    TEXT NOT NULL,
     enabled         INTEGER NOT NULL DEFAULT 1,
-    multiplier      REAL NOT NULL DEFAULT 1.0,          -- legacy
     input_multiplier REAL NOT NULL DEFAULT 1.0,
     output_multiplier REAL NOT NULL DEFAULT 1.0,
     provider        TEXT,
@@ -45,20 +44,6 @@ CREATE TABLE IF NOT EXISTS subjects (
 );
 CREATE UNIQUE INDEX idx_subjects_cohort_slug ON subjects(cohort_id, slug);
 CREATE INDEX idx_subjects_cohort ON subjects(cohort_id);
-```
-
-### `assignments` — Assignments per subject
-```sql
-CREATE TABLE IF NOT EXISTS assignments (
-    id          TEXT PRIMARY KEY,
-    subject_id  TEXT NOT NULL REFERENCES subjects(id),
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    due_date    TEXT,
-    created_by  TEXT NOT NULL,      -- student_id of teacher
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX idx_assignments_subject ON assignments(subject_id);
 ```
 
 ### `students` — Users (THE TENANT)
@@ -124,17 +109,16 @@ CREATE TABLE IF NOT EXISTS token_deductions (
     student_id            TEXT NOT NULL REFERENCES students(id),
     session_id            TEXT NOT NULL REFERENCES sessions(id),
     model_name            TEXT NOT NULL,
-    multiplier            REAL NOT NULL,              -- legacy avg
-    tokens_used           INTEGER NOT NULL,
-    tokens_deducted       INTEGER NOT NULL,
-    balance_before        INTEGER NOT NULL,
-    balance_after         INTEGER NOT NULL,
     input_tokens_used     INTEGER NOT NULL DEFAULT 0,
     output_tokens_used    INTEGER NOT NULL DEFAULT 0,
     input_multiplier      REAL NOT NULL DEFAULT 1.0,
     output_multiplier     REAL NOT NULL DEFAULT 1.0,
     input_tokens_deducted INTEGER NOT NULL DEFAULT 0,
     output_tokens_deducted INTEGER NOT NULL DEFAULT 0,
+    tokens_used           INTEGER NOT NULL,
+    tokens_deducted       INTEGER NOT NULL,
+    balance_before        INTEGER NOT NULL,
+    balance_after         INTEGER NOT NULL,
     recorded_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_token_deductions_student ON token_deductions(student_id);
@@ -268,17 +252,6 @@ Legend: **R** = Read, **W** = Write, **W×N** = Write executed N times
 
 ---
 
-### MODULE: assignments (`src/db/assignments.rs`)
-
-| # | Op | Function | SQL | Params | Returns |
-|---|----|----------|-----|--------|---------|
-| A1 | W | `insert_assignment` | `INSERT INTO assignments (id, subject_id, title, description, due_date, created_by) VALUES (?, ?, ?, ?, ?, ?)` | id, subject_id, title, description, due_date, created_by | () |
-| A2 | R | `get_assignment` | `SELECT * FROM assignments WHERE id = ?` | id | Option<Assignment> |
-| A3 | R | `list_assignments_for_subject` | `SELECT * FROM assignments WHERE subject_id = ? ORDER BY created_at DESC` | subject_id | Vec<Assignment> |
-| A4 | R | `list_assignments_for_student` | `SELECT a.* FROM assignments a WHERE a.subject_id IN (SELECT value FROM json_each(?)) ORDER BY a.created_at DESC` | subject_ids_json (JSON array) | Vec<Assignment> |
-
----
-
 ### MODULE: token_usage (`src/db/token_usage.rs`)
 
 | # | Op | Function | SQL | Params | Returns |
@@ -286,7 +259,7 @@ Legend: **R** = Read, **W** = Write, **W×N** = Write executed N times
 | TU1 | W | `record_turn` | `INSERT INTO token_usage (id, session_id, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)` | id, session_id, model, input, output, cache_create, cache_read | () |
 | TU2 | R | `session_totals` | `SELECT COALESCE(SUM(input_tokens),0) AS total_input_tokens, COALESCE(SUM(output_tokens),0) AS total_output_tokens, COALESCE(SUM(cache_creation_tokens),0) AS total_cache_creation_tokens, COALESCE(SUM(cache_read_tokens),0) AS total_cache_read_tokens, COUNT(*) AS turn_count FROM token_usage WHERE session_id = ?` | session_id | SessionTokenTotals |
 | TU3 | R | `student_total_tokens` | `SELECT COALESCE(SUM(tu.input_tokens + tu.output_tokens), 0) FROM token_usage tu JOIN sessions s ON s.id = tu.session_id WHERE s.student_id = ?` | student_id | i64 |
-| TU4 | W | `record_deduction` | `INSERT INTO token_deductions (id, student_id, session_id, model_name, multiplier, input_multiplier, output_multiplier, input_tokens_used, output_tokens_used, input_tokens_deducted, output_tokens_deducted, tokens_used, tokens_deducted, balance_before, balance_after) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` | 15 params (see source) | () |
+| TU4 | W | `record_deduction` | `INSERT INTO token_deductions (id, student_id, session_id, model_name, input_multiplier, output_multiplier, input_tokens_used, output_tokens_used, input_tokens_deducted, output_tokens_deducted, tokens_used, tokens_deducted, balance_before, balance_after) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` | 14 params (see source) | () |
 
 ---
 
@@ -326,11 +299,10 @@ Legend: **R** = Read, **W** = Write, **W×N** = Write executed N times
 | students | 4 | 13 | 17 |
 | cohorts | 2 | 8 | 10 |
 | subjects | 3 | 3 | 6 |
-| assignments | 3 | 1 | 4 |
 | token_usage | 2 | 2 | 4 |
 | token_codes | 4 | 4 | 8 |
 | schema DDL | 0 | 27 | 27 |
-| **Total** | **28** | **74** | **102** |
+| **Total** | **25** | **70** | **95** |
 
 ---
 
@@ -346,9 +318,7 @@ Legend: **R** = Read, **W** = Write, **W×N** = Write executed N times
 | `delete_cohort` (3 queries) | Drop cohort node + cascade edges |
 | `redeem_code` (3 queries: lookup + mark + update balance) | Single write batch: Coalesce lookup → SetProperty + AddE |
 | `set_student_models` (DELETE + N INSERTs) | Single write: Drop existing edges + AddE for new models |
-| `list_assignments_for_student` (json_each IN clause) | Traversal: Student → IN_COHORT → HAS_SUBJECT → HAS_ASSIGNMENT |
 | `session_totals` (SUM + COUNT) | Single traversal with AggregateBy |
-| `raw_assignments_for_student` (JOIN student_models + models) | Traversal: Student → ALLOWED_MODEL → filter enabled |
 
 ### Queries that map 1:1 to HelixDB
 

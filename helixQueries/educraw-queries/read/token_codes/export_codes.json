@@ -1,0 +1,26 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "codes",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"Compare": {"left": {"Property": "tokens"}, "op": "Eq", "right": {"Param": "tokens"}}}},
+            {"OrderBy": ["created_at", "Asc"]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["codes"]
+  },
+  "parameters": {
+    "tokens": 0
+  },
+  "parameter_types": {
+    "tokens": "I64"
+  }
+}

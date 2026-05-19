@@ -1,0 +1,63 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "codes",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"Compare": {"left": {"Property": "tokens"}, "op": "Eq", "right": {"Param": "tokens"}}}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"Limit": 500},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "codes_used",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"And": [
+              {"Compare": {"left": {"Property": "tokens"}, "op": "Eq", "right": {"Param": "tokens"}}},
+              {"IsNotNull": "used_by"}
+            ]}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"Limit": 500},
+            {"ValueMap": null}
+          ],
+          "condition": {"VarNotEmpty": "show_used"}
+        }
+      },
+      {
+        "Query": {
+          "name": "codes_unused",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"And": [
+              {"Compare": {"left": {"Property": "tokens"}, "op": "Eq", "right": {"Param": "tokens"}}},
+              {"IsNull": "used_by"}
+            ]}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"Limit": 500},
+            {"ValueMap": null}
+          ],
+          "condition": {"VarNotEmpty": "show_unused"}
+        }
+      }
+    ],
+    "returns": ["codes", "codes_used", "codes_unused"]
+  },
+  "parameters": {
+    "tokens": 0,
+    "show_used": null,
+    "show_unused": null
+  },
+  "parameter_types": {
+    "tokens": "I64",
+    "show_used": "String",
+    "show_unused": "String"
+  }
+}

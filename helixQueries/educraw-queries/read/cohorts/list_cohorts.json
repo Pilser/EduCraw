@@ -1,0 +1,19 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "cohorts",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["cohorts"]
+  }
+}

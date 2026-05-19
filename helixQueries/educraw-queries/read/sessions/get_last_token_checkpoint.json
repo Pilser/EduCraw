@@ -1,0 +1,24 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "checkpoint",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Project": [{"source": "last_token_checkpoint", "alias": "last_token_checkpoint"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["checkpoint"]
+  },
+  "parameters": {
+    "session_id": [0]
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"}
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "models",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Has": ["enabled", {"Bool": true}]},
+            {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["models"]
+  }
+}

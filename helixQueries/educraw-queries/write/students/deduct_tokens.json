@@ -1,0 +1,27 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"SetProperty": ["token_balance", {"Expr": {"Sub": [{"Property": "token_balance"}, {"Param": "amount"}]}}]},
+            {"Project": [{"source": "token_balance", "alias": "token_balance"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "amount": 0
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "amount": "I64"
+  }
+}

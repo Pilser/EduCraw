@@ -1,0 +1,26 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"SetProperty": ["namespace_pid", {"Expr": {"Param": "namespace_pid"}}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session"]
+  },
+  "parameters": {
+    "session_id": [0],
+    "namespace_pid": 0
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"},
+    "namespace_pid": "I64"
+  }
+}

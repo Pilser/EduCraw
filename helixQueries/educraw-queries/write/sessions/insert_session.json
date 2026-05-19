@@ -1,0 +1,59 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"AddN": {
+              "label": "Session",
+              "properties": [
+                ["state", {"Expr": {"Param": "state"}}],
+                ["overlay_mount", {"Expr": {"Param": "overlay_mount"}}],
+                ["model", {"Expr": {"Param": "model"}}],
+                ["last_token_checkpoint", {"Constant": {"I64": 0}}]
+              ]
+            }},
+            {"AddE": {
+              "label": "HAS_SESSION",
+              "to": {"Param": "student_id"},
+              "properties": []
+            }},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Param": "cohort_id"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["session", "student"]
+  },
+  "parameters": {
+    "student_id": [0],
+    "cohort_id": [0],
+    "state": "active",
+    "overlay_mount": "",
+    "model": ""
+  },
+  "parameter_types": {
+    "student_id": {"Array": "I64"},
+    "cohort_id": {"Array": "I64"},
+    "state": "String",
+    "overlay_mount": "String",
+    "model": "String"
+  }
+}

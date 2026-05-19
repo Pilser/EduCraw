@@ -1,0 +1,19 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "students",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["students"]
+  }
+}

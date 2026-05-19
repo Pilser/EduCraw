@@ -1,0 +1,54 @@
+{
+  "request_type": "write",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"AddN": {
+              "label": "Student",
+              "properties": [
+                ["username", {"Expr": {"Param": "username"}}],
+                ["password_hash", {"Expr": {"Param": "password_hash"}}],
+                ["display_name", {"Expr": {"Param": "display_name"}}],
+                ["role", {"Expr": {"Param": "role"}}],
+                ["token_balance", {"Constant": {"I64": 0}}],
+                ["uid_slot", {"Expr": {"Param": "uid_slot"}}],
+                ["home_dir", {"Expr": {"Param": "home_dir"}}],
+                ["token_limit", {"Expr": {"Param": "token_limit"}}]
+              ]
+            }},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Param": "cohort_id"},
+              "properties": []
+            }}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["student"]
+  },
+  "parameters": {
+    "username": "",
+    "password_hash": "",
+    "display_name": "",
+    "role": "student",
+    "cohort_id": [0],
+    "uid_slot": null,
+    "home_dir": null,
+    "token_limit": null
+  },
+  "parameter_types": {
+    "username": "String",
+    "password_hash": "String",
+    "display_name": "String",
+    "role": "String",
+    "cohort_id": {"Array": "I64"},
+    "uid_slot": "I64",
+    "home_dir": "String",
+    "token_limit": "I64"
+  }
+}

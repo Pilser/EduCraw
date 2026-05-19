@@ -1,0 +1,84 @@
+{
+  "request_type": "read",
+  "query": {
+    "queries": [
+      {
+        "Query": {
+          "name": "has_allowed",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Out": "ALLOWED_MODEL"},
+            {"Limit": 1},
+            {"Store": "has_allowed"}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "models",
+          "steps": [
+            {"N": {"Param": "student_id"}},
+            {"Choose": {
+              "condition": {"VarNotEmpty": "has_allowed"},
+              "then_traversal": {"steps": [
+                {"Out": "ALLOWED_MODEL"},
+                {"Has": ["enabled", {"Bool": true}]},
+                {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]}
+              ]},
+              "else_traversal": {"steps": [
+                {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+                {"Has": ["enabled", {"Bool": true}]},
+                {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]}
+              ]}
+            }},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "active",
+          "steps": [
+            {"N": {"Param": "session_id"}},
+            {"Coalesce": [
+              {"steps": [
+                {"In": "HAS_SESSION"},
+                {"Out": "LAST_USED_MODEL"},
+                {"Has": ["enabled", {"Bool": true}]}
+              ]},
+              {"steps": [
+                {"Out": "USED_MODEL"},
+                {"Has": ["enabled", {"Bool": true}]}
+              ]},
+              {"steps": [
+                {"In": "HAS_SESSION"},
+                {"Out": "ALLOWED_MODEL"},
+                {"Has": ["enabled", {"Bool": true}]},
+                {"Limit": 1}
+              ]},
+              {"steps": [
+                {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+                {"Has": ["enabled", {"Bool": true}]},
+                {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]},
+                {"Limit": 1}
+              ]}
+            ]},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      }
+    ],
+    "returns": ["models", "active"]
+  },
+  "parameters": {
+    "session_id": [0],
+    "student_id": [0]
+  },
+  "parameter_types": {
+    "session_id": {"Array": "I64"},
+    "student_id": {"Array": "I64"}
+  }
+}
