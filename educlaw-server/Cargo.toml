@@ -1,16 +1,23 @@
 [package]
 name = "educlaw-server"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "EduClaw backend: ACP-over-WebSocket bridge, session isolation, and student registry"
 
 [[bin]]
 name = "educlaw-server"
 path = "src/main.rs"
 
+[features]
+default = ["sqlite"]
+sqlite = ["dep:sqlx"]
+helix = ["dep:educlaw-helix"]
+
 [dependencies]
+educlaw-helix = { path = "../educlaw-helix", optional = true }
+
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio.workspace = true
 
 # HTTP + WebSocket server
 axum = { version = "0.7", features = ["ws", "macros"] }
@@ -21,20 +28,20 @@ tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 
 # SQLite (async)
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "macros"] }
+sqlx = { workspace = true, optional = true }
 
 # JWT authentication
 jsonwebtoken = "9"
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 
 # UUIDs for session IDs
-uuid = { version = "1", features = ["v4"] }
+uuid.workspace = true
 
 # Logging
-tracing = "0.1"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "ansi"] }
 
 # Config via environment
@@ -44,11 +51,11 @@ dotenvy = "0.15"
 argon2 = "0.5"
 
 # Error handling
-anyhow = "1"
-thiserror = "1"
+anyhow.workspace = true
+thiserror.workspace = true
 
 # Time
-chrono = { version = "0.4", features = ["serde"] }
+chrono.workspace = true
 
 # Futures utilities (stream extensions for WebSocket)
 futures-util = "0.3"

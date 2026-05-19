@@ -1,0 +1,12 @@
+pub const INSERT_STUDENT: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/insert_student.json");
+pub const TOUCH_LAST_SEEN: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/touch_last_seen.json");
+pub const UPDATE_DISPLAY_NAME: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/update_display_name.json");
+pub const UPDATE_COHORT: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/update_cohort.json");
+pub const UPDATE_PASSWORD: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/update_password.json");
+pub const DELETE_STUDENT: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/delete_student.json");
+pub const SET_UID_SLOT: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/set_uid_slot.json");
+pub const BAN_STUDENT: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/ban_student.json");
+pub const UNBAN_STUDENT: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/unban_student.json");
+pub const SET_LAST_MODEL: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/set_last_model.json");
+pub const DEDUCT_TOKENS: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/deduct_tokens.json");
+pub const TOPUP_TOKENS: &str = include_str!("../../../../helixQueries/educraw-queries/write/students/topup_tokens.json");
