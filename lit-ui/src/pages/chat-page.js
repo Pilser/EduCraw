@@ -371,16 +371,28 @@ let ChatPage = class ChatPage extends LitElement {
                     const pending = pendingTools.shift();
                     if (!pending)
                         break;
-                    const status = frame.status || "unknown";
-                    const exitCode = frame.exit_code ?? 0;
-                    const stdout = frame.stdout || "";
-                    const stderr = frame.stderr || "";
+                    console.log("[sse-stream] tool_end RAW frame:", JSON.stringify(frame));
+                    const status = frame.status || frame.Status || "unknown";
+                    const exitCode = frame.exit_code ?? frame.exitCode ?? 0;
+                    const stdout = frame.stdout || frame.output || frame.stdout || "";
+                    const stderr = frame.stderr || frame.error || frame.stderr || "";
+                    console.log("[sse-stream] tool_end extracted:", { status, exitCode, stdoutLen: stdout.length, stderrLen: stderr.length, pendingId: pending.id, toolName: pending.name });
                     const tc = assistantMsg.content.find((c) => c.type === "toolCall" && c.id === pending.id);
                     if (tc) {
                         tc.resultStatus = status;
                         tc.resultStdout = stdout;
                         tc.resultStderr = stderr;
                         tc.resultExitCode = exitCode;
+                        console.log("[sse-stream] tool_end stored on toolCall:", {
+                            id: tc.id,
+                            name: tc.name,
+                            resultStatus: tc.resultStatus,
+                            stdoutLen: tc.resultStdout?.length,
+                            stderrLen: tc.resultStderr?.length,
+                        });
+                    }
+                    else {
+                        console.warn("[sse-stream] tool_end could not find toolCall with id:", pending.id);
                     }
                     if (this.streamingMessage) {
                         this.streamingMessage.content = [...assistantMsg.content];

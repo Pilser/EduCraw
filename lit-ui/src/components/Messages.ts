@@ -15,7 +15,9 @@ import { i18n } from "../utils/i18n.js";
 import { icon } from "@mariozechner/mini-lit";
 import { Check, ChevronDown, ChevronRight, Loader, Wrench, X } from "lucide";
 import "./ThinkingBlock.js";
+import "./ConsoleBlock.js";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
+import "@mariozechner/mini-lit/dist/CodeBlock.js";
 
 const FRIENDLY_TOOL_LABELS: Record<string, string> = {
   "bash": "Running command",
@@ -204,6 +206,18 @@ export class ToolMessage extends LitElement {
     const state = this.getToolState();
     const friendlyLabel = this.getFriendlyLabel();
 
+    // Debug: log tool data for diagnosis
+    console.log("[tool-message] render:", {
+      name: this.toolCall.name,
+      id: this.toolCall.id,
+      hasResult: !!this.result,
+      resultStatus: this.toolCall.resultStatus,
+      resultStdoutLen: this.toolCall.resultStdout?.length,
+      resultStderrLen: this.toolCall.resultStderr?.length,
+      pending: this.pending,
+      aborted: this.aborted,
+    });
+
     const effectiveResult = this.result ?? (
       this.toolCall.resultStatus
         ? {
@@ -215,6 +229,14 @@ export class ToolMessage extends LitElement {
           }
         : undefined
     );
+
+    console.log("[tool-message] effectiveResult:", effectiveResult ? {
+      hasStdout: !!effectiveResult.stdout,
+      hasStderr: !!effectiveResult.stderr,
+      stdoutLen: effectiveResult.stdout?.length,
+      stderrLen: effectiveResult.stderr?.length,
+      status: effectiveResult.status,
+    } : "undefined");
 
     const renderResult = renderTool(
       toolName,

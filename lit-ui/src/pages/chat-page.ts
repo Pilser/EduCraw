@@ -435,10 +435,14 @@ export class ChatPage extends LitElement {
           const pending = pendingTools.shift();
           if (!pending) break;
 
-          const status = (frame.status as string) || "unknown";
-          const exitCode = (frame.exit_code as number) ?? 0;
-          const stdout = (frame.stdout as string) || "";
-          const stderr = (frame.stderr as string) || "";
+          console.log("[sse-stream] tool_end RAW frame:", JSON.stringify(frame));
+
+          const status = (frame.status as string) || (frame.Status as string) || "unknown";
+          const exitCode = (frame.exit_code as number) ?? (frame.exitCode as number) ?? 0;
+          const stdout = (frame.stdout as string) || (frame.output as string) || (frame.stdout as string) || "";
+          const stderr = (frame.stderr as string) || (frame.error as string) || (frame.stderr as string) || "";
+
+          console.log("[sse-stream] tool_end extracted:", { status, exitCode, stdoutLen: stdout.length, stderrLen: stderr.length, pendingId: pending.id, toolName: pending.name });
 
           const tc = assistantMsg.content.find(
             (c) => c.type === "toolCall" && c.id === pending.id,
@@ -448,6 +452,16 @@ export class ChatPage extends LitElement {
             tc.resultStdout = stdout;
             tc.resultStderr = stderr;
             tc.resultExitCode = exitCode;
+            
+            console.log("[sse-stream] tool_end stored on toolCall:", {
+              id: tc.id,
+              name: tc.name,
+              resultStatus: tc.resultStatus,
+              stdoutLen: tc.resultStdout?.length,
+              stderrLen: tc.resultStderr?.length,
+            });
+          } else {
+            console.warn("[sse-stream] tool_end could not find toolCall with id:", pending.id);
           }
 
           if (this.streamingMessage) {
