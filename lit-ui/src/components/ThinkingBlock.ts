@@ -1,7 +1,7 @@
 import { icon } from "@mariozechner/mini-lit";
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { ChevronRight } from "lucide";
+import { ChevronRight, Lightbulb } from "lucide";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 
 @customElement("thinking-block")
@@ -29,12 +29,28 @@ export class ThinkingBlock extends LitElement {
 			: "";
 
 		return html`
+			<style>
+				@keyframes bounce-think {
+					0%, 100% {
+						transform: translateY(0);
+					}
+					50% {
+						transform: translateY(-4px);
+					}
+				}
+				
+				.thinking-icon {
+					animation: ${this.isStreaming ? "bounce-think 1s ease-in-out infinite" : "none"};
+					display: inline-block;
+				}
+			</style>
 			<div class="thinking-block">
 				<div
 					class="thinking-header cursor-pointer select-none flex items-center gap-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
 					@click=${this.toggleExpanded}
 				>
 					<span class="transition-transform inline-block ${this.isExpanded ? "rotate-90" : ""}">${icon(ChevronRight, "sm")}</span>
+					<span class="thinking-icon">${icon(Lightbulb, "sm")}</span>
 					<span class="${shimmerClasses}">Thinking...</span>
 				</div>
 				${this.isExpanded ? html`<markdown-block .content=${this.content} .isThinking=${true}></markdown-block>` : ""}
