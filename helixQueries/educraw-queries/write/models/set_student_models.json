@@ -6,10 +6,30 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "ALLOWED_MODEL"}}
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
           ],
           "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "old_models",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"Out": "ALLOWED_MODEL"}
+          ],
+          "condition": {"VarNotEmpty": "student"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_old",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"DropEdgeLabeled": {"to": {"Var": "old_models"}, "label": "ALLOWED_MODEL"}}
+          ],
+          "condition": {"VarNotEmpty": "old_models"}
         }
       },
       {
@@ -18,33 +38,40 @@
           "body": [
             {
               "Query": {
-                "name": "edge",
+                "name": "model",
                 "steps": [
-                  {"N": {"Param": "student_id"}},
+                  {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+                  {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}}
+                ],
+                "condition": null
+              }
+            },
+            {
+              "Query": {
+                "name": "link",
+                "steps": [
+                  {"N": {"Var": "student"}},
                   {"AddE": {
                     "label": "ALLOWED_MODEL",
-                    "to": {"NWhere": {"And": [
-                      {"Eq": ["$label", {"String": "Model"}]},
-                      {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}
-                    ]}},
+                    "to": {"Var": "model"},
                     "properties": []
                   }}
                 ],
-                "condition": null
+                "condition": {"VarNotEmpty": "model"}
               }
             }
           ]
         }
       }
     ],
-    "returns": ["student", "edge"]
+    "returns": ["student"]
   },
   "parameters": {
-    "student_id": [0],
+    "student_id": "",
     "models": []
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"},
+    "student_id": "String",
     "models": {"Array": "Object"}
   }
 }

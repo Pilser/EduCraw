@@ -6,7 +6,8 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"N": {"Param": "model_id"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "id"}}}},
             {"SetProperty": ["provider", {"Expr": {"Param": "provider"}}]},
             {"SetProperty": ["think_mode", {"Expr": {"Param": "think_mode"}}]},
             {"SetProperty": ["visual_support", {"Expr": {"Param": "visual_support"}}]}
@@ -18,13 +19,13 @@
     "returns": ["model"]
   },
   "parameters": {
-    "model_id": [0],
+    "id": "",
     "provider": "",
     "think_mode": 0,
     "visual_support": 0
   },
   "parameter_types": {
-    "model_id": {"Array": "I64"},
+    "id": "String",
     "provider": "String",
     "think_mode": "I64",
     "visual_support": "I64"

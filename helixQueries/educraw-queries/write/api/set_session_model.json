@@ -6,39 +6,113 @@
         "Query": {
           "name": "session",
           "steps": [
-            {"N": {"Param": "session_id"}},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "USED_MODEL"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Session"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "session_id"}}}},
+            {"SetProperty": ["model", {"Expr": {"Param": "model_name"}}]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "old_model",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"Out": "USED_MODEL"}
+          ],
+          "condition": {"VarNotEmpty": "session"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_old",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"DropEdgeLabeled": {"to": {"Var": "old_model"}, "label": "USED_MODEL"}}
+          ],
+          "condition": {"VarNotEmpty": "old_model"}
+        }
+      },
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link",
+          "steps": [
+            {"N": {"Var": "session"}},
             {"AddE": {
               "label": "USED_MODEL",
-              "to": {"NWhere": {"And": [
-                {"Eq": ["$label", {"String": "Model"}]},
-                {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}
-              ]}},
-              "properties": []
-            }},
-            {"In": "HAS_SESSION"},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "LAST_USED_MODEL"}},
-            {"AddE": {
-              "label": "LAST_USED_MODEL",
-              "to": {"NWhere": {"And": [
-                {"Eq": ["$label", {"String": "Model"}]},
-                {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}
-              ]}},
+              "to": {"Var": "model"},
               "properties": []
             }}
           ],
-          "condition": null
+          "condition": {"VarNotEmpty": "model"}
+        }
+      },
+      {
+        "Query": {
+          "name": "student_node",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"In": "HAS_SESSION"}
+          ],
+          "condition": {"VarNotEmpty": "session"}
+        }
+      },
+      {
+        "Query": {
+          "name": "student_old_model",
+          "steps": [
+            {"N": {"Var": "student_node"}},
+            {"Out": "LAST_USED_MODEL"}
+          ],
+          "condition": {"VarNotEmpty": "student_node"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_student_old",
+          "steps": [
+            {"N": {"Var": "student_node"}},
+            {"DropEdgeLabeled": {"to": {"Var": "student_old_model"}, "label": "LAST_USED_MODEL"}}
+          ],
+          "condition": {"VarNotEmpty": "student_old_model"}
+        }
+      },
+      {
+        "Query": {
+          "name": "student_link",
+          "steps": [
+            {"N": {"Var": "student_node"}},
+            {"AddE": {
+              "label": "LAST_USED_MODEL",
+              "to": {"Var": "model"},
+              "properties": []
+            }}
+          ],
+          "condition": {"And": [
+            {"VarNotEmpty": "student_node"},
+            {"VarNotEmpty": "model"}
+          ]}
         }
       }
     ],
     "returns": ["session"]
   },
   "parameters": {
-    "session_id": [0],
+    "session_id": "",
     "model_name": ""
   },
   "parameter_types": {
-    "session_id": {"Array": "I64"},
+    "session_id": "String",
     "model_name": "String"
   }
 }

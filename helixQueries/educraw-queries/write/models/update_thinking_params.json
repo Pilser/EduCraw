@@ -6,7 +6,8 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"N": {"Param": "model_id"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "id"}}}},
             {"SetProperty": ["thinking_params", {"Expr": {"Param": "thinking_params"}}]}
           ],
           "condition": null
@@ -16,11 +17,11 @@
     "returns": ["model"]
   },
   "parameters": {
-    "model_id": [0],
+    "id": "",
     "thinking_params": ""
   },
   "parameter_types": {
-    "model_id": {"Array": "I64"},
+    "id": "String",
     "thinking_params": "String"
   }
 }

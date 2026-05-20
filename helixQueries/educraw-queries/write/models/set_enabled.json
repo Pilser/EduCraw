@@ -6,7 +6,8 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"N": {"Param": "model_id"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "id"}}}},
             {"SetProperty": ["enabled", {"Expr": {"Param": "enabled"}}]}
           ],
           "condition": null
@@ -16,11 +17,11 @@
     "returns": ["model"]
   },
   "parameters": {
-    "model_id": [0],
+    "id": "",
     "enabled": true
   },
   "parameter_types": {
-    "model_id": {"Array": "I64"},
+    "id": "String",
     "enabled": "Bool"
   }
 }

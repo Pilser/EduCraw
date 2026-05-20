@@ -16,6 +16,16 @@
       },
       {
         "Query": {
+          "name": "student_node",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
           "name": "redeemed",
           "steps": [
             {"N": {"Var": "token_code"}},
@@ -23,7 +33,7 @@
             {"SetProperty": ["used_at", {"Expr": "Timestamp"}]},
             {"AddE": {
               "label": "USED_BY",
-              "to": {"Param": "student_id"},
+              "to": {"Var": "student_node"},
               "properties": []
             }}
           ],
@@ -34,7 +44,7 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
+            {"N": {"Var": "student_node"}},
             {"SetProperty": ["token_balance", {"Expr": {"Add": [{"Property": "token_balance"}, {"Param": "code_tokens"}]}}]},
             {"Project": [{"source": "token_balance", "alias": "token_balance"}]}
           ],
@@ -46,12 +56,12 @@
   },
   "parameters": {
     "code": "",
-    "student_id": [0],
+    "student_id": "",
     "code_tokens": 0
   },
   "parameter_types": {
     "code": "String",
-    "student_id": {"Array": "I64"},
+    "student_id": "String",
     "code_tokens": "I64"
   }
 }

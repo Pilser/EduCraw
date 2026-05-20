@@ -6,15 +6,40 @@
         "Query": {
           "name": "cohort",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
-            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Cohort"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "id"
+                  }
+                }
+              }
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["cohort"]
+    "returns": [
+      "cohort"
+    ]
   },
   "parameters": {
     "id": ""

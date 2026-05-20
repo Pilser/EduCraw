@@ -6,26 +6,65 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}}, "label": "IN_COHORT"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "old_cohort",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"Out": "IN_COHORT"}
+          ],
+          "condition": {"VarNotEmpty": "student"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_old",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"DropEdgeLabeled": {"to": {"Var": "old_cohort"}, "label": "IN_COHORT"}}
+          ],
+          "condition": {"VarNotEmpty": "old_cohort"}
+        }
+      },
+      {
+        "Query": {
+          "name": "new_cohort",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link",
+          "steps": [
+            {"N": {"Var": "student"}},
             {"AddE": {
               "label": "IN_COHORT",
-              "to": {"Param": "cohort_id"},
+              "to": {"Var": "new_cohort"},
               "properties": []
             }}
           ],
-          "condition": null
+          "condition": {"VarNotEmpty": "new_cohort"}
         }
       }
     ],
     "returns": ["student"]
   },
   "parameters": {
-    "student_id": [0],
-    "cohort_id": [0]
+    "student_id": "",
+    "cohort_id": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"},
-    "cohort_id": {"Array": "I64"}
+    "student_id": "String",
+    "cohort_id": "String"
   }
 }

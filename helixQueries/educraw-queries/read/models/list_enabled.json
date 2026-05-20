@@ -6,15 +6,46 @@
         "Query": {
           "name": "models",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Has": ["enabled", {"Bool": true}]},
-            {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Model"
+                  }
+                ]
+              }
+            },
+            {
+              "Has": [
+                "enabled",
+                {
+                  "Bool": true
+                }
+              ]
+            },
+            {
+              "OrderByMultiple": [
+                [
+                  "sort_priority",
+                  "Asc"
+                ],
+                [
+                  "display_name",
+                  "Asc"
+                ]
+              ]
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["models"]
+    "returns": [
+      "models"
+    ]
   }
 }

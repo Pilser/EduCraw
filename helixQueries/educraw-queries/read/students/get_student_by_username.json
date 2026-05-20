@@ -6,15 +6,40 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
-            {"Where": {"Compare": {"left": {"Property": "username"}, "op": "Eq", "right": {"Param": "username"}}}},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "username"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "username"
+                  }
+                }
+              }
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["student"]
+    "returns": [
+      "student"
+    ]
   },
   "parameters": {
     "username": ""

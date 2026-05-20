@@ -12,6 +12,8 @@ pub enum HelixError {
     MissingParam(String),
     #[error("Parse error: {0}")]
     ParseError(String),
+    #[error("Connection error: {0}")]
+    ConnectionError(String),
 }
 
 pub type Result<T> = std::result::Result<T, HelixError>;

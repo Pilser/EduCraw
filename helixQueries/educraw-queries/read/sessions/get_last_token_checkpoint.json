@@ -6,19 +6,50 @@
         "Query": {
           "name": "checkpoint",
           "steps": [
-            {"N": {"Param": "session_id"}},
-            {"Project": [{"source": "last_token_checkpoint", "alias": "last_token_checkpoint"}]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Session"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "session_id"
+                  }
+                }
+              }
+            },
+            {
+              "Project": [
+                {
+                  "source": "last_token_checkpoint",
+                  "alias": "last_token_checkpoint"
+                }
+              ]
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["checkpoint"]
+    "returns": [
+      "checkpoint"
+    ]
   },
   "parameters": {
-    "session_id": [0]
+    "session_id": ""
   },
   "parameter_types": {
-    "session_id": {"Array": "I64"}
+    "session_id": "String"
   }
 }

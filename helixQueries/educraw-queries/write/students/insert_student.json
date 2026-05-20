@@ -9,44 +9,67 @@
             {"AddN": {
               "label": "Student",
               "properties": [
+                ["id", {"Expr": {"Param": "id"}}],
                 ["username", {"Expr": {"Param": "username"}}],
                 ["password_hash", {"Expr": {"Param": "password_hash"}}],
                 ["display_name", {"Expr": {"Param": "display_name"}}],
                 ["role", {"Expr": {"Param": "role"}}],
-                ["token_balance", {"Constant": {"I64": 0}}],
+                ["cohort_id", {"Expr": {"Param": "cohort_id"}}],
+                ["token_balance", {"Value": {"I64": 0}}],
                 ["uid_slot", {"Expr": {"Param": "uid_slot"}}],
                 ["home_dir", {"Expr": {"Param": "home_dir"}}],
                 ["token_limit", {"Expr": {"Param": "token_limit"}}]
               ]
-            }},
-            {"AddE": {
-              "label": "IN_COHORT",
-              "to": {"Param": "cohort_id"},
-              "properties": []
             }}
           ],
           "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "cohort",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Var": "cohort"},
+              "properties": []
+            }}
+          ],
+          "condition": {"VarNotEmpty": "cohort"}
         }
       }
     ],
     "returns": ["student"]
   },
   "parameters": {
+    "id": "",
     "username": "",
     "password_hash": "",
     "display_name": "",
     "role": "student",
-    "cohort_id": [0],
+    "cohort_id": "",
     "uid_slot": null,
     "home_dir": null,
     "token_limit": null
   },
   "parameter_types": {
+    "id": "String",
     "username": "String",
     "password_hash": "String",
     "display_name": "String",
     "role": "String",
-    "cohort_id": {"Array": "I64"},
+    "cohort_id": "String",
     "uid_slot": "I64",
     "home_dir": "String",
     "token_limit": "I64"

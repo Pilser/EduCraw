@@ -6,29 +6,65 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "LAST_USED_MODEL"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "old_model",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"Out": "LAST_USED_MODEL"}
+          ],
+          "condition": {"VarNotEmpty": "student"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_old",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"DropEdgeLabeled": {"to": {"Var": "old_model"}, "label": "LAST_USED_MODEL"}}
+          ],
+          "condition": {"VarNotEmpty": "old_model"}
+        }
+      },
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link",
+          "steps": [
+            {"N": {"Var": "student"}},
             {"AddE": {
               "label": "LAST_USED_MODEL",
-              "to": {"NWhere": {"And": [
-                {"Eq": ["$label", {"String": "Model"}]},
-                {"Eq": ["name", {"String": ""}]}
-              ]}},
+              "to": {"Var": "model"},
               "properties": []
             }}
           ],
-          "condition": null
+          "condition": {"VarNotEmpty": "model"}
         }
       }
     ],
     "returns": ["student"]
   },
   "parameters": {
-    "student_id": [0],
+    "student_id": "",
     "model_name": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"},
+    "student_id": "String",
     "model_name": "String"
   }
 }

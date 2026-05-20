@@ -6,8 +6,32 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
@@ -16,9 +40,35 @@
         "Query": {
           "name": "cohort",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "IN_COHORT"},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "IN_COHORT"
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
@@ -27,10 +77,38 @@
         "Query": {
           "name": "subjects",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "IN_COHORT"},
-            {"Out": "HAS_SUBJECT"},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "IN_COHORT"
+            },
+            {
+              "Out": "HAS_SUBJECT"
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
@@ -39,20 +117,41 @@
         "Query": {
           "name": "all_cohorts",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
-            {"OrderBy": ["created_at", "Desc"]},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Cohort"
+                  }
+                ]
+              }
+            },
+            {
+              "OrderBy": [
+                "created_at",
+                "Desc"
+              ]
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["student", "cohort", "subjects", "all_cohorts"]
+    "returns": [
+      "student",
+      "cohort",
+      "subjects",
+      "all_cohorts"
+    ]
   },
   "parameters": {
-    "student_id": [0]
+    "student_id": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"}
+    "student_id": "String"
   }
 }

@@ -6,19 +6,50 @@
         "Query": {
           "name": "session",
           "steps": [
-            {"N": {"Param": "session_id"}},
-            {"SetProperty": ["last_input_at", {"Expr": "Timestamp"}]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Session"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "session_id"
+                  }
+                }
+              }
+            },
+            {
+              "SetProperty": [
+                "last_input_at",
+                {
+                  "Expr": "Timestamp"
+                }
+              ]
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["session"]
+    "returns": [
+      "session"
+    ]
   },
   "parameters": {
-    "session_id": [0]
+    "session_id": ""
   },
   "parameter_types": {
-    "session_id": {"Array": "I64"}
+    "session_id": "String"
   }
 }

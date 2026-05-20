@@ -9,6 +9,8 @@
             {"AddN": {
               "label": "TokenDeduction",
               "properties": [
+                ["student_id", {"Expr": {"Param": "student_id"}}],
+                ["session_id", {"Expr": {"Param": "session_id"}}],
                 ["model_name", {"Expr": {"Param": "model_name"}}],
                 ["input_multiplier", {"Expr": {"Param": "input_multiplier"}}],
                 ["output_multiplier", {"Expr": {"Param": "output_multiplier"}}],
@@ -28,14 +30,34 @@
       },
       {
         "Query": {
+          "name": "student_node",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
           "name": "link_student",
           "steps": [
-            {"N": {"Param": "student_id"}},
+            {"N": {"Var": "student_node"}},
             {"AddE": {
               "label": "HAS_DEDUCTION",
               "to": {"Var": "deduction"},
               "properties": []
             }}
+          ],
+          "condition": {"VarNotEmpty": "student_node"}
+        }
+      },
+      {
+        "Query": {
+          "name": "session_node",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Session"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "session_id"}}}}
           ],
           "condition": null
         }
@@ -47,19 +69,19 @@
             {"N": {"Var": "deduction"}},
             {"AddE": {
               "label": "OF_SESSION",
-              "to": {"Param": "session_id"},
+              "to": {"Var": "session_node"},
               "properties": []
             }}
           ],
-          "condition": null
+          "condition": {"VarNotEmpty": "session_node"}
         }
       }
     ],
-    "returns": ["deduction", "link_student", "link_session"]
+    "returns": ["deduction"]
   },
   "parameters": {
-    "student_id": [0],
-    "session_id": [0],
+    "student_id": "",
+    "session_id": "",
     "model_name": "",
     "input_multiplier": 1.0,
     "output_multiplier": 1.0,
@@ -73,8 +95,8 @@
     "balance_after": 0
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"},
-    "session_id": {"Array": "I64"},
+    "student_id": "String",
+    "session_id": "String",
     "model_name": "String",
     "input_multiplier": "F64",
     "output_multiplier": "F64",

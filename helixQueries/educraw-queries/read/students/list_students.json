@@ -6,14 +6,32 @@
         "Query": {
           "name": "students",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
-            {"OrderBy": ["created_at", "Desc"]},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "OrderBy": [
+                "created_at",
+                "Desc"
+              ]
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["students"]
+    "returns": [
+      "students"
+    ]
   }
 }

@@ -9,32 +9,51 @@
             {"AddN": {
               "label": "Subject",
               "properties": [
+                ["id", {"Expr": {"Param": "id"}}],
                 ["slug", {"Expr": {"Param": "slug"}}],
                 ["title", {"Expr": {"Param": "title"}}],
                 ["cohort_id", {"Expr": {"Param": "cohort_id"}}]
               ]
-            }},
-            {"AddE": {
-              "label": "HAS_SUBJECT",
-              "to": {"NWhere": {"And": [
-                {"Eq": ["$label", {"String": "Cohort"}]},
-                {"Eq": ["id", {"String": ""}]}
-              ]}},
-              "properties": []
             }}
           ],
           "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "cohort",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link",
+          "steps": [
+            {"N": {"Var": "cohort"}},
+            {"AddE": {
+              "label": "HAS_SUBJECT",
+              "to": {"Var": "subject"},
+              "properties": []
+            }}
+          ],
+          "condition": {"VarNotEmpty": "cohort"}
         }
       }
     ],
     "returns": ["subject"]
   },
   "parameters": {
+    "id": "",
     "cohort_id": "",
     "slug": "",
     "title": ""
   },
   "parameter_types": {
+    "id": "String",
     "cohort_id": "String",
     "slug": "String",
     "title": "String"

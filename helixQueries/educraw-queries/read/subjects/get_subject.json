@@ -6,19 +6,31 @@
         "Query": {
           "name": "subject",
           "steps": [
-            {"N": {"Param": "subject_id"}},
-            {"ValueMap": null}
+            {
+              "N": {
+                "Param": "subject_id"
+              }
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["subject"]
+    "returns": [
+      "subject"
+    ]
   },
   "parameters": {
-    "subject_id": [0]
+    "subject_id": [
+      0
+    ]
   },
   "parameter_types": {
-    "subject_id": {"Array": "I64"}
+    "subject_id": {
+      "Array": "I64"
+    }
   }
 }

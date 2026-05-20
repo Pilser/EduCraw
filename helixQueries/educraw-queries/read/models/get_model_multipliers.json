@@ -6,18 +6,49 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}},
-            {"Project": [
-              {"source": "input_multiplier", "alias": "input_multiplier"},
-              {"source": "output_multiplier", "alias": "output_multiplier"}
-            ]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Model"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "name"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "name"
+                  }
+                }
+              }
+            },
+            {
+              "Project": [
+                {
+                  "source": "input_multiplier",
+                  "alias": "input_multiplier"
+                },
+                {
+                  "source": "output_multiplier",
+                  "alias": "output_multiplier"
+                }
+              ]
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["model"]
+    "returns": [
+      "model"
+    ]
   },
   "parameters": {
     "name": ""

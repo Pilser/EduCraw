@@ -6,28 +6,109 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"AddN": {
-              "label": "Model",
-              "properties": [
-                ["name", {"Expr": {"Param": "name"}}],
-                ["display_name", {"Expr": {"Param": "display_name"}}],
-                ["enabled", {"Expr": {"Param": "enabled"}}],
-                ["input_multiplier", {"Expr": {"Param": "input_multiplier"}}],
-                ["output_multiplier", {"Expr": {"Param": "output_multiplier"}}],
-                ["sort_priority", {"Expr": {"Param": "sort_priority"}}],
-                ["provider", {"Expr": {"Param": "provider"}}],
-                ["think_mode", {"Expr": {"Param": "think_mode"}}],
-                ["visual_support", {"Expr": {"Param": "visual_support"}}],
-                ["thinking_params", {"Expr": {"Param": "thinking_params"}}]
+            {
+              "AddN": {
+                "label": "Model",
+                "properties": [
+                  [
+                    "name",
+                    {
+                      "Expr": {
+                        "Param": "name"
+                      }
+                    }
+                  ],
+                  [
+                    "display_name",
+                    {
+                      "Expr": {
+                        "Param": "display_name"
+                      }
+                    }
+                  ],
+                  [
+                    "enabled",
+                    {
+                      "Expr": {
+                        "Param": "enabled"
+                      }
+                    }
+                  ],
+                  [
+                    "input_multiplier",
+                    {
+                      "Expr": {
+                        "Param": "input_multiplier"
+                      }
+                    }
+                  ],
+                  [
+                    "output_multiplier",
+                    {
+                      "Expr": {
+                        "Param": "output_multiplier"
+                      }
+                    }
+                  ],
+                  [
+                    "sort_priority",
+                    {
+                      "Expr": {
+                        "Param": "sort_priority"
+                      }
+                    }
+                  ],
+                  [
+                    "provider",
+                    {
+                      "Expr": {
+                        "Param": "provider"
+                      }
+                    }
+                  ],
+                  [
+                    "think_mode",
+                    {
+                      "Expr": {
+                        "Param": "think_mode"
+                      }
+                    }
+                  ],
+                  [
+                    "visual_support",
+                    {
+                      "Expr": {
+                        "Param": "visual_support"
+                      }
+                    }
+                  ],
+                  [
+                    "thinking_params",
+                    {
+                      "Expr": {
+                        "Param": "thinking_params"
+                      }
+                    }
+                  ]
+                ]
+              }
+            },
+            {
+              "Project": [
+                {
+                  "source": "$id",
+                  "alias": "id"
+                }
               ]
-            }},
-            {"Project": [{"source": "$id", "alias": "id"}]}
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["model"]
+    "returns": [
+      "model"
+    ]
   },
   "parameters": {
     "name": "",

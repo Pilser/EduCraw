@@ -6,19 +6,43 @@
         "Query": {
           "name": "result",
           "steps": [
-            {"N": {"Param": "student_id"}},
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
             "Drop"
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["result"]
+    "returns": [
+      "result"
+    ]
   },
   "parameters": {
-    "student_id": [0]
+    "student_id": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"}
+    "student_id": "String"
   }
 }

@@ -6,15 +6,40 @@
         "Query": {
           "name": "code",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
-            {"Where": {"Compare": {"left": {"Property": "code"}, "op": "Eq", "right": {"Param": "code"}}}},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "TokenCode"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "code"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "code"
+                  }
+                }
+              }
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["code"]
+    "returns": [
+      "code"
+    ]
   },
   "parameters": {
     "code": ""

@@ -6,16 +6,57 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}},
-            {"SetProperty": ["input_multiplier", {"Expr": {"Param": "input_multiplier"}}]},
-            {"SetProperty": ["output_multiplier", {"Expr": {"Param": "output_multiplier"}}]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Model"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "name"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "name"
+                  }
+                }
+              }
+            },
+            {
+              "SetProperty": [
+                "input_multiplier",
+                {
+                  "Expr": {
+                    "Param": "input_multiplier"
+                  }
+                }
+              ]
+            },
+            {
+              "SetProperty": [
+                "output_multiplier",
+                {
+                  "Expr": {
+                    "Param": "output_multiplier"
+                  }
+                }
+              ]
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["model"]
+    "returns": [
+      "model"
+    ]
   },
   "parameters": {
     "name": "",

@@ -4,39 +4,29 @@
     "queries": [
       {
         "Query": {
+          "name": "student",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
           "name": "session",
           "steps": [
             {"AddN": {
               "label": "Session",
               "properties": [
+                ["id", {"Expr": {"Param": "id"}}],
+                ["student_id", {"Expr": {"Param": "student_id"}}],
                 ["state", {"Expr": {"Param": "state"}}],
                 ["overlay_mount", {"Expr": {"Param": "overlay_mount"}}],
-                ["last_token_checkpoint", {"Constant": {"I64": 0}}]
+                ["model", {"Expr": {"Param": "model_name"}}],
+                ["last_token_checkpoint", {"Value": {"I64": 0}}]
               ]
-            }},
-            {"AddE": {
-              "label": "HAS_SESSION",
-              "to": {"Param": "student_id"},
-              "properties": []
-            }},
-            {"AddE": {
-              "label": "IN_COHORT",
-              "to": {"Param": "cohort_id"},
-              "properties": []
-            }},
-            {"Choose": {
-              "condition": {"VarNotEmpty": "model_name"},
-              "then_traversal": {"steps": [
-                {"AddE": {
-                  "label": "USED_MODEL",
-                  "to": {"NWhere": {"And": [
-                    {"Eq": ["$label", {"String": "Model"}]},
-                    {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}
-                  ]}},
-                  "properties": []
-                }}
-              ]},
-              "else_traversal": null
             }}
           ],
           "condition": null
@@ -44,27 +34,84 @@
       },
       {
         "Query": {
-          "name": "student",
+          "name": "link_session",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+            {"N": {"Var": "session"}},
+            {"AddE": {
+              "label": "HAS_SESSION",
+              "to": {"Var": "student"},
+              "properties": []
+            }}
+          ],
+          "condition": {"VarNotEmpty": "student"}
+        }
+      },
+      {
+        "Query": {
+          "name": "cohort",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}}
           ],
           "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link_cohort",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Var": "cohort"},
+              "properties": []
+            }}
+          ],
+          "condition": {"VarNotEmpty": "cohort"}
+        }
+      },
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link_model",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"AddE": {
+              "label": "USED_MODEL",
+              "to": {"Var": "model"},
+              "properties": []
+            }}
+          ],
+          "condition": {"And": [
+            {"VarNotEmpty": "model"},
+            {"Compare": {"left": {"Property": "name"}, "op": "Neq", "right": {"Constant": {"String": ""}}}}
+          ]}
         }
       }
     ],
     "returns": ["session", "student"]
   },
   "parameters": {
-    "student_id": [0],
-    "cohort_id": [0],
+    "id": "",
+    "student_id": "",
+    "cohort_id": "",
     "state": "active",
     "overlay_mount": "",
     "model_name": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"},
-    "cohort_id": {"Array": "I64"},
+    "id": "String",
+    "student_id": "String",
+    "cohort_id": "String",
     "state": "String",
     "overlay_mount": "String",
     "model_name": "String"

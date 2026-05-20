@@ -6,7 +6,8 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
             {"ValueMap": null}
           ],
           "condition": null
@@ -16,9 +17,9 @@
     "returns": ["student"]
   },
   "parameters": {
-    "student_id": [0]
+    "student_id": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"}
+    "student_id": "String"
   }
 }

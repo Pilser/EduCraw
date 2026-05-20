@@ -4,24 +4,38 @@ use crate::client::{HelixClient, QueryParams};
 use crate::error::{HelixError, Result};
 use crate::types::*;
 
-fn node_id_to_array(v: &serde_json::Value) -> Vec<u64> {
-    v.as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|x| x.as_u64())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn extract_array<T: serde::de::DeserializeOwned>(
     body: &serde_json::Value,
     key: &str,
 ) -> Result<Vec<T>> {
+    // HelixDB returns {"key": {"properties": [...]}} for reads
+    // or {"key": [...]} for some queries
     let arr = body
         .get(key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| HelixError::ParseError(format!("missing '{}' array in response", key)))?;
+        .and_then(|v| {
+            if let Some(obj) = v.as_object() {
+                // Try "properties" first (read queries)
+                obj.get("properties").and_then(|p| p.as_array())
+                    // Fall back to "ids" (write queries)
+                    .or_else(|| obj.get("ids").and_then(|p| p.as_array()))
+                    // Fall back to direct array
+                    .or_else(|| v.as_array())
+            } else {
+                v.as_array()
+            }
+        });
+    let arr = match arr {
+        Some(a) => a,
+        None => {
+            tracing::error!(
+                key = key,
+                response_keys = ?body.as_object().map(|o| o.keys().collect::<Vec<_>>()),
+                full_response = %body,
+                "extract_array: key not found in HelixDB response"
+            );
+            return Err(HelixError::ParseError(format!("missing '{}' array in response", key)));
+        }
+    };
     Ok(arr
         .iter()
         .filter_map(|v| serde_json::from_value(v.clone()).ok())
@@ -32,10 +46,23 @@ fn extract_optional<T: serde::de::DeserializeOwned>(
     body: &serde_json::Value,
     key: &str,
 ) -> Result<Option<T>> {
+    // HelixDB returns {"key": {"properties": [...]}} for reads
     let arr = body
         .get(key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| HelixError::ParseError(format!("missing '{}' array in response", key)))?;
+        .and_then(|v| {
+            if let Some(obj) = v.as_object() {
+                obj.get("properties").and_then(|p| p.as_array())
+                    .or_else(|| v.as_array())
+            } else {
+                v.as_array()
+            }
+        });
+    let arr = match arr {
+        Some(a) => a,
+        None => {
+            return Err(HelixError::ParseError(format!("missing '{}' array in response", key)));
+        }
+    };
     if arr.is_empty() {
         Ok(None)
     } else {
@@ -221,7 +248,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "raw_assignments_for_student",
-                QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([student_id]))),
+                QueryParams::new().add("student_id", student_id),
             )
             .await?;
         extract_array(&resp, "models")
@@ -255,7 +282,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_enabled",
             QueryParams::new()
-                .add("id", node_id_to_array(&serde_json::json!([id])))
+                .add("id", id)
                 .add("enabled", if enabled { 1i64 } else { 0i64 }),
         )
         .await?;
@@ -282,7 +309,7 @@ impl DbBackend for HelixClient {
     async fn delete_model(&self, id: &str) -> Result<()> {
         self.write(
             "delete_model",
-            QueryParams::new().add("id", node_id_to_array(&serde_json::json!([id]))),
+            QueryParams::new().add("id", id),
         )
         .await?;
         Ok(())
@@ -298,7 +325,7 @@ impl DbBackend for HelixClient {
         self.write(
             "update_model_specs",
             QueryParams::new()
-                .add("id", node_id_to_array(&serde_json::json!([id])))
+                .add("id", id)
                 .add("provider", provider.unwrap_or(""))
                 .add("think_mode", think_mode.unwrap_or(-1))
                 .add("visual_support", visual_support),
@@ -311,7 +338,7 @@ impl DbBackend for HelixClient {
         self.write(
             "update_thinking_params",
             QueryParams::new()
-                .add("id", node_id_to_array(&serde_json::json!([id])))
+                .add("id", id)
                 .add("thinking_params", params.unwrap_or("")),
         )
         .await?;
@@ -326,7 +353,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_student_models",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([student_id])))
+                .add("student_id", student_id)
                 .add("models", models_json),
         )
         .await?;
@@ -337,7 +364,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "get_student",
-                QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([id]))),
+                QueryParams::new().add("student_id", id),
             )
             .await?;
         extract_optional(&resp, "student")
@@ -362,11 +389,12 @@ impl DbBackend for HelixClient {
         self.write(
             "insert_student",
             QueryParams::new()
+                .add("id", student.id.as_str())
                 .add("username", student.username.as_str())
                 .add("password_hash", student.password_hash.as_str())
                 .add("display_name", student.display_name.as_str())
                 .add("role", student.role.as_str())
-                .add("cohort_id", node_id_to_array(&serde_json::json!([student.cohort_id])))
+                .add("cohort_id", student.cohort_id.as_str())
                 .add("uid_slot", student.uid_slot.unwrap_or(0))
                 .add("home_dir", student.home_dir.as_deref().unwrap_or(""))
                 .add("token_limit", student.token_limit.unwrap_or(0)),
@@ -378,7 +406,7 @@ impl DbBackend for HelixClient {
     async fn touch_last_seen(&self, id: &str) -> Result<()> {
         self.write(
             "touch_last_seen",
-            QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([id]))),
+            QueryParams::new().add("student_id", id),
         )
         .await?;
         Ok(())
@@ -388,7 +416,7 @@ impl DbBackend for HelixClient {
         self.write(
             "update_display_name",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                .add("student_id", id)
                 .add("display_name", display_name),
         )
         .await?;
@@ -399,8 +427,8 @@ impl DbBackend for HelixClient {
         self.write(
             "update_cohort",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([id])))
-                .add("cohort_id", node_id_to_array(&serde_json::json!([cohort_id]))),
+                .add("student_id", id)
+                .add("cohort_id", cohort_id),
         )
         .await?;
         Ok(())
@@ -410,7 +438,7 @@ impl DbBackend for HelixClient {
         self.write(
             "update_password",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                .add("student_id", id)
                 .add("password_hash", password_hash),
         )
         .await?;
@@ -420,7 +448,7 @@ impl DbBackend for HelixClient {
     async fn delete_student(&self, id: &str) -> Result<()> {
         self.write(
             "delete_student",
-            QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([id]))),
+            QueryParams::new().add("student_id", id),
         )
         .await?;
         Ok(())
@@ -430,7 +458,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_uid_slot",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                .add("student_id", id)
                 .add("uid_slot", slot.unwrap_or(0)),
         )
         .await?;
@@ -441,7 +469,7 @@ impl DbBackend for HelixClient {
         self.write(
             "ban_student",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                .add("student_id", id)
                 .add("message", message.unwrap_or("")),
         )
         .await?;
@@ -451,7 +479,7 @@ impl DbBackend for HelixClient {
     async fn unban_student(&self, id: &str) -> Result<()> {
         self.write(
             "unban_student",
-            QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([id]))),
+            QueryParams::new().add("student_id", id),
         )
         .await?;
         Ok(())
@@ -461,7 +489,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_last_model",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                .add("student_id", id)
                 .add("model", model),
         )
         .await?;
@@ -472,7 +500,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "get_token_balance",
-                QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([id]))),
+                QueryParams::new().add("student_id", id),
             )
             .await?;
         extract_i64(&resp, "token_balance")
@@ -483,7 +511,7 @@ impl DbBackend for HelixClient {
             .write(
                 "deduct_tokens",
                 QueryParams::new()
-                    .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                    .add("student_id", id)
                     .add("amount", amount),
             )
             .await?;
@@ -495,7 +523,7 @@ impl DbBackend for HelixClient {
             .write(
                 "topup_tokens",
                 QueryParams::new()
-                    .add("student_id", node_id_to_array(&serde_json::json!([id])))
+                    .add("student_id", id)
                     .add("amount", amount),
             )
             .await?;
@@ -506,7 +534,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "get_session",
-                QueryParams::new().add("session_id", node_id_to_array(&serde_json::json!([id]))),
+                QueryParams::new().add("session_id", id),
             )
             .await?;
         extract_optional(&resp, "session")
@@ -521,8 +549,8 @@ impl DbBackend for HelixClient {
         self.write(
             "insert_session",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([session.student_id])))
-                .add("cohort_id", node_id_to_array(&serde_json::json!([""])))
+                .add("id", session.id.as_str())
+                .add("student_id", session.student_id.as_str())
                 .add("state", session.state.as_str())
                 .add("overlay_mount", session.overlay_mount.as_str())
                 .add("model", session.model.as_deref().unwrap_or("")),
@@ -535,7 +563,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_session_model",
             QueryParams::new()
-                .add("session_id", node_id_to_array(&serde_json::json!([id])))
+                .add("session_id", id)
                 .add("model", model),
         )
         .await?;
@@ -546,7 +574,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_session_state",
             QueryParams::new()
-                .add("session_id", node_id_to_array(&serde_json::json!([id])))
+                .add("session_id", id)
                 .add("state", state),
         )
         .await?;
@@ -557,7 +585,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_namespace_pid",
             QueryParams::new()
-                .add("session_id", node_id_to_array(&serde_json::json!([id])))
+                .add("session_id", id)
                 .add("pid", pid),
         )
         .await?;
@@ -567,7 +595,7 @@ impl DbBackend for HelixClient {
     async fn touch_last_input(&self, id: &str) -> Result<()> {
         self.write(
             "touch_last_input",
-            QueryParams::new().add("session_id", node_id_to_array(&serde_json::json!([id]))),
+            QueryParams::new().add("session_id", id),
         )
         .await?;
         Ok(())
@@ -577,7 +605,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "get_last_token_checkpoint",
-                QueryParams::new().add("session_id", node_id_to_array(&serde_json::json!([id]))),
+                QueryParams::new().add("session_id", id),
             )
             .await?;
         extract_i64(&resp, "checkpoint")
@@ -587,7 +615,7 @@ impl DbBackend for HelixClient {
         self.write(
             "update_last_token_checkpoint",
             QueryParams::new()
-                .add("session_id", node_id_to_array(&serde_json::json!([id])))
+                .add("session_id", id)
                 .add("checkpoint", checkpoint),
         )
         .await?;
@@ -716,7 +744,7 @@ impl DbBackend for HelixClient {
         self.write(
             "record_turn",
             QueryParams::new()
-                .add("session_id", node_id_to_array(&serde_json::json!([session_id])))
+                .add("session_id", session_id)
                 .add("model", tokens.model.as_str())
                 .add("input_tokens", tokens.input_tokens)
                 .add("output_tokens", tokens.output_tokens)
@@ -731,7 +759,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "session_totals",
-                QueryParams::new().add("session_id", node_id_to_array(&serde_json::json!([session_id]))),
+                QueryParams::new().add("session_id", session_id),
             )
             .await?;
         Ok(SessionTotals {
@@ -747,7 +775,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "student_total_tokens",
-                QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([student_id]))),
+                QueryParams::new().add("student_id", student_id),
             )
             .await?;
         Ok(StudentTotals {
@@ -777,8 +805,8 @@ impl DbBackend for HelixClient {
         self.write(
             "record_deduction",
             QueryParams::new()
-                .add("student_id", node_id_to_array(&serde_json::json!([student_id])))
-                .add("session_id", node_id_to_array(&serde_json::json!([session_id])))
+                .add("student_id", student_id)
+                .add("session_id", session_id)
                 .add("model_name", model_name)
                 .add("input_multiplier", input_multiplier)
                 .add("output_multiplier", output_multiplier)
@@ -849,7 +877,7 @@ impl DbBackend for HelixClient {
                 "redeem_code",
                 QueryParams::new()
                     .add("code", code)
-                    .add("student_id", node_id_to_array(&serde_json::json!([student_id]))),
+                    .add("student_id", student_id),
             )
             .await?;
         let status = resp
@@ -883,17 +911,28 @@ impl DbBackend for HelixClient {
     async fn get_me(&self, student_id: &str) -> Result<serde_json::Value> {
         self.read(
             "get_me",
-            QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([student_id]))),
+            QueryParams::new().add("student_id", student_id),
         )
         .await
     }
 
     async fn get_session_models(&self, session_id: &str) -> Result<serde_json::Value> {
-        self.read(
-            "get_session_models",
-            QueryParams::new().add("session_id", node_id_to_array(&serde_json::json!([session_id]))),
-        )
-        .await
+        let resp = self
+            .read(
+                "get_session_models",
+                QueryParams::new().add("session_id", session_id),
+            )
+            .await?;
+        // HelixDB returns {"all_enabled": {"properties": [...]}, "allowed": {"properties": [...]}}
+        // Merge into a single "models" key for API compatibility
+        let mut merged = serde_json::Map::new();
+        if let Some(all) = resp.get("all_enabled").and_then(|v| v.get("properties")) {
+            merged.insert("all_enabled".to_string(), all.clone());
+        }
+        if let Some(allowed) = resp.get("allowed").and_then(|v| v.get("properties")) {
+            merged.insert("allowed".to_string(), allowed.clone());
+        }
+        Ok(serde_json::Value::Object(merged))
     }
 
     async fn students_with_active_sessions(&self) -> Result<serde_json::Value> {
@@ -905,7 +944,7 @@ impl DbBackend for HelixClient {
         let resp = self
             .read(
                 "deduction_history",
-                QueryParams::new().add("student_id", node_id_to_array(&serde_json::json!([student_id]))),
+                QueryParams::new().add("student_id", student_id),
             )
             .await?;
         extract_array(&resp, "deductions")
@@ -913,8 +952,9 @@ impl DbBackend for HelixClient {
 
     async fn create_session_api(&self, params: &serde_json::Value) -> Result<serde_json::Value> {
         let qp = QueryParams::new()
-            .add("student_id", params["student_id"].clone())
-            .add("cohort_id", params["cohort_id"].clone())
+            .add("id", params["id"].as_str().unwrap_or(""))
+            .add("student_id", params["student_id"].as_str().unwrap_or(""))
+            .add("cohort_id", params["cohort_id"].as_str().unwrap_or(""))
             .add("state", params["state"].as_str().unwrap_or("active"))
             .add("overlay_mount", params["overlay_mount"].as_str().unwrap_or(""))
             .add("model_name", params["model_name"].as_str().unwrap_or(""));
@@ -925,7 +965,7 @@ impl DbBackend for HelixClient {
         self.write(
             "set_session_model_api",
             QueryParams::new()
-                .add("session_id", node_id_to_array(&serde_json::json!([session_id])))
+                .add("session_id", session_id)
                 .add("model", model),
         )
         .await?;
@@ -934,7 +974,7 @@ impl DbBackend for HelixClient {
 
     async fn update_me_api(&self, student_id: &str, updates: &serde_json::Value) -> Result<serde_json::Value> {
         let mut params = QueryParams::new()
-            .add("student_id", node_id_to_array(&serde_json::json!([student_id])));
+            .add("student_id", student_id);
         if let Some(display_name) = updates.get("display_name").and_then(|v| v.as_str()) {
             params.insert("display_name", display_name);
         }

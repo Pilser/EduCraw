@@ -6,29 +6,66 @@
         "Query": {
           "name": "session",
           "steps": [
-            {"N": {"Param": "session_id"}},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Model"}]}}, "label": "USED_MODEL"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Session"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "session_id"}}}},
+            {"SetProperty": ["model", {"Expr": {"Param": "model_name"}}]}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "old_model",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"Out": "USED_MODEL"}
+          ],
+          "condition": {"VarNotEmpty": "session"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_old",
+          "steps": [
+            {"N": {"Var": "session"}},
+            {"DropEdgeLabeled": {"to": {"Var": "old_model"}, "label": "USED_MODEL"}}
+          ],
+          "condition": {"VarNotEmpty": "old_model"}
+        }
+      },
+      {
+        "Query": {
+          "name": "model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
+            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "model_name"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "link",
+          "steps": [
+            {"N": {"Var": "session"}},
             {"AddE": {
               "label": "USED_MODEL",
-              "to": {"NWhere": {"And": [
-                {"Eq": ["$label", {"String": "Model"}]},
-                {"Eq": ["name", {"String": ""}]}
-              ]}},
+              "to": {"Var": "model"},
               "properties": []
             }}
           ],
-          "condition": null
+          "condition": {"VarNotEmpty": "model"}
         }
       }
     ],
     "returns": ["session"]
   },
   "parameters": {
-    "session_id": [0],
+    "session_id": "",
     "model_name": ""
   },
   "parameter_types": {
-    "session_id": {"Array": "I64"},
+    "session_id": "String",
     "model_name": "String"
   }
 }

@@ -10,13 +10,29 @@
               "Query": {
                 "name": "created",
                 "steps": [
-                  {"AddN": {
-                    "label": "TokenCode",
-                    "properties": [
-                      ["code", {"Expr": {"Param": "code"}}],
-                      ["tokens", {"Expr": {"Param": "tokens"}}]
-                    ]
-                  }}
+                  {
+                    "AddN": {
+                      "label": "TokenCode",
+                      "properties": [
+                        [
+                          "code",
+                          {
+                            "Expr": {
+                              "Param": "code"
+                            }
+                          }
+                        ],
+                        [
+                          "tokens",
+                          {
+                            "Expr": {
+                              "Param": "tokens"
+                            }
+                          }
+                        ]
+                      ]
+                    }
+                  }
                 ],
                 "condition": null
               }
@@ -25,12 +41,16 @@
         }
       }
     ],
-    "returns": ["created"]
+    "returns": [
+      "created"
+    ]
   },
   "parameters": {
     "codes": []
   },
   "parameter_types": {
-    "codes": {"Array": "Object"}
+    "codes": {
+      "Array": "Object"
+    }
   }
 }

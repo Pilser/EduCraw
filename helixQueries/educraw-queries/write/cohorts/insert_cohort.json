@@ -6,19 +6,37 @@
         "Query": {
           "name": "cohort",
           "steps": [
-            {"AddN": {
-              "label": "Cohort",
-              "properties": [
-                ["id", {"Expr": {"Param": "id"}}],
-                ["title", {"Expr": {"Param": "title"}}]
-              ]
-            }}
+            {
+              "AddN": {
+                "label": "Cohort",
+                "properties": [
+                  [
+                    "id",
+                    {
+                      "Expr": {
+                        "Param": "id"
+                      }
+                    }
+                  ],
+                  [
+                    "title",
+                    {
+                      "Expr": {
+                        "Param": "title"
+                      }
+                    }
+                  ]
+                ]
+              }
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["cohort"]
+    "returns": [
+      "cohort"
+    ]
   },
   "parameters": {
     "id": "",

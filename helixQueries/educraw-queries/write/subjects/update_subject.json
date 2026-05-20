@@ -6,7 +6,8 @@
         "Query": {
           "name": "subject",
           "steps": [
-            {"N": {"Param": "subject_id"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Subject"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
             {"SetProperty": ["slug", {"Expr": {"Param": "new_slug"}}]},
             {"SetProperty": ["title", {"Expr": {"Param": "new_title"}}]}
           ],
@@ -17,12 +18,12 @@
     "returns": ["subject"]
   },
   "parameters": {
-    "subject_id": [0],
+    "id": "",
     "new_slug": "",
     "new_title": ""
   },
   "parameter_types": {
-    "subject_id": {"Array": "I64"},
+    "id": "String",
     "new_slug": "String",
     "new_title": "String"
   }

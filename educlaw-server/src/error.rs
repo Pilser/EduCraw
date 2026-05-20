@@ -61,6 +61,9 @@ impl AppError {
             educlaw_helix::HelixError::ParseError(msg) => {
                 AppError::Internal(anyhow::anyhow!("Parse error: {}", msg))
             }
+            educlaw_helix::HelixError::ConnectionError(msg) => {
+                AppError::Internal(anyhow::anyhow!("HelixDB connection error: {}", msg))
+            }
         }
     }
 }

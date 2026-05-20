@@ -6,9 +6,38 @@
         "Query": {
           "name": "input_total",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "HAS_TOKEN_USAGE"},
-            {"AggregateBy": ["Sum", "input_tokens"]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "HAS_TOKEN_USAGE"
+            },
+            {
+              "AggregateBy": [
+                "Sum",
+                "input_tokens"
+              ]
+            }
           ],
           "condition": null
         }
@@ -17,9 +46,38 @@
         "Query": {
           "name": "output_total",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "HAS_TOKEN_USAGE"},
-            {"AggregateBy": ["Sum", "output_tokens"]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "HAS_TOKEN_USAGE"
+            },
+            {
+              "AggregateBy": [
+                "Sum",
+                "output_tokens"
+              ]
+            }
           ],
           "condition": null
         }
@@ -28,9 +86,38 @@
         "Query": {
           "name": "cache_creation_total",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "HAS_TOKEN_USAGE"},
-            {"AggregateBy": ["Sum", "cache_creation_tokens"]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "HAS_TOKEN_USAGE"
+            },
+            {
+              "AggregateBy": [
+                "Sum",
+                "cache_creation_tokens"
+              ]
+            }
           ],
           "condition": null
         }
@@ -39,9 +126,38 @@
         "Query": {
           "name": "cache_read_total",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "HAS_TOKEN_USAGE"},
-            {"AggregateBy": ["Sum", "cache_read_tokens"]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "HAS_TOKEN_USAGE"
+            },
+            {
+              "AggregateBy": [
+                "Sum",
+                "cache_read_tokens"
+              ]
+            }
           ],
           "condition": null
         }
@@ -50,20 +166,50 @@
         "Query": {
           "name": "turn_count",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"Out": "HAS_TOKEN_USAGE"},
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "Out": "HAS_TOKEN_USAGE"
+            },
             "Count"
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["input_total", "output_total", "cache_creation_total", "cache_read_total", "turn_count"]
+    "returns": [
+      "input_total",
+      "output_total",
+      "cache_creation_total",
+      "cache_read_total",
+      "turn_count"
+    ]
   },
   "parameters": {
-    "student_id": [0]
+    "student_id": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"}
+    "student_id": "String"
   }
 }

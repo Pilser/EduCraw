@@ -6,15 +6,40 @@
         "Query": {
           "name": "model",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "name"}}}},
-            {"ValueMap": null}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Model"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "name"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "name"
+                  }
+                }
+              }
+            },
+            {
+              "ValueMap": null
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["model"]
+    "returns": [
+      "model"
+    ]
   },
   "parameters": {
     "name": ""

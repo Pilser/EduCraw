@@ -6,7 +6,8 @@
         "Query": {
           "name": "result",
           "steps": [
-            {"N": {"Param": "code_id"}},
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
             "Drop"
           ],
           "condition": null
@@ -16,9 +17,9 @@
     "returns": ["result"]
   },
   "parameters": {
-    "code_id": [0]
+    "id": ""
   },
   "parameter_types": {
-    "code_id": {"Array": "I64"}
+    "id": "String"
   }
 }

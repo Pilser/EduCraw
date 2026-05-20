@@ -6,22 +6,62 @@
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Param": "student_id"}},
-            {"SetProperty": ["restriction_status", {"Expr": "Timestamp"}]},
-            {"SetProperty": ["restriction_message", {"Expr": {"Param": "message"}}]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Student"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "student_id"
+                  }
+                }
+              }
+            },
+            {
+              "SetProperty": [
+                "restriction_status",
+                {
+                  "Expr": "Timestamp"
+                }
+              ]
+            },
+            {
+              "SetProperty": [
+                "restriction_message",
+                {
+                  "Expr": {
+                    "Param": "message"
+                  }
+                }
+              ]
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["student"]
+    "returns": [
+      "student"
+    ]
   },
   "parameters": {
-    "student_id": [0],
+    "student_id": "",
     "message": ""
   },
   "parameter_types": {
-    "student_id": {"Array": "I64"},
+    "student_id": "String",
     "message": "String"
   }
 }

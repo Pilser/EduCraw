@@ -6,21 +6,54 @@
         "Query": {
           "name": "session",
           "steps": [
-            {"N": {"Param": "session_id"}},
-            {"SetProperty": ["last_token_checkpoint", {"Expr": {"Param": "checkpoint"}}]}
+            {
+              "NWhere": {
+                "Eq": [
+                  "$label",
+                  {
+                    "String": "Session"
+                  }
+                ]
+              }
+            },
+            {
+              "Where": {
+                "Compare": {
+                  "left": {
+                    "Property": "id"
+                  },
+                  "op": "Eq",
+                  "right": {
+                    "Param": "session_id"
+                  }
+                }
+              }
+            },
+            {
+              "SetProperty": [
+                "last_token_checkpoint",
+                {
+                  "Expr": {
+                    "Param": "checkpoint"
+                  }
+                }
+              ]
+            }
           ],
           "condition": null
         }
       }
     ],
-    "returns": ["session"]
+    "returns": [
+      "session"
+    ]
   },
   "parameters": {
-    "session_id": [0],
+    "session_id": "",
     "checkpoint": 0
   },
   "parameter_types": {
-    "session_id": {"Array": "I64"},
+    "session_id": "String",
     "checkpoint": "I64"
   }
 }

@@ -113,8 +113,12 @@ async fn main() -> anyhow::Result<()> {
                 Ok("helix") => {
                     tracing::info!("using HelixDB backend");
                     educlaw_helix::validate_queries()?;
-                    let config = HelixConfig::from_env();
+                    let config = HelixConfig::from_env()
+                        .map_err(|e| anyhow::anyhow!("HelixDB config error: {e}"))?;
                     let client = HelixClient::new(config);
+                    tracing::info!("testing HelixDB connection...");
+                    client.test_connection().await
+                        .map_err(|e| anyhow::anyhow!("HelixDB connection failed: {e}"))?;
                     educlaw_helix::init_schema(&client).await?;
                     Arc::new(HelixBackend::new(client))
                 }
