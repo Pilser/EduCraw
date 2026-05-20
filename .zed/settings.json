@@ -1,5 +1,16 @@
 // .zed/settings.json
 {
+  "mcp": {
+    "roopik": {
+      "command": "/usr/share/roopik/resources/app/resources/mcp-binaries/roopik-mcp-linux-x64",
+      "args": [
+        "--ws-port",
+        "9876",
+        "--token",
+        "655229c1-828c-4189-9522-06db0e8e9a06",
+      ],
+    },
+  },
   "file_scan_exclusions": [
     "**/local_temporary_files",
     "**/node_modules",
