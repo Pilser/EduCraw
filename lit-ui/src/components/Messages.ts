@@ -12,10 +12,12 @@ import { renderTool } from "../tools/index.js";
 import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
+import { extractMermaidBlocks } from "../utils/mermaid-detector.js";
 import { icon } from "@mariozechner/mini-lit";
 import { Check, ChevronDown, ChevronRight, Loader, Wrench, X } from "lucide";
 import "./ThinkingBlock.js";
 import "./ConsoleBlock.js";
+import "./MermaidBlock.js";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
 import "@mariozechner/mini-lit/dist/CodeBlock.js";
 
@@ -97,9 +99,44 @@ export class AssistantMessage extends LitElement {
 
     for (const chunk of this.message.content) {
       if (chunk.type === "text" && (chunk as any).text?.trim() !== "") {
-        orderedParts.push(
-          html`<markdown-block .content=${(chunk as any).text}></markdown-block>`,
-        );
+        const text = (chunk as any).text;
+        const mermaidBlocks = extractMermaidBlocks(text);
+        
+        if (mermaidBlocks.length > 0) {
+          // If we have mermaid blocks, extract them and render separately
+          let currentIndex = 0;
+          
+          for (const block of mermaidBlocks) {
+            // Add markdown before this mermaid block
+            if (block.startIndex > currentIndex) {
+              const beforeText = text.substring(currentIndex, block.startIndex);
+              if (beforeText.trim()) {
+                orderedParts.push(
+                  html`<markdown-block .content=${beforeText}></markdown-block>`,
+                );
+              }
+            }
+            
+            // Add the mermaid block
+            orderedParts.push(html`<mermaid-block .content=${block.content}></mermaid-block>`);
+            currentIndex = block.endIndex;
+          }
+          
+          // Add remaining markdown after last mermaid block
+          if (currentIndex < text.length) {
+            const afterText = text.substring(currentIndex);
+            if (afterText.trim()) {
+              orderedParts.push(
+                html`<markdown-block .content=${afterText}></markdown-block>`,
+              );
+            }
+          }
+        } else {
+          // No mermaid blocks, render as normal markdown
+          orderedParts.push(
+            html`<markdown-block .content=${text}></markdown-block>`,
+          );
+        }
       } else if (chunk.type === "thinking" && (chunk as any).thinking?.trim() !== "") {
         orderedParts.push(
           html`<thinking-block .content=${(chunk as any).thinking} .isStreaming=${this.isStreaming}></thinking-block>`,
