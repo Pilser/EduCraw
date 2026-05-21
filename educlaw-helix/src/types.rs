@@ -71,7 +71,7 @@ pub struct Student {
     pub last_model: Option<String>,
     #[serde(default)]
     pub created_at: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_int_opt")]
     pub last_seen: Option<String>,
 }
 
@@ -84,6 +84,19 @@ where
         serde_json::Value::String(s) => Ok(s),
         serde_json::Value::Number(n) => Ok(n.to_string()),
         _ => Ok(String::new()),
+    }
+}
+
+fn deserialize_string_or_int_opt<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => Ok(Some(s)),
+        serde_json::Value::Number(n) => Ok(Some(n.to_string())),
+        serde_json::Value::Null => Ok(None),
+        _ => Ok(None),
     }
 }
 

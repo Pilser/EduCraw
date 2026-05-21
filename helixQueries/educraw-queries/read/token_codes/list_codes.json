@@ -12,7 +12,19 @@
             {"Limit": 500},
             {"ValueMap": null}
           ],
-          "condition": null
+          "condition": {"VarNotEmpty": "tokens_filter"}
+        }
+      },
+      {
+        "Query": {
+          "name": "codes_all",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"OrderBy": ["created_at", "Desc"]},
+            {"Limit": 500},
+            {"ValueMap": null}
+          ],
+          "condition": {"VarEmpty": "tokens_filter"}
         }
       },
       {
@@ -48,15 +60,17 @@
         }
       }
     ],
-    "returns": ["codes", "codes_used", "codes_unused"]
+    "returns": ["codes", "codes_all", "codes_used", "codes_unused"]
   },
   "parameters": {
     "tokens": 0,
+    "tokens_filter": "",
     "show_used": "",
     "show_unused": ""
   },
   "parameter_types": {
     "tokens": "I64",
+    "tokens_filter": "String",
     "show_used": "String",
     "show_unused": "String"
   }

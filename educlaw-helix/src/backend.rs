@@ -280,6 +280,7 @@ impl DbBackend for HelixClient {
         input_multiplier: f64,
         output_multiplier: f64,
     ) -> Result<String> {
+        let now = chrono::Utc::now().to_rfc3339();
         let resp = self
             .write(
                 "insert_model",
@@ -288,7 +289,8 @@ impl DbBackend for HelixClient {
                     .add("name", name)
                     .add("display_name", display_name)
                     .add("input_multiplier", input_multiplier)
-                    .add("output_multiplier", output_multiplier),
+                    .add("output_multiplier", output_multiplier)
+                    .add("created_at", now),
             )
             .await?;
         resp.get("model")
@@ -409,6 +411,7 @@ impl DbBackend for HelixClient {
     }
 
     async fn insert_student(&self, student: &Student) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
         self.write(
             "insert_student",
             QueryParams::new()
@@ -420,7 +423,8 @@ impl DbBackend for HelixClient {
                 .add("cohort_id", student.cohort_id.as_str())
                 .add("uid_slot", student.uid_slot.unwrap_or(0))
                 .add("home_dir", student.home_dir.as_deref().unwrap_or(""))
-                .add("token_limit", student.token_limit.unwrap_or(0)),
+                .add("token_limit", student.token_limit.unwrap_or(0))
+                .add("created_at", now),
         )
         .await?;
         Ok(())
@@ -569,6 +573,7 @@ impl DbBackend for HelixClient {
     }
 
     async fn insert_session(&self, session: &Session) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
         self.write(
             "insert_session",
             QueryParams::new()
@@ -576,7 +581,8 @@ impl DbBackend for HelixClient {
                 .add("student_id", session.student_id.as_str())
                 .add("state", session.state.as_str())
                 .add("overlay_mount", session.overlay_mount.as_str())
-                .add("model", session.model.as_deref().unwrap_or("")),
+                .add("model", session.model.as_deref().unwrap_or(""))
+                .add("created_at", now),
         )
         .await?;
         Ok(())
@@ -658,11 +664,13 @@ impl DbBackend for HelixClient {
     }
 
     async fn insert_cohort(&self, cohort: &Cohort) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
         self.write(
             "insert_cohort",
             QueryParams::new()
                 .add("id", cohort.id.as_str())
-                .add("title", cohort.title.as_str()),
+                .add("title", cohort.title.as_str())
+                .add("created_at", now),
         )
         .await?;
         Ok(())
@@ -730,13 +738,15 @@ impl DbBackend for HelixClient {
     }
 
     async fn insert_subject(&self, subject: &Subject) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
         self.write(
             "insert_subject",
             QueryParams::new()
                 .add("id", subject.id.as_str())
                 .add("cohort_id", subject.cohort_id.as_str())
                 .add("slug", subject.slug.as_str())
-                .add("title", subject.title.as_str()),
+                .add("title", subject.title.as_str())
+                .add("created_at", now),
         )
         .await?;
         Ok(())
@@ -896,6 +906,11 @@ impl DbBackend for HelixClient {
     ) -> Result<Vec<TokenCode>> {
         let mut params = QueryParams::new()
             .add("tokens", tokens.unwrap_or(0));
+        if tokens.is_some() {
+            params.insert("tokens_filter", "true");
+        } else {
+            params.insert("tokens_filter", "");
+        }
         if let Some(u) = used {
             if u {
                 params.insert("show_used", "true");
@@ -904,7 +919,9 @@ impl DbBackend for HelixClient {
             }
         }
         let resp = self.read("list_codes", params).await?;
-        let mut codes = extract_array(&resp, "codes")?;
+        let mut codes = Vec::new();
+        codes.append(&mut try_extract_array(&resp, "codes"));
+        codes.append(&mut try_extract_array(&resp, "codes_all"));
         codes.append(&mut try_extract_array(&resp, "codes_used"));
         codes.append(&mut try_extract_array(&resp, "codes_unused"));
         Ok(codes)

@@ -17,6 +17,7 @@
                         ["id", {"Expr": {"Param": "id"}}],
                         ["code", {"Expr": {"Param": "code"}}],
                         ["tokens", {"Expr": {"Param": "tokens"}}],
+                        ["created_at", {"Expr": {"Param": "created_at"}}],
                         ["created_at", {"Expr": {"Param": "created_at"}}]
                       ]
                     }

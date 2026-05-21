@@ -12,7 +12,8 @@
                 ["id", {"Expr": {"Param": "id"}}],
                 ["slug", {"Expr": {"Param": "slug"}}],
                 ["title", {"Expr": {"Param": "title"}}],
-                ["cohort_id", {"Expr": {"Param": "cohort_id"}}]
+                ["cohort_id", {"Expr": {"Param": "cohort_id"}}],
+                ["created_at", {"Expr": {"Param": "created_at"}}]
               ]
             }}
           ],
@@ -50,12 +51,14 @@
     "id": "",
     "cohort_id": "",
     "slug": "",
-    "title": ""
+    "title": "",
+    "created_at": ""
   },
   "parameter_types": {
     "id": "String",
     "cohort_id": "String",
     "slug": "String",
-    "title": "String"
+    "title": "String",
+    "created_at": "String"
   }
 }

@@ -25,6 +25,14 @@
                         "Param": "title"
                       }
                     }
+                  ],
+                  [
+                    "created_at",
+                    {
+                      "Expr": {
+                        "Param": "created_at"
+                      }
+                    }
                   ]
                 ]
               }
@@ -40,10 +48,12 @@
   },
   "parameters": {
     "id": "",
-    "title": ""
+    "title": "",
+    "created_at": ""
   },
   "parameter_types": {
     "id": "String",
-    "title": "String"
+    "title": "String",
+    "created_at": "String"
   }
 }

@@ -18,7 +18,8 @@
                 ["token_balance", {"Value": {"I64": 0}}],
                 ["uid_slot", {"Expr": {"Param": "uid_slot"}}],
                 ["home_dir", {"Expr": {"Param": "home_dir"}}],
-                ["token_limit", {"Expr": {"Param": "token_limit"}}]
+                ["token_limit", {"Expr": {"Param": "token_limit"}}],
+                ["created_at", {"Expr": {"Param": "created_at"}}]
               ]
             }}
           ],
@@ -61,7 +62,8 @@
     "cohort_id": "",
     "uid_slot": 0,
     "home_dir": "",
-    "token_limit": 0
+    "token_limit": 0,
+    "created_at": ""
   },
   "parameter_types": {
     "id": "String",
@@ -72,6 +74,7 @@
     "cohort_id": "String",
     "uid_slot": "I64",
     "home_dir": "String",
-    "token_limit": "I64"
+    "token_limit": "I64",
+    "created_at": "String"
   }
 }

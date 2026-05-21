@@ -97,6 +97,14 @@
                         "Param": "thinking_params"
                       }
                     }
+                  ],
+                  [
+                    "created_at",
+                    {
+                      "Expr": {
+                        "Param": "created_at"
+                      }
+                    }
                   ]
                 ]
               }
@@ -124,7 +132,8 @@
     "provider": "",
     "think_mode": 0,
     "visual_support": 0,
-    "thinking_params": ""
+    "thinking_params": "",
+    "created_at": ""
   },
   "parameter_types": {
     "id": "String",
@@ -137,6 +146,7 @@
     "provider": "String",
     "think_mode": "I64",
     "visual_support": "I64",
-    "thinking_params": "String"
+    "thinking_params": "String",
+    "created_at": "String"
   }
 }
