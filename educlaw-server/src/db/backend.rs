@@ -55,7 +55,7 @@ pub trait DbBackend: Send + Sync {
     async fn get_model_multipliers(&self, name: &str) -> BackendResult<(f64, f64)>;
     async fn models_for_student(&self, student_id: &str) -> BackendResult<Vec<String>>;
     async fn raw_assignments_for_student(&self, student_id: &str) -> BackendResult<Vec<String>>;
-    async fn insert_model(&self, name: &str, display_name: &str, input_multiplier: f64, output_multiplier: f64) -> BackendResult<String>;
+    async fn insert_model(&self, id: &str, name: &str, display_name: &str, input_multiplier: f64, output_multiplier: f64) -> BackendResult<String>;
     async fn set_enabled(&self, id: &str, enabled: bool) -> BackendResult<()>;
     async fn set_multipliers(&self, name: &str, input_multiplier: f64, output_multiplier: f64) -> BackendResult<()>;
     async fn delete_model(&self, id: &str) -> BackendResult<()>;
@@ -157,12 +157,13 @@ impl DbBackend for SqliteBackend {
 
     async fn insert_model(
         &self,
+        id: &str,
         name: &str,
         display_name: &str,
         input_multiplier: f64,
         output_multiplier: f64,
     ) -> BackendResult<String> {
-        Ok(crate::db::models::insert_model(&self.pool, name, display_name, input_multiplier, output_multiplier).await?)
+        Ok(crate::db::models::insert_model(&self.pool, id, name, display_name, input_multiplier, output_multiplier).await?)
     }
 
     async fn set_enabled(&self, id: &str, enabled: bool) -> BackendResult<()> {
@@ -588,8 +589,8 @@ impl DbBackend for HelixBackend {
         Ok(HelixDb::raw_assignments_for_student(&self.client, student_id).await?)
     }
 
-    async fn insert_model(&self, name: &str, display_name: &str, input_multiplier: f64, output_multiplier: f64) -> BackendResult<String> {
-        Ok(HelixDb::insert_model(&self.client, name, display_name, input_multiplier, output_multiplier).await?)
+    async fn insert_model(&self, id: &str, name: &str, display_name: &str, input_multiplier: f64, output_multiplier: f64) -> BackendResult<String> {
+        Ok(HelixDb::insert_model(&self.client, id, name, display_name, input_multiplier, output_multiplier).await?)
     }
 
     async fn set_enabled(&self, id: &str, enabled: bool) -> BackendResult<()> {

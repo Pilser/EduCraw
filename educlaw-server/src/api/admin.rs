@@ -767,7 +767,9 @@ async fn create_model(
             "multipliers must be non-negative".into(),
         ));
     }
+    let id = Uuid::new_v4().to_string();
     let id = state.backend.insert_model(
+        &id,
         &body.name,
         &body.display_name,
         body.input_multiplier,

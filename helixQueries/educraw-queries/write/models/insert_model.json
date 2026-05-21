@@ -11,6 +11,14 @@
                 "label": "Model",
                 "properties": [
                   [
+                    "id",
+                    {
+                      "Expr": {
+                        "Param": "id"
+                      }
+                    }
+                  ],
+                  [
                     "name",
                     {
                       "Expr": {
@@ -94,12 +102,7 @@
               }
             },
             {
-              "Project": [
-                {
-                  "source": "$id",
-                  "alias": "id"
-                }
-              ]
+              "ValueMap": null
             }
           ],
           "condition": null
@@ -111,21 +114,23 @@
     ]
   },
   "parameters": {
+    "id": "",
     "name": "",
     "display_name": "",
-    "enabled": true,
+    "enabled": 1,
     "input_multiplier": 1.0,
     "output_multiplier": 1.0,
     "sort_priority": 1,
-    "provider": null,
-    "think_mode": null,
+    "provider": "",
+    "think_mode": 0,
     "visual_support": 0,
-    "thinking_params": null
+    "thinking_params": ""
   },
   "parameter_types": {
+    "id": "String",
     "name": "String",
     "display_name": "String",
-    "enabled": "Bool",
+    "enabled": "I64",
     "input_multiplier": "F64",
     "output_multiplier": "F64",
     "sort_priority": "I64",

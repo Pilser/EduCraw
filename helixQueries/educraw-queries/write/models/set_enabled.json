@@ -18,10 +18,10 @@
   },
   "parameters": {
     "id": "",
-    "enabled": true
+    "enabled": 1
   },
   "parameter_types": {
     "id": "String",
-    "enabled": "Bool"
+    "enabled": "I64"
   }
 }

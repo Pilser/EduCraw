@@ -46,11 +46,13 @@ impl Model {
 
 pub async fn insert_model(
     pool: &SqlitePool,
+    id: &str,
     name: &str,
     display_name: &str,
     input_multiplier: f64,
     output_multiplier: f64,
 ) -> Result<String, sqlx::Error> {
+    let _ = id; // SQLite generates its own UUID
     let id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO models (id, name, display_name, input_multiplier, output_multiplier)

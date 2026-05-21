@@ -11,6 +11,11 @@
       ],
     },
   },
+  "languages": {
+    "Rust": {
+      "enable_language_server": false,
+    },
+  },
   "file_scan_exclusions": [
     "**/local_temporary_files",
     "**/node_modules",
@@ -27,8 +32,5 @@
     "**/goose-workspace",
     "**/sacp-source",
     "**/pi",
-    "**/sacp-source",
-    "**/sacp-source",
-    "**/sacp-source",
   ],
 }

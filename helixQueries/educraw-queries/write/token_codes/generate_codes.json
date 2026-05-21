@@ -14,22 +14,10 @@
                     "AddN": {
                       "label": "TokenCode",
                       "properties": [
-                        [
-                          "code",
-                          {
-                            "Expr": {
-                              "Param": "code"
-                            }
-                          }
-                        ],
-                        [
-                          "tokens",
-                          {
-                            "Expr": {
-                              "Param": "tokens"
-                            }
-                          }
-                        ]
+                        ["id", {"Expr": {"Param": "id"}}],
+                        ["code", {"Expr": {"Param": "code"}}],
+                        ["tokens", {"Expr": {"Param": "tokens"}}],
+                        ["created_at", {"Expr": {"Param": "created_at"}}]
                       ]
                     }
                   }
@@ -41,16 +29,12 @@
         }
       }
     ],
-    "returns": [
-      "created"
-    ]
+    "returns": ["created"]
   },
   "parameters": {
     "codes": []
   },
   "parameter_types": {
-    "codes": {
-      "Array": "Object"
-    }
+    "codes": {"Array": "Object"}
   }
 }

@@ -8,17 +8,12 @@ fn extract_array<T: serde::de::DeserializeOwned>(
     body: &serde_json::Value,
     key: &str,
 ) -> Result<Vec<T>> {
-    // HelixDB returns {"key": {"properties": [...]}} for reads
-    // or {"key": [...]} for some queries
     let arr = body
         .get(key)
         .and_then(|v| {
             if let Some(obj) = v.as_object() {
-                // Try "properties" first (read queries)
                 obj.get("properties").and_then(|p| p.as_array())
-                    // Fall back to "ids" (write queries)
                     .or_else(|| obj.get("ids").and_then(|p| p.as_array()))
-                    // Fall back to direct array
                     .or_else(|| v.as_array())
             } else {
                 v.as_array()
@@ -40,6 +35,28 @@ fn extract_array<T: serde::de::DeserializeOwned>(
         .iter()
         .filter_map(|v| serde_json::from_value(v.clone()).ok())
         .collect())
+}
+
+fn try_extract_array<T: serde::de::DeserializeOwned>(
+    body: &serde_json::Value,
+    key: &str,
+) -> Vec<T> {
+    body.get(key)
+        .and_then(|v| {
+            if let Some(obj) = v.as_object() {
+                obj.get("properties").and_then(|p| p.as_array())
+                    .or_else(|| obj.get("ids").and_then(|p| p.as_array()))
+                    .or_else(|| v.as_array())
+            } else {
+                v.as_array()
+            }
+        })
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn extract_optional<T: serde::de::DeserializeOwned>(
@@ -93,6 +110,7 @@ pub trait DbBackend: Send + Sync {
     async fn raw_assignments_for_student(&self, student_id: &str) -> Result<Vec<String>>;
     async fn insert_model(
         &self,
+        id: &str,
         name: &str,
         display_name: &str,
         input_multiplier: f64,
@@ -256,6 +274,7 @@ impl DbBackend for HelixClient {
 
     async fn insert_model(
         &self,
+        id: &str,
         name: &str,
         display_name: &str,
         input_multiplier: f64,
@@ -265,6 +284,7 @@ impl DbBackend for HelixClient {
             .write(
                 "insert_model",
                 QueryParams::new()
+                    .add("id", id)
                     .add("name", name)
                     .add("display_name", display_name)
                     .add("input_multiplier", input_multiplier)
@@ -272,6 +292,9 @@ impl DbBackend for HelixClient {
             )
             .await?;
         resp.get("model")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
             .and_then(|v| v.get("id"))
             .and_then(|v| v.as_str())
             .map(String::from)
@@ -823,15 +846,47 @@ impl DbBackend for HelixClient {
     }
 
     async fn generate_codes(&self, tokens: i64, count: i64) -> Result<Vec<String>> {
+        fn generate_code() -> String {
+            let raw = uuid::Uuid::new_v4()
+                .to_string()
+                .replace('-', "")
+                .to_uppercase();
+            format!("EDU-{}-{}-{}", &raw[0..4], &raw[4..8], &raw[8..12])
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let codes_json: serde_json::Value = (0..count)
+            .map(|_| {
+                let id = uuid::Uuid::new_v4().to_string();
+                let code = generate_code();
+                serde_json::json!({
+                    "id": id,
+                    "code": code,
+                    "tokens": tokens,
+                    "created_at": now,
+                })
+            })
+            .collect();
+
         let resp = self
             .write(
                 "generate_codes",
-                QueryParams::new()
-                    .add("tokens", tokens)
-                    .add("count", count),
+                QueryParams::new().add("codes", codes_json),
             )
             .await?;
-        extract_array(&resp, "codes")
+
+        let codes: Vec<String> = resp
+            .get("created")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.get("code").and_then(|c| c.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(codes)
     }
 
     async fn list_codes(
@@ -849,16 +904,9 @@ impl DbBackend for HelixClient {
             }
         }
         let resp = self.read("list_codes", params).await?;
-        let mut codes: Vec<TokenCode> = Vec::new();
-        if let Ok(mut c) = extract_array::<TokenCode>(&resp, "codes") {
-            codes.append(&mut c);
-        }
-        if let Ok(mut c) = extract_array::<TokenCode>(&resp, "codes_used") {
-            codes.append(&mut c);
-        }
-        if let Ok(mut c) = extract_array::<TokenCode>(&resp, "codes_unused") {
-            codes.append(&mut c);
-        }
+        let mut codes = extract_array(&resp, "codes")?;
+        codes.append(&mut try_extract_array(&resp, "codes_used"));
+        codes.append(&mut try_extract_array(&resp, "codes_unused"));
         Ok(codes)
     }
 

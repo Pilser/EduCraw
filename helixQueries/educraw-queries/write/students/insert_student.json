@@ -59,9 +59,9 @@
     "display_name": "",
     "role": "student",
     "cohort_id": "",
-    "uid_slot": null,
-    "home_dir": null,
-    "token_limit": null
+    "uid_slot": 0,
+    "home_dir": "",
+    "token_limit": 0
   },
   "parameter_types": {
     "id": "String",

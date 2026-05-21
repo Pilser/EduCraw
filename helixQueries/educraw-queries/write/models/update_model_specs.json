@@ -7,7 +7,7 @@
           "name": "model",
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "id"}}}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
             {"SetProperty": ["provider", {"Expr": {"Param": "provider"}}]},
             {"SetProperty": ["think_mode", {"Expr": {"Param": "think_mode"}}]},
             {"SetProperty": ["visual_support", {"Expr": {"Param": "visual_support"}}]}
