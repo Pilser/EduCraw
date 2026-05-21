@@ -20,6 +20,24 @@ impl HelixClient {
 
     /// Test connectivity to HelixDB by sending a minimal query.
     /// Returns Ok(()) if the database responds, Err otherwise.
+    /// Send a fully-formed JSON query body to HelixDB without template processing.
+    pub(crate) async fn raw_query(&self, body: serde_json::Value) -> Result<serde_json::Value> {
+        let resp = self
+            .http
+            .post(format!("{}/v1/query", self.config.base_url))
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        let resp_body = resp.text().await?;
+        if status >= 400 {
+            return Err(HelixError::ApiError { status, body: resp_body });
+        }
+        let result: serde_json::Value = serde_json::from_str(&resp_body)?;
+        Ok(result)
+    }
+
     pub async fn test_connection(&self) -> Result<()> {
         let test_body = serde_json::json!({
             "read_batch": {

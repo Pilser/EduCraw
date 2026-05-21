@@ -23,18 +23,48 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _list_codes(&self, tokens: Option<i64>, used: Option<bool>) -> Result<Vec<TokenCode>> {
-        let mut params = QueryParams::new().add("tokens", tokens.unwrap_or(0));
-        if tokens.is_some() { params.insert("tokens_filter", "true"); } else { params.insert("tokens_filter", ""); }
-        if let Some(u) = used {
-            if u { params.insert("show_used", "true"); } else { params.insert("show_unused", "true"); }
+        let mut steps: Vec<serde_json::Value> = vec![
+            serde_json::json!({"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}}),
+        ];
+
+        if let Some(t) = tokens {
+            steps.push(serde_json::json!({
+                "Where": {"Compare": {
+                    "left": {"Property": "tokens"},
+                    "op": "Eq",
+                    "right": {"Constant": {"I64": t}}
+                }}
+            }));
         }
-        let resp = self.read("list_codes", params).await?;
-        let mut codes = Vec::new();
-        codes.append(&mut try_extract_array(&resp, "codes"));
-        codes.append(&mut try_extract_array(&resp, "codes_all"));
-        codes.append(&mut try_extract_array(&resp, "codes_used"));
-        codes.append(&mut try_extract_array(&resp, "codes_unused"));
-        Ok(codes)
+
+        if let Some(u) = used {
+            if u {
+                steps.push(serde_json::json!({"Where": {"IsNotNull": "used_by"}}));
+            } else {
+                steps.push(serde_json::json!({"Where": {"IsNull": "used_by"}}));
+            }
+        }
+
+        steps.push(serde_json::json!({"OrderBy": ["created_at", "Desc"]}));
+        steps.push(serde_json::json!({"Limit": 500}));
+        steps.push(serde_json::json!({"ValueMap": null}));
+
+        let body = serde_json::json!({
+            "request_type": "read",
+            "query": {
+                "queries": [{
+                    "Query": {
+                        "name": "codes",
+                        "steps": steps,
+                        "condition": null
+                    }
+                }],
+                "returns": ["codes"]
+            }
+        });
+
+        let resp = self.raw_query(body).await?;
+        Ok(try_extract_array(&resp, "codes"))
     }
 
     pub async fn _delete_code(&self, id: &str) -> Result<()> {
