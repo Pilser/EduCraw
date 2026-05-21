@@ -7,21 +7,36 @@
           "name": "student",
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
-            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
-            {"Choose": {
-              "condition": {"VarNotEmpty": "display_name"},
-              "then_traversal": {"steps": [
-                {"SetProperty": ["display_name", {"Expr": {"Param": "display_name"}}]}
-              ]},
-              "else_traversal": null
-            }},
-            {"Choose": {
-              "condition": {"VarNotEmpty": "password_hash"},
-              "then_traversal": {"steps": [
-                {"SetProperty": ["password_hash", {"Expr": {"Param": "password_hash"}}]}
-              ]},
-              "else_traversal": null
-            }},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "set_display_name",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"SetProperty": ["display_name", {"Expr": {"Param": "display_name"}}]}
+          ],
+          "condition": {"VarNotEmpty": "display_name"}
+        }
+      },
+      {
+        "Query": {
+          "name": "set_password_hash",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"SetProperty": ["password_hash", {"Expr": {"Param": "password_hash"}}]}
+          ],
+          "condition": {"VarNotEmpty": "password_hash"}
+        }
+      },
+      {
+        "Query": {
+          "name": "set_cohort_id",
+          "steps": [
+            {"N": {"Var": "student"}},
             {"SetProperty": ["cohort_id", {"Expr": {"Param": "cohort_id"}}]}
           ],
           "condition": null
@@ -29,13 +44,22 @@
       },
       {
         "Query": {
-          "name": "old_cohort_edge",
+          "name": "old_cohort",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
-            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
-            {"DropEdgeLabeled": {"to": {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}}, "label": "IN_COHORT"}}
+            {"N": {"Var": "student"}},
+            {"Out": "IN_COHORT"}
           ],
           "condition": {"VarNotEmpty": "cohort_id"}
+        }
+      },
+      {
+        "Query": {
+          "name": "drop_old",
+          "steps": [
+            {"N": {"Var": "student"}},
+            {"DropEdgeLabeled": {"to": {"Var": "old_cohort"}, "label": "IN_COHORT"}}
+          ],
+          "condition": {"VarNotEmpty": "old_cohort"}
         }
       },
       {
@@ -45,18 +69,21 @@
             {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
             {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}}
           ],
-          "condition": {"VarNotEmpty": "cohort_id"}
+          "condition": null
         }
       },
       {
         "Query": {
           "name": "link",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
-            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
-            {"AddE": {"label": "IN_COHORT", "to": {"Var": "new_cohort"}, "properties": []}}
+            {"N": {"Var": "student"}},
+            {"AddE": {
+              "label": "IN_COHORT",
+              "to": {"Var": "new_cohort"},
+              "properties": []
+            }}
           ],
-          "condition": {"VarNotEmpty": "cohort_id"}
+          "condition": {"VarNotEmpty": "new_cohort"}
         }
       }
     ],
