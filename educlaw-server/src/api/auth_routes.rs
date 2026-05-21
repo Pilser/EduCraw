@@ -16,7 +16,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::db::backend::{DbBackend, Student};
+use crate::db::{DbBackend, Student};
 use crate::error::{AppError, Result};
 
 use super::{common, AppState};

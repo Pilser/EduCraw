@@ -16,7 +16,7 @@ use sacp::schema::{
 use sacp::{Agent as SacpAgent, ConnectionTo};
 use tokio::sync::mpsc;
 
-use crate::db::backend::DbBackend;
+use crate::db::DbBackend;
 
 /// Spawns the model-switch poller as a fire-and-forget tokio task.
 ///

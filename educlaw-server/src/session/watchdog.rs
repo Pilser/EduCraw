@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use tokio::time::sleep;
 
-use crate::db::backend::DbBackend;
+use crate::db::DbBackend;
 use crate::session::{
     broker::{now_secs, SessionBroker},
     dirs::cleanup_session_dir,

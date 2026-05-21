@@ -34,7 +34,7 @@ use sqlx;
 use uuid::Uuid;
 
 use crate::auth::{bearer_token, hash_password, Claims};
-use crate::db::backend::{DbBackend, Student};
+use crate::db::{DbBackend, Student};
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 
@@ -448,7 +448,7 @@ async fn create_cohort(
         ));
     }
 
-    let cohort = crate::db::backend::Cohort {
+    let cohort = crate::db::Cohort {
         id: body.slug.clone(),
         title: body.title,
         created_at: String::new(),
@@ -585,7 +585,7 @@ async fn create_subject(
         ));
     }
 
-    let subject = crate::db::backend::Subject {
+    let subject = crate::db::Subject {
         id: Uuid::new_v4().to_string(),
         cohort_id: body.cohort_id.clone(),
         slug: body.slug.clone(),

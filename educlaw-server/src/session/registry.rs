@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::db::backend::DbBackend;
+use crate::db::DbBackend;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 

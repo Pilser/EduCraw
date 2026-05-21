@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::bearer_token;
-use crate::db::backend::{DbBackend, Session, Student};
+use crate::db::{DbBackend, Session, Student};
 use crate::error::{AppError, Result};
 use crate::session::{
     broker::now_secs,

@@ -1,6 +1,6 @@
 mod client;
 mod config;
-mod backend;
+pub mod backend;
 mod schema;
 mod types;
 mod error;

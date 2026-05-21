@@ -16,7 +16,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::auth::AuthConfig;
-use crate::db::backend::{DbBackend, SqliteBackend};
+use crate::db::{DbBackend, SqliteBackend};
 use crate::session::broker::SessionBroker;
 use crate::session::registry::SessionRegistry;
 

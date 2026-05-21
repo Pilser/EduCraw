@@ -20,7 +20,7 @@ use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-use crate::db::backend::DbBackend;
+use crate::db::DbBackend;
 use crate::error::{AppError, Result};
 
 use super::notifications::notification_to_frames;

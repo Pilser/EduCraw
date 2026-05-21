@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{bearer_token, Claims};
 use crate::db::students;
-use crate::db::backend::DbBackend;
+use crate::db::DbBackend;
 use crate::error::{AppError, Result};
 
 use super::AppState;

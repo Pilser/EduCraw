@@ -19,9 +19,9 @@ use sqlx::sqlite::SqlitePoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::auth::AuthConfig;
-use crate::db::backend::{DbBackend, SqliteBackend};
+use crate::db::{DbBackend, SqliteBackend};
 #[cfg(feature = "helix")]
-use crate::db::backend::HelixBackend;
+use crate::db::HelixBackend;
 use crate::db::schema::init_db;
 use crate::session::broker::SessionBroker;
 use crate::session::registry::SessionRegistry;

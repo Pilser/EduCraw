@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::{self, bearer_token};
-use crate::db::backend::Student;
+use crate::db::Student;
 use crate::error::{AppError, Result};
 
 use super::{common, AppState};
@@ -256,17 +256,17 @@ async fn redeem_code_handler(
 
     let result = state.backend.redeem_code(&code, &claims.sub).await?;
     match result {
-        crate::db::backend::RedeemResult::NotFound => {
+        crate::db::RedeemResult::NotFound => {
             return Err(AppError::BadRequest(
                 "Code not found. Please check and try again.".into(),
             ));
         }
-        crate::db::backend::RedeemResult::AlreadyUsed => {
+        crate::db::RedeemResult::AlreadyUsed => {
             return Err(AppError::BadRequest(
                 "This code has already been used.".into(),
             ));
         }
-        crate::db::backend::RedeemResult::Success {
+        crate::db::RedeemResult::Success {
             tokens,
             new_balance,
         } => {
