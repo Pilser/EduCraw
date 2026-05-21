@@ -15,7 +15,7 @@
       },
       {
         "Query": {
-          "name": "old_model",
+          "name": "old_session_model",
           "steps": [
             {"N": {"Var": "session"}},
             {"Out": "USED_MODEL"}
@@ -25,12 +25,12 @@
       },
       {
         "Query": {
-          "name": "drop_old",
+          "name": "drop_session_old",
           "steps": [
             {"N": {"Var": "session"}},
-            {"DropEdgeLabeled": {"to": {"Var": "old_model"}, "label": "USED_MODEL"}}
+            {"DropEdgeLabeled": {"to": {"Var": "old_session_model"}, "label": "USED_MODEL"}}
           ],
-          "condition": {"VarNotEmpty": "old_model"}
+          "condition": {"VarNotEmpty": "old_session_model"}
         }
       },
       {
@@ -45,7 +45,7 @@
       },
       {
         "Query": {
-          "name": "link",
+          "name": "session_link",
           "steps": [
             {"N": {"Var": "session"}},
             {"AddE": {
@@ -98,10 +98,7 @@
               "properties": []
             }}
           ],
-          "condition": {"And": [
-            {"VarNotEmpty": "student_node"},
-            {"VarNotEmpty": "model"}
-          ]}
+          "condition": {"And": [{"VarNotEmpty": "student_node"}, {"VarNotEmpty": "model"}]}
         }
       }
     ],

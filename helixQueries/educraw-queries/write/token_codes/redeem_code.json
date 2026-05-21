@@ -4,22 +4,25 @@
     "queries": [
       {
         "Query": {
-          "name": "token_code",
+          "name": "code_found",
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
             {"Where": {"Compare": {"left": {"Property": "code"}, "op": "Eq", "right": {"Param": "code"}}}},
-            {"Store": "token_code"},
-            {"Where": {"IsNull": "used_by"}}
+            {"ValueMap": null}
           ],
           "condition": null
         }
       },
       {
         "Query": {
-          "name": "student_node",
+          "name": "code_unused",
           "steps": [
-            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
-            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}}
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"And": [
+              {"Compare": {"left": {"Property": "code"}, "op": "Eq", "right": {"Param": "code"}}},
+              {"IsNull": "used_by"}
+            ]}},
+            {"ValueMap": null}
           ],
           "condition": null
         }
@@ -28,31 +31,31 @@
         "Query": {
           "name": "redeemed",
           "steps": [
-            {"N": {"Var": "token_code"}},
+            {"NWhere": {"Eq": ["$label", {"String": "TokenCode"}]}},
+            {"Where": {"And": [
+              {"Compare": {"left": {"Property": "code"}, "op": "Eq", "right": {"Param": "code"}}},
+              {"IsNull": "used_by"}
+            ]}},
             {"SetProperty": ["used_by", {"Expr": {"Param": "student_id"}}]},
-            {"SetProperty": ["used_at", {"Expr": "Timestamp"}]},
-            {"AddE": {
-              "label": "USED_BY",
-              "to": {"Var": "student_node"},
-              "properties": []
-            }}
+            {"SetProperty": ["used_at", {"Expr": "Timestamp"}]}
           ],
-          "condition": {"VarNotEmpty": "token_code"}
+          "condition": {"VarNotEmpty": "code_unused"}
         }
       },
       {
         "Query": {
           "name": "student",
           "steps": [
-            {"N": {"Var": "student_node"}},
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
             {"SetProperty": ["token_balance", {"Expr": {"Add": [{"Property": "token_balance"}, {"Param": "code_tokens"}]}}]},
-            {"Project": [{"source": "token_balance", "alias": "token_balance"}]}
+            {"ValueMap": null}
           ],
-          "condition": {"VarNotEmpty": "token_code"}
+          "condition": {"VarNotEmpty": "code_unused"}
         }
       }
     ],
-    "returns": ["token_code", "redeemed", "student"]
+    "returns": ["code_found", "code_unused", "redeemed", "student"]
   },
   "parameters": {
     "code": "",

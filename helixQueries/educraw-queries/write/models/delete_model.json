@@ -7,7 +7,7 @@
           "name": "result",
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Where": {"Compare": {"left": {"Property": "name"}, "op": "Eq", "right": {"Param": "id"}}}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "id"}}}},
             "Drop"
           ],
           "condition": null

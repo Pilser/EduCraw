@@ -13,8 +13,50 @@
           ],
           "condition": null
         }
+      },
+      {
+        "Query": {
+          "name": "session",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Session"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "session_id"}}}},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "student",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
+      },
+      {
+        "Query": {
+          "name": "last_model",
+          "steps": [
+            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+            {"Out": "LAST_USED_MODEL"},
+            {"ValueMap": null}
+          ],
+          "condition": null
+        }
       }
     ],
-    "returns": ["all_enabled"]
+    "returns": ["all_enabled", "session", "student", "last_model"]
+  },
+  "parameters": {
+    "session_id": "",
+    "student_id": ""
+  },
+  "parameter_types": {
+    "session_id": "String",
+    "student_id": "String"
   }
 }

@@ -252,8 +252,19 @@ impl DbBackend for HelixClient {
         let resp = self
             .read("get_model_multipliers", QueryParams::new().add("name", name))
             .await?;
-        let input = extract_f64(&resp, "input_multiplier")?;
-        let output = extract_f64(&resp, "output_multiplier")?;
+        let model = resp
+            .get("model")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first());
+        let input = model
+            .and_then(|v| v.get("input_multiplier"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0);
+        let output = model
+            .and_then(|v| v.get("output_multiplier"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0);
         Ok((input, output))
     }
 
@@ -545,7 +556,13 @@ impl DbBackend for HelixClient {
                 QueryParams::new().add("student_id", id),
             )
             .await?;
-        extract_i64(&resp, "token_balance")
+        resp.get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("token_balance"))
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| HelixError::ParseError("missing token_balance in response".into()))
     }
 
     async fn deduct_tokens(&self, id: &str, amount: i64) -> Result<i64> {
@@ -557,7 +574,13 @@ impl DbBackend for HelixClient {
                     .add("amount", amount),
             )
             .await?;
-        extract_i64(&resp, "new_balance")
+        resp.get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("token_balance"))
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| HelixError::ParseError("missing new_balance in deduct response".into()))
     }
 
     async fn topup_tokens(&self, id: &str, amount: i64) -> Result<i64> {
@@ -569,7 +592,13 @@ impl DbBackend for HelixClient {
                     .add("amount", amount),
             )
             .await?;
-        extract_i64(&resp, "new_balance")
+        resp.get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("token_balance"))
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| HelixError::ParseError("missing new_balance in topup response".into()))
     }
 
     async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -952,31 +981,53 @@ impl DbBackend for HelixClient {
     }
 
     async fn redeem_code(&self, code: &str, student_id: &str) -> Result<RedeemResult> {
-        let resp = self
-            .write(
-                "redeem_code",
+        // First lookup the code to get its tokens
+        let lookup = self
+            .read(
+                "redeem_code_lookup",
                 QueryParams::new()
                     .add("code", code)
                     .add("student_id", student_id),
             )
             .await?;
-        let status = resp
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        match status {
-            "success" => Ok(RedeemResult::Success {
-                tokens: extract_i64(&resp, "tokens")?,
-                new_balance: extract_i64(&resp, "new_balance")?,
-            }),
-            "not_found" => Ok(RedeemResult::NotFound),
-            "already_used" => Ok(RedeemResult::AlreadyUsed),
-            _ => Err(HelixError::ParseError(format!(
-                "unknown redeem status: {}",
-                status
-            ))),
+
+        let code_data = lookup
+            .get("code")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first());
+
+        let code_data = match code_data {
+            Some(c) => c,
+            None => return Ok(RedeemResult::NotFound),
+        };
+
+        if code_data.get("used_by").and_then(|v| v.as_str()).is_some() {
+            return Ok(RedeemResult::AlreadyUsed);
         }
+
+        let code_tokens = code_data.get("tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+
+        // Now perform the redemption
+        let _ = self
+            .write(
+                "redeem_code",
+                QueryParams::new()
+                    .add("code", code)
+                    .add("student_id", student_id)
+                    .add("code_tokens", code_tokens),
+            )
+            .await?;
+
+        let new_balance = self.get_token_balance(student_id).await?;
+
+        Ok(RedeemResult::Success {
+            tokens: code_tokens,
+            new_balance,
+        })
     }
+
+
 
     async fn export_codes(&self, tokens: i64) -> Result<Vec<TokenCode>> {
         let resp = self
@@ -1000,8 +1051,9 @@ impl DbBackend for HelixClient {
             .and_then(|v| v.get("properties"))
             .and_then(|v| v.as_array())
             .and_then(|arr| arr.first())
+            .and_then(|v| v.as_object())
             .cloned()
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            .unwrap_or(serde_json::Map::new());
 
         let cohort_title = resp
             .get("cohort")
@@ -1012,13 +1064,6 @@ impl DbBackend for HelixClient {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let subjects = resp
-            .get("subjects")
-            .and_then(|v| v.get("properties"))
-            .and_then(|v| v.as_array())
-            .map(|arr| serde_json::Value::Array(arr.clone()))
-            .unwrap_or(serde_json::Value::Array(vec![]));
-
         let available_cohorts = resp
             .get("all_cohorts")
             .and_then(|v| v.get("properties"))
@@ -1026,30 +1071,68 @@ impl DbBackend for HelixClient {
             .map(|arr| serde_json::Value::Array(arr.clone()))
             .unwrap_or(serde_json::Value::Array(vec![]));
 
-        Ok(serde_json::json!({
-            "student": student,
-            "cohort_title": cohort_title,
-            "available_cohorts": available_cohorts,
-            "subjects": subjects,
-        }))
+        // Flatten student properties into top level for API compatibility
+        let mut result = serde_json::Value::Object(student);
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("cohort_title".to_string(), cohort_title.into());
+            obj.insert("available_cohorts".to_string(), available_cohorts);
+        }
+        Ok(result)
     }
 
     async fn get_session_models(&self, session_id: &str) -> Result<serde_json::Value> {
+        let session_resp = self
+            .read("get_session", QueryParams::new().add("session_id", session_id))
+            .await?;
+        let student_id = session_resp
+            .get("session")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("student_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
         let resp = self
             .read(
                 "get_session_models",
-                QueryParams::new().add("session_id", session_id),
+                QueryParams::new()
+                    .add("session_id", session_id)
+                    .add("student_id", student_id),
             )
             .await?;
         let mut models = Vec::new();
         if let Some(all) = resp.get("all_enabled").and_then(|v| v.get("properties")).and_then(|v| v.as_array()) {
             models.extend_from_slice(all);
         }
-        if let Some(allowed) = resp.get("allowed").and_then(|v| v.get("properties")).and_then(|v| v.as_array()) {
-            models.extend_from_slice(allowed);
-        }
         models.dedup();
-        Ok(serde_json::json!({ "models": models }))
+
+        let last_model_name = resp
+            .get("last_model")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let session_model = resp
+            .get("session")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("model"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let active = last_model_name
+            .or(session_model)
+            .unwrap_or_else(|| "grok-4-1-fast-reasoning".to_string());
+
+        Ok(serde_json::json!({
+            "models": models,
+            "active": active,
+        }))
     }
 
     async fn students_with_active_sessions(&self) -> Result<serde_json::Value> {
