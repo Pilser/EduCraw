@@ -37,7 +37,7 @@
               {"IsNull": "used_by"}
             ]}},
             {"SetProperty": ["used_by", {"Expr": {"Param": "student_id"}}]},
-            {"SetProperty": ["used_at", {"Expr": "Timestamp"}]}
+            {"SetProperty": ["used_at", {"Expr": {"Param": "used_at"}}]}
           ],
           "condition": {"VarNotEmpty": "code_unused"}
         }
@@ -60,11 +60,13 @@
   "parameters": {
     "code": "",
     "student_id": "",
-    "code_tokens": 0
+    "code_tokens": 0,
+    "used_at": ""
   },
   "parameter_types": {
     "code": "String",
     "student_id": "String",
-    "code_tokens": "I64"
+    "code_tokens": "I64",
+    "used_at": "String"
   }
 }

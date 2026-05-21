@@ -48,7 +48,12 @@ impl crate::client::HelixClient {
         let code_data = match code_data { Some(c) => c, None => return Ok(RedeemResult::NotFound), };
         if code_data.get("used_by").and_then(|v| v.as_str()).is_some() { return Ok(RedeemResult::AlreadyUsed); }
         let code_tokens = code_data.get("tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let _ = self.write("redeem_code", QueryParams::new().add("code", code).add("student_id", student_id).add("code_tokens", code_tokens)).await?;
+        let used_at = chrono::Utc::now().to_rfc3339();
+        let _ = self.write("redeem_code", QueryParams::new()
+            .add("code", code)
+            .add("student_id", student_id)
+            .add("code_tokens", code_tokens)
+            .add("used_at", used_at)).await?;
         let new_balance = self._get_token_balance(student_id).await?;
         Ok(RedeemResult::Success { tokens: code_tokens, new_balance })
     }
