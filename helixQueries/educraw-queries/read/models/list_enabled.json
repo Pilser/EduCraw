@@ -19,9 +19,7 @@
             {
               "Has": [
                 "enabled",
-                {
-                  "Bool": true
-                }
+                {"I64": 1}
               ]
             },
             {

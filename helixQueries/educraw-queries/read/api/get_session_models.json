@@ -7,7 +7,8 @@
           "name": "all_enabled",
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "Model"}]}},
-            {"Where": {"Compare": {"left": {"Property": "enabled"}, "op": "Eq", "right": {"Constant": {"Bool": true}}}}},
+            {"Where": {"Compare": {"left": {"Property": "enabled"}, "op": "Eq", "right": {"Constant": {"I64": 1}}}}},
+            {"OrderByMultiple": [["sort_priority", "Asc"], ["display_name", "Asc"]]},
             {"ValueMap": null}
           ],
           "condition": null

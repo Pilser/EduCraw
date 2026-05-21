@@ -35,9 +35,7 @@
             {
               "Has": [
                 "enabled",
-                {
-                  "Bool": true
-                }
+                {"I64": 1}
               ]
             },
             {
@@ -76,9 +74,7 @@
             {
               "Has": [
                 "enabled",
-                {
-                  "Bool": true
-                }
+                {"I64": 1}
               ]
             },
             {

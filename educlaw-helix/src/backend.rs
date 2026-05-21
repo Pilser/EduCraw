@@ -257,9 +257,13 @@ impl DbBackend for HelixClient {
         Ok((input, output))
     }
 
-    async fn models_for_student(&self, _student_id: &str) -> Result<Vec<String>> {
-        let resp = self.read("models_for_student", QueryParams::new()).await?;
-        extract_array(&resp, "models")
+    async fn models_for_student(&self, student_id: &str) -> Result<Vec<String>> {
+        let resp = self.read("models_for_student", QueryParams::new().add("student_id", student_id)).await?;
+        let mut models = try_extract_array::<Model>(&resp, "allowed");
+        if models.is_empty() {
+            models = try_extract_array::<Model>(&resp, "all_enabled");
+        }
+        Ok(models.into_iter().map(|m| m.name).collect())
     }
 
     async fn raw_assignments_for_student(&self, student_id: &str) -> Result<Vec<String>> {
@@ -269,7 +273,18 @@ impl DbBackend for HelixClient {
                 QueryParams::new().add("student_id", student_id),
             )
             .await?;
-        extract_array(&resp, "models")
+        // raw_assignments uses Values["name"] which returns strings directly
+        let names: Vec<String> = resp
+            .get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(names)
     }
 
     async fn insert_model(
@@ -974,11 +989,49 @@ impl DbBackend for HelixClient {
     }
 
     async fn get_me(&self, student_id: &str) -> Result<serde_json::Value> {
-        self.read(
-            "get_me",
-            QueryParams::new().add("student_id", student_id),
-        )
-        .await
+        let resp = self
+            .read(
+                "get_me",
+                QueryParams::new().add("student_id", student_id),
+            )
+            .await?;
+        let student = resp
+            .get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        let cohort_title = resp
+            .get("cohort")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("title"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let subjects = resp
+            .get("subjects")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .map(|arr| serde_json::Value::Array(arr.clone()))
+            .unwrap_or(serde_json::Value::Array(vec![]));
+
+        let available_cohorts = resp
+            .get("all_cohorts")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .map(|arr| serde_json::Value::Array(arr.clone()))
+            .unwrap_or(serde_json::Value::Array(vec![]));
+
+        Ok(serde_json::json!({
+            "student": student,
+            "cohort_title": cohort_title,
+            "available_cohorts": available_cohorts,
+            "subjects": subjects,
+        }))
     }
 
     async fn get_session_models(&self, session_id: &str) -> Result<serde_json::Value> {
@@ -988,16 +1041,15 @@ impl DbBackend for HelixClient {
                 QueryParams::new().add("session_id", session_id),
             )
             .await?;
-        // HelixDB returns {"all_enabled": {"properties": [...]}, "allowed": {"properties": [...]}}
-        // Merge into a single "models" key for API compatibility
-        let mut merged = serde_json::Map::new();
-        if let Some(all) = resp.get("all_enabled").and_then(|v| v.get("properties")) {
-            merged.insert("all_enabled".to_string(), all.clone());
+        let mut models = Vec::new();
+        if let Some(all) = resp.get("all_enabled").and_then(|v| v.get("properties")).and_then(|v| v.as_array()) {
+            models.extend_from_slice(all);
         }
-        if let Some(allowed) = resp.get("allowed").and_then(|v| v.get("properties")) {
-            merged.insert("allowed".to_string(), allowed.clone());
+        if let Some(allowed) = resp.get("allowed").and_then(|v| v.get("properties")).and_then(|v| v.as_array()) {
+            models.extend_from_slice(allowed);
         }
-        Ok(serde_json::Value::Object(merged))
+        models.dedup();
+        Ok(serde_json::json!({ "models": models }))
     }
 
     async fn students_with_active_sessions(&self) -> Result<serde_json::Value> {
