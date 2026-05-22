@@ -455,6 +455,13 @@ async fn create_cohort(
     };
     state.backend.insert_cohort(&cohort).await?;
 
+    let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
+        .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
+    let cohort_dir = Path::new(&subjects_root).join(&cohort.id);
+    tokio::fs::create_dir_all(&cohort_dir)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("create cohort dir: {e}")))?;
+
     tracing::info!(cohort_id = %cohort.id, "admin: cohort created");
     Ok((
         StatusCode::CREATED,
