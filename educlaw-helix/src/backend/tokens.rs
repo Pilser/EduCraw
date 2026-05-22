@@ -46,6 +46,7 @@ impl crate::client::HelixClient {
         input_tokens_deducted: i64, output_tokens_deducted: i64,
         tokens_deducted: i64, balance_before: i64, balance_after: i64,
     ) -> Result<()> {
+        let recorded_at = chrono::Utc::now().to_rfc3339();
         self.write("record_deduction", QueryParams::new()
             .add("student_id", student_id)
             .add("session_id", session_id)
@@ -58,7 +59,8 @@ impl crate::client::HelixClient {
             .add("output_tokens_deducted", output_tokens_deducted)
             .add("tokens_deducted", tokens_deducted)
             .add("balance_before", balance_before)
-            .add("balance_after", balance_after)).await?;
+            .add("balance_after", balance_after)
+            .add("recorded_at", recorded_at)).await?;
         Ok(())
     }
 
