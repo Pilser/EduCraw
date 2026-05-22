@@ -47,7 +47,7 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _set_session_model_api(&self, session_id: &str, model: &str) -> Result<()> {
-        self.write("set_session_model_api", QueryParams::new().add("session_id", session_id).add("model", model)).await?;
+        self.write("set_session_model_api", QueryParams::new().add("session_id", session_id).add("model_name", model)).await?;
         Ok(())
     }
 

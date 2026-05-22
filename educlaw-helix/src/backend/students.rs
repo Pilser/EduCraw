@@ -78,7 +78,7 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _set_last_model(&self, id: &str, model: &str) -> Result<()> {
-        self.write("set_last_model", QueryParams::new().add("student_id", id).add("model", model)).await?;
+        self.write("set_last_model", QueryParams::new().add("student_id", id).add("model_name", model)).await?;
         Ok(())
     }
 

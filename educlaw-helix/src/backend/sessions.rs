@@ -28,7 +28,7 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _set_session_model(&self, id: &str, model: &str) -> Result<()> {
-        self.write("set_session_model", QueryParams::new().add("session_id", id).add("model", model)).await?;
+        self.write("set_session_model", QueryParams::new().add("session_id", id).add("model_name", model)).await?;
         Ok(())
     }
 
