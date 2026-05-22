@@ -55,7 +55,9 @@
                       "SetProperty": [
                         "ended_at",
                         {
-                          "Expr": "Timestamp"
+                          "Expr": {
+                            "Param": "ended_at"
+                          }
                         }
                       ]
                     }
@@ -75,10 +77,12 @@
   },
   "parameters": {
     "session_id": "",
-    "state": "active"
+    "state": "active",
+    "ended_at": ""
   },
   "parameter_types": {
     "session_id": "String",
-    "state": "String"
+    "state": "String",
+    "ended_at": "String"
   }
 }

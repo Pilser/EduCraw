@@ -33,7 +33,9 @@
               "SetProperty": [
                 "restriction_status",
                 {
-                  "Expr": "Timestamp"
+                  "Expr": {
+                    "Param": "restriction_status"
+                  }
                 }
               ]
             },
@@ -58,10 +60,12 @@
   },
   "parameters": {
     "student_id": "",
-    "message": ""
+    "message": "",
+    "restriction_status": ""
   },
   "parameter_types": {
     "student_id": "String",
-    "message": "String"
+    "message": "String",
+    "restriction_status": "String"
   }
 }

@@ -8,7 +8,7 @@
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
             {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
-            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+            {"SetProperty": ["last_seen", {"Expr": {"Param": "last_seen"}}]}
           ],
           "condition": null
         }
@@ -25,7 +25,8 @@
                 ["state", {"Expr": {"Param": "state"}}],
                 ["overlay_mount", {"Expr": {"Param": "overlay_mount"}}],
                 ["model", {"Expr": {"Param": "model_name"}}],
-                ["last_token_checkpoint", {"Value": {"I64": 0}}]
+                ["last_token_checkpoint", {"Value": {"I64": 0}}],
+                ["started_at", {"Expr": {"Param": "started_at"}}]
               ]
             }}
           ],
@@ -106,7 +107,9 @@
     "cohort_id": "",
     "state": "active",
     "overlay_mount": "",
-    "model_name": ""
+    "model_name": "",
+    "started_at": "",
+    "last_seen": ""
   },
   "parameter_types": {
     "id": "String",
@@ -114,6 +117,8 @@
     "cohort_id": "String",
     "state": "String",
     "overlay_mount": "String",
-    "model_name": "String"
+    "model_name": "String",
+    "started_at": "String",
+    "last_seen": "String"
   }
 }

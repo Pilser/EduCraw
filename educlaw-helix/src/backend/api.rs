@@ -33,13 +33,16 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _create_session_api(&self, params: &serde_json::Value) -> Result<serde_json::Value> {
+        let now = chrono::Utc::now().to_rfc3339();
         let qp = QueryParams::new()
             .add("id", params["id"].as_str().unwrap_or(""))
             .add("student_id", params["student_id"].as_str().unwrap_or(""))
             .add("cohort_id", params["cohort_id"].as_str().unwrap_or(""))
             .add("state", params["state"].as_str().unwrap_or("active"))
             .add("overlay_mount", params["overlay_mount"].as_str().unwrap_or(""))
-            .add("model_name", params["model_name"].as_str().unwrap_or(""));
+            .add("model_name", params["model_name"].as_str().unwrap_or(""))
+            .add("started_at", now.as_str())
+            .add("last_seen", now);
         self.write("create_session", qp).await
     }
 

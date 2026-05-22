@@ -33,7 +33,9 @@
               "SetProperty": [
                 "last_input_at",
                 {
-                  "Expr": "Timestamp"
+                  "Expr": {
+                    "Param": "last_input_at"
+                  }
                 }
               ]
             }
@@ -47,9 +49,11 @@
     ]
   },
   "parameters": {
-    "session_id": ""
+    "session_id": "",
+    "last_input_at": ""
   },
   "parameter_types": {
-    "session_id": "String"
+    "session_id": "String",
+    "last_input_at": "String"
   }
 }

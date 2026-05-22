@@ -33,7 +33,9 @@
               "SetProperty": [
                 "last_seen",
                 {
-                  "Expr": "Timestamp"
+                  "Expr": {
+                    "Param": "last_seen"
+                  }
                 }
               ]
             }
@@ -47,9 +49,11 @@
     ]
   },
   "parameters": {
-    "student_id": ""
+    "student_id": "",
+    "last_seen": ""
   },
   "parameter_types": {
-    "student_id": "String"
+    "student_id": "String",
+    "last_seen": "String"
   }
 }

@@ -15,7 +15,7 @@
                 ["overlay_mount", {"Expr": {"Param": "overlay_mount"}}],
                 ["model", {"Expr": {"Param": "model"}}],
                 ["last_token_checkpoint", {"Value": {"I64": 0}}],
-                ["created_at", {"Expr": {"Param": "created_at"}}]
+                ["started_at", {"Expr": {"Param": "started_at"}}]
               ]
             }}
           ],
@@ -28,7 +28,7 @@
           "steps": [
             {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
             {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
-            {"SetProperty": ["last_seen", {"Expr": "Timestamp"}]}
+            {"SetProperty": ["last_seen", {"Expr": {"Param": "last_seen"}}]}
           ],
           "condition": null
         }
@@ -57,7 +57,8 @@
     "state": "active",
     "overlay_mount": "",
     "model": "",
-    "created_at": ""
+    "started_at": "",
+    "last_seen": ""
   },
   "parameter_types": {
     "id": "String",
@@ -66,6 +67,7 @@
     "state": "String",
     "overlay_mount": "String",
     "model": "String",
-    "created_at": "String"
+    "started_at": "String",
+    "last_seen": "String"
   }
 }

@@ -22,7 +22,8 @@ impl crate::client::HelixClient {
             .add("state", session.state.as_str())
             .add("overlay_mount", session.overlay_mount.as_str())
             .add("model", session.model.as_deref().unwrap_or(""))
-            .add("created_at", now)).await?;
+            .add("started_at", now.as_str())
+            .add("last_seen", now)).await?;
         Ok(())
     }
 
@@ -32,7 +33,8 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _set_session_state(&self, id: &str, state: &str) -> Result<()> {
-        self.write("set_session_state", QueryParams::new().add("session_id", id).add("state", state)).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.write("set_session_state", QueryParams::new().add("session_id", id).add("state", state).add("ended_at", now)).await?;
         Ok(())
     }
 
@@ -42,7 +44,8 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _touch_last_input(&self, id: &str) -> Result<()> {
-        self.write("touch_last_input", QueryParams::new().add("session_id", id)).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.write("touch_last_input", QueryParams::new().add("session_id", id).add("last_input_at", now)).await?;
         Ok(())
     }
 

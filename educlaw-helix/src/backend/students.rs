@@ -36,7 +36,8 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _touch_last_seen(&self, id: &str) -> Result<()> {
-        self.write("touch_last_seen", QueryParams::new().add("student_id", id)).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.write("touch_last_seen", QueryParams::new().add("student_id", id).add("last_seen", now)).await?;
         Ok(())
     }
 
@@ -66,7 +67,8 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _ban_student(&self, id: &str, message: Option<&str>) -> Result<()> {
-        self.write("ban_student", QueryParams::new().add("student_id", id).add("message", message.unwrap_or(""))).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.write("ban_student", QueryParams::new().add("student_id", id).add("message", message.unwrap_or("")).add("restriction_status", now)).await?;
         Ok(())
     }
 
