@@ -1,18 +1,15 @@
 use crate::db::{BackendResult, HelixBackend, Model};
 use educlaw_helix::DbBackend as HelixDb;
-use super::conv::*;
 
 impl HelixBackend {
     pub async fn _list_models(&self) -> BackendResult<Vec<Model>> {
-        let m = HelixDb::list_models(&self.client).await?;
-        Ok(m.into_iter().map(helix_model_to_local).collect())
+        Ok(HelixDb::list_models(&self.client).await?)
     }
     pub async fn _list_enabled_models(&self) -> BackendResult<Vec<Model>> {
-        let m = HelixDb::list_enabled_models(&self.client).await?;
-        Ok(m.into_iter().map(helix_model_to_local).collect())
+        Ok(HelixDb::list_enabled_models(&self.client).await?)
     }
     pub async fn _get_model_by_name(&self, name: &str) -> BackendResult<Option<Model>> {
-        Ok(HelixDb::get_model_by_name(&self.client, name).await?.map(helix_model_to_local))
+        Ok(HelixDb::get_model_by_name(&self.client, name).await?)
     }
     pub async fn _get_model_multipliers(&self, name: &str) -> BackendResult<(f64, f64)> {
         Ok(HelixDb::get_model_multipliers(&self.client, name).await?)

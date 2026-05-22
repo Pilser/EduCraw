@@ -30,11 +30,15 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{bearer_token, Claims};
-use crate::db::students;
-use crate::db::DbBackend;
+use crate::db::{DbBackend, Student};
 use crate::error::{AppError, Result};
 
 use super::AppState;
+
+fn student_home_path(students_root: &str, s: &Student) -> std::path::PathBuf {
+    let component = s.home_dir.as_deref().unwrap_or(&s.username);
+    std::path::PathBuf::from(students_root).join(component)
+}
 
 // ── Router ────────────────────────────────────────────────────────────────
 
@@ -200,7 +204,7 @@ async fn student_home_dir(state: &AppState, student_id: &str) -> Result<PathBuf>
     let student = state.backend.get_student(student_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {student_id} not found")))?;
-    Ok(students::student_home_path(&state.students_root, &student))
+    Ok(student_home_path(&state.students_root, &student))
 }
 
 // ── Subject routes ────────────────────────────────────────────────────────

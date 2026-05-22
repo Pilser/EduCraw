@@ -1,21 +1,18 @@
 use crate::db::{BackendResult, HelixBackend, Student};
 use educlaw_helix::DbBackend as HelixDb;
-use super::conv::*;
 
 impl HelixBackend {
     pub async fn _get_student(&self, id: &str) -> BackendResult<Option<Student>> {
-        Ok(HelixDb::get_student(&self.client, id).await?.map(helix_student_to_local))
+        Ok(HelixDb::get_student(&self.client, id).await?)
     }
     pub async fn _get_student_by_username(&self, username: &str) -> BackendResult<Option<Student>> {
-        Ok(HelixDb::get_student_by_username(&self.client, username).await?.map(helix_student_to_local))
+        Ok(HelixDb::get_student_by_username(&self.client, username).await?)
     }
     pub async fn _list_students(&self) -> BackendResult<Vec<Student>> {
-        let s = HelixDb::list_students(&self.client).await?;
-        Ok(s.into_iter().map(helix_student_to_local).collect())
+        Ok(HelixDb::list_students(&self.client).await?)
     }
     pub async fn _insert_student(&self, student: &Student) -> BackendResult<()> {
-        let h = local_student_to_helix(student);
-        Ok(HelixDb::insert_student(&self.client, &h).await?)
+        Ok(HelixDb::insert_student(&self.client, student).await?)
     }
     pub async fn _touch_last_seen(&self, id: &str) -> BackendResult<()> {
         Ok(HelixDb::touch_last_seen(&self.client, id).await?)

@@ -17,7 +17,6 @@ mod custom_requests;
 mod images;
 mod model_poller;
 mod notifications;
-// pub mod stats;  // Deferred: tables to be planned later
 mod permissions;
 mod session;
 mod token_calculator;

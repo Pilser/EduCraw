@@ -139,7 +139,7 @@ struct MeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     cohort_title: Option<String>,
     token_balance: i64,
-    available_cohorts: Vec<crate::db::cohorts::Cohort>,
+    available_cohorts: Vec<crate::db::Cohort>,
 }
 
 async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Result<impl IntoResponse> {

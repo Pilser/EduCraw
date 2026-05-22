@@ -116,14 +116,6 @@ pub async fn spawn_sacp_client(
                                         "💰 [TOKEN] Usage update from goose (NOTE: token accounting now handled in PromptResponse)"
                                     );
                                     // Token accounting now triggered from PromptResponse in session.rs
-                                    // to ensure we get accurate input/output breakdown.
-                                    // spawn_token_accounting(
-                                    //     pool.clone(),
-                                    //     educlaw_session_id.clone(),
-                                    //     student_id.clone(),
-                                    //     model_name,
-                                    //     usage.used as i64,
-                                    // );
                                 }
                             }
                             SessionUpdate::Plan(plan) => {

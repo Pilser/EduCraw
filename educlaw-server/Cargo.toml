@@ -8,13 +8,8 @@ description = "EduClaw backend: ACP-over-WebSocket bridge, session isolation, an
 name = "educlaw-server"
 path = "src/main.rs"
 
-[features]
-default = ["sqlite"]
-sqlite = ["dep:sqlx"]
-helix = ["dep:educlaw-helix"]
-
 [dependencies]
-educlaw-helix = { path = "../educlaw-helix", optional = true }
+educlaw-helix = { path = "../educlaw-helix" }
 
 # Async runtime
 tokio.workspace = true
@@ -26,9 +21,6 @@ tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 
 # WebSocket upgrade
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
-
-# SQLite (async)
-sqlx = { workspace = true, optional = true }
 
 # JWT authentication
 jsonwebtoken = "9"

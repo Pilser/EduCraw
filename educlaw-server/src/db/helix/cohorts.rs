@@ -1,18 +1,15 @@
 use crate::db::{BackendResult, HelixBackend, Cohort};
 use educlaw_helix::DbBackend as HelixDb;
-use super::conv::*;
 
 impl HelixBackend {
     pub async fn _get_cohort(&self, id: &str) -> BackendResult<Option<Cohort>> {
-        Ok(HelixDb::get_cohort(&self.client, id).await?.map(helix_cohort_to_local))
+        Ok(HelixDb::get_cohort(&self.client, id).await?)
     }
     pub async fn _list_cohorts(&self) -> BackendResult<Vec<Cohort>> {
-        let c = HelixDb::list_cohorts(&self.client).await?;
-        Ok(c.into_iter().map(helix_cohort_to_local).collect())
+        Ok(HelixDb::list_cohorts(&self.client).await?)
     }
     pub async fn _insert_cohort(&self, cohort: &Cohort) -> BackendResult<()> {
-        let h = local_cohort_to_helix(cohort);
-        Ok(HelixDb::insert_cohort(&self.client, &h).await?)
+        Ok(HelixDb::insert_cohort(&self.client, cohort).await?)
     }
     pub async fn _rename_cohort(&self, old_id: &str, new_id: &str, new_title: &str) -> BackendResult<()> {
         Ok(HelixDb::rename_cohort(&self.client, old_id, new_id, new_title).await?)

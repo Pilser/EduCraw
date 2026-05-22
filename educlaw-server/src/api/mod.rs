@@ -12,11 +12,10 @@ mod sse;
 mod threads;
 
 use axum::{routing::get, Json, Router};
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::auth::AuthConfig;
-use crate::db::{DbBackend, SqliteBackend};
+use crate::db::DbBackend;
 use crate::session::broker::SessionBroker;
 use crate::session::registry::SessionRegistry;
 
@@ -24,7 +23,6 @@ use crate::session::registry::SessionRegistry;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: SqlitePool,
     pub backend: Arc<dyn DbBackend>,
     pub auth: AuthConfig,
     pub workspace_root: String,
@@ -33,7 +31,6 @@ pub struct AppState {
     pub registry: Arc<SessionRegistry>,
     /// Root dir containing subject dirs: `{subjects_root}/{cohort_id}/{slug}/`
     /// This is the OverlayFS lower layer — cohort course materials, read-only.
-    /// Matches the disk layout defined in the `subjects` DB table.
     pub subjects_root: String,
     /// Root dir containing one sub-dir per student: `{students_root}/{student_id}/`
     /// This is the OverlayFS upper layer — student persistent home, read-write.
@@ -42,7 +39,6 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
-        pool: SqlitePool,
         backend: Arc<dyn DbBackend>,
         auth: AuthConfig,
         workspace_root: String,
@@ -53,7 +49,6 @@ impl AppState {
         students_root: String,
     ) -> Self {
         Self {
-            pool,
             backend,
             auth,
             workspace_root,

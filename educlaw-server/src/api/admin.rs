@@ -30,7 +30,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use sqlx;
+
 use uuid::Uuid;
 
 use crate::auth::{bearer_token, hash_password, Claims};
@@ -1271,7 +1271,7 @@ async fn deduct_tokens_handler(
 
 // ── GET /admin/students/:id/token-deductions ───────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize)]
 struct TokenDeductionRecord {
     id: String,
     session_id: String,
