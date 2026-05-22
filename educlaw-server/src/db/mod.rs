@@ -116,7 +116,7 @@ pub trait DbBackend: Send + Sync {
     async fn insert_subject(&self, subject: &Subject) -> BackendResult<()>;
     async fn update_subject(&self, id: &str, new_slug: &str, new_title: &str) -> BackendResult<()>;
     async fn delete_subject(&self, id: &str) -> BackendResult<()>;
-    async fn record_turn(&self, session_id: &str, tokens: &TurnTokens) -> BackendResult<()>;
+    async fn record_turn(&self, student_id: &str, session_id: &str, tokens: &TurnTokens) -> BackendResult<()>;
     async fn session_totals(&self, session_id: &str) -> BackendResult<SessionTokenTotals>;
     async fn student_total_tokens(&self, student_id: &str) -> BackendResult<StudentTokenTotals>;
     async fn record_deduction(&self, student_id: &str, session_id: &str, model_name: &str, input_multiplier: f64, output_multiplier: f64, input_tokens_used: i64, output_tokens_used: i64, input_tokens_deducted: i64, output_tokens_deducted: i64, tokens_deducted: i64, balance_before: i64, balance_after: i64) -> BackendResult<()>;
@@ -197,7 +197,7 @@ impl DbBackend for SqliteBackend {
     async fn update_subject(&self, id: &str, new_slug: &str, new_title: &str) -> BackendResult<()> { self._update_subject(id, new_slug, new_title).await }
     async fn delete_subject(&self, id: &str) -> BackendResult<()> { self._delete_subject(id).await }
     // ── Tokens ──
-    async fn record_turn(&self, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> { self._record_turn(session_id, tokens).await }
+    async fn record_turn(&self, student_id: &str, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> { self._record_turn(student_id, session_id, tokens).await }
     async fn session_totals(&self, session_id: &str) -> BackendResult<SessionTokenTotals> { self._session_totals(session_id).await }
     async fn student_total_tokens(&self, student_id: &str) -> BackendResult<StudentTokenTotals> { self._student_total_tokens(student_id).await }
     async fn record_deduction(&self, student_id: &str, session_id: &str, model_name: &str, input_multiplier: f64, output_multiplier: f64, input_tokens_used: i64, output_tokens_used: i64, input_tokens_deducted: i64, output_tokens_deducted: i64, tokens_deducted: i64, balance_before: i64, balance_after: i64) -> BackendResult<()> { self._record_deduction(student_id, session_id, model_name, input_multiplier, output_multiplier, input_tokens_used, output_tokens_used, input_tokens_deducted, output_tokens_deducted, tokens_deducted, balance_before, balance_after).await }
@@ -287,7 +287,7 @@ impl DbBackend for HelixBackend {
     async fn update_subject(&self, id: &str, new_slug: &str, new_title: &str) -> BackendResult<()> { self._update_subject(id, new_slug, new_title).await }
     async fn delete_subject(&self, id: &str) -> BackendResult<()> { self._delete_subject(id).await }
     // ── Tokens ──
-    async fn record_turn(&self, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> { self._record_turn(session_id, tokens).await }
+    async fn record_turn(&self, student_id: &str, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> { self._record_turn(student_id, session_id, tokens).await }
     async fn session_totals(&self, session_id: &str) -> BackendResult<SessionTokenTotals> { self._session_totals(session_id).await }
     async fn student_total_tokens(&self, student_id: &str) -> BackendResult<StudentTokenTotals> { self._student_total_tokens(student_id).await }
     async fn record_deduction(&self, student_id: &str, session_id: &str, model_name: &str, input_multiplier: f64, output_multiplier: f64, input_tokens_used: i64, output_tokens_used: i64, input_tokens_deducted: i64, output_tokens_deducted: i64, tokens_deducted: i64, balance_before: i64, balance_after: i64) -> BackendResult<()> { self._record_deduction(student_id, session_id, model_name, input_multiplier, output_multiplier, input_tokens_used, output_tokens_used, input_tokens_deducted, output_tokens_deducted, tokens_deducted, balance_before, balance_after).await }

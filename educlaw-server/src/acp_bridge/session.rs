@@ -435,7 +435,7 @@ pub async fn handle_input_sse(
                                 cache_creation_input_tokens: 0,
                                 cache_read_input_tokens: 0,
                             };
-                            let _ = backend_clone.record_turn(&sid_clone, &tokens).await;
+                            let _ = backend_clone.record_turn(&student_id_clone, &sid_clone, &tokens).await;
                             let _ = token_calculator::calculate_and_deduct(
                                 &*backend_clone, &student_id_clone, &sid_clone,
                                 &model_name_clone, input_tokens, output_tokens,

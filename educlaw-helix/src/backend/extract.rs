@@ -93,3 +93,26 @@ pub fn extract_f64(body: &serde_json::Value, key: &str) -> Result<f64> {
         .and_then(|v| v.as_f64())
         .ok_or_else(|| HelixError::ParseError(format!("missing '{}' f64 in response", key)))
 }
+
+/// Extract a Sum aggregate from an `AggregateBy: ["Sum", field]` query result.
+/// Response shape: `{query_key: {properties: [{field_Sum: float}]}}`
+pub fn extract_aggregate_sum(body: &serde_json::Value, query_key: &str, field: &str) -> Result<i64> {
+    let sum_key = format!("{field}_Sum");
+    let val = body.get(query_key)
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get(&sum_key))
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| HelixError::ParseError(format!("missing '{query_key}' aggregate '{}' in response", sum_key)))?;
+    Ok(val as i64)
+}
+
+/// Extract a `Count` result from a query with a `"Count"` step.
+/// Response shape: `{query_key: {count: i64}}`
+pub fn extract_count(body: &serde_json::Value, query_key: &str) -> Result<i64> {
+    body.get(query_key)
+        .and_then(|v| v.get("count"))
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| HelixError::ParseError(format!("missing '{}' count in response", query_key)))
+}

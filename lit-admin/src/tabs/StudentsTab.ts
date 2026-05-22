@@ -502,7 +502,8 @@ export class StudentsTab extends LitElement {
                                       ${this.tokenUsage
                                         ? html`
                                             <div class="text-xs text-muted-foreground space-y-1">
-                                              <p>Total tokens: ${(this.tokenUsage.total_input_tokens + this.tokenUsage.total_output_tokens).toLocaleString()}</p>
+                                              <p><span class="text-blue-600 dark:text-blue-400">Input:</span> ${this.tokenUsage.total_input_tokens.toLocaleString()}</p>
+                                              <p><span class="text-purple-600 dark:text-purple-400">Output:</span> ${this.tokenUsage.total_output_tokens.toLocaleString()}</p>
                                               <p>Turns: ${this.tokenUsage.turn_count}</p>
                                             </div>
                                           `

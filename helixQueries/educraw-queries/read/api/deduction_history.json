@@ -30,7 +30,7 @@
               }
             },
             {
-              "In": "HAS_DEDUCTION"
+              "Out": "HAS_DEDUCTION"
             },
             {
               "OrderBy": [

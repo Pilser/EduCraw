@@ -1,7 +1,7 @@
 use crate::db::{BackendResult, SqliteBackend, SessionTokenTotals, StudentTokenTotals, TurnTokens};
 
 impl SqliteBackend {
-    pub async fn _record_turn(&self, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> {
+    pub async fn _record_turn(&self, _student_id: &str, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> {
         Ok(crate::db::token_usage::record_turn(&self.pool, session_id, tokens).await?)
     }
     pub async fn _session_totals(&self, session_id: &str) -> BackendResult<SessionTokenTotals> {

@@ -3,14 +3,14 @@ use educlaw_helix::DbBackend as HelixDb;
 use super::conv::*;
 
 impl HelixBackend {
-    pub async fn _record_turn(&self, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> {
+    pub async fn _record_turn(&self, student_id: &str, session_id: &str, tokens: &TurnTokens) -> BackendResult<()> {
         let h = educlaw_helix::TurnTokens {
             model: tokens.model.clone(), input_tokens: tokens.input_tokens,
             output_tokens: tokens.output_tokens,
             cache_creation_input_tokens: tokens.cache_creation_input_tokens,
             cache_read_input_tokens: tokens.cache_read_input_tokens,
         };
-        Ok(HelixDb::record_turn(&self.client, session_id, &h).await?)
+        Ok(HelixDb::record_turn(&self.client, student_id, session_id, &h).await?)
     }
     pub async fn _session_totals(&self, session_id: &str) -> BackendResult<SessionTokenTotals> {
         let t = HelixDb::session_totals(&self.client, session_id).await?;
