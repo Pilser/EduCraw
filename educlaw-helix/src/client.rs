@@ -31,6 +31,14 @@ impl HelixClient {
 
         let status = resp.status().as_u16();
         let resp_body = resp.text().await?;
+
+        tracing::debug!(
+            request_body = %serde_json::to_string(&body).unwrap_or_default(),
+            response_body = %resp_body,
+            status = status,
+            "HelixDB raw query"
+        );
+
         if status >= 400 {
             return Err(HelixError::ApiError { status, body: resp_body });
         }

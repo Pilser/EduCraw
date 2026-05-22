@@ -205,7 +205,15 @@ async fn update_me(
     });
     let result = state.backend.update_me_api(&claims.sub, &updates).await?;
 
-    let updated_cohort_id = result["student"]["cohort_id"].as_str().unwrap_or("").to_string();
+    let student_props = result.get("student")
+        .and_then(|v| v.get("properties"))
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let updated_cohort_id = student_props.get("cohort_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let subject_ids: Vec<String> = if updated_cohort_id.is_empty() {
         vec![]
     } else {
@@ -215,11 +223,12 @@ async fn update_me(
             .collect()
     };
 
-    let updated_display_name = result["student"]["display_name"].as_str().unwrap_or("").to_string();
+    let updated_display_name = student_props.get("display_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let updated_role = student_props.get("role").and_then(|v| v.as_str()).unwrap_or("student");
 
     let token = state.auth.sign_student_token(
         &claims.sub,
-        &result["student"]["role"].as_str().unwrap_or("student"),
+        &updated_role,
         &updated_cohort_id,
         subject_ids.clone(),
     )?;

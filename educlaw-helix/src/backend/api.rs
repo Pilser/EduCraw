@@ -49,10 +49,126 @@ impl crate::client::HelixClient {
     }
 
     pub async fn _update_me_api(&self, student_id: &str, updates: &serde_json::Value) -> Result<serde_json::Value> {
-        let mut params = QueryParams::new().add("student_id", student_id);
-        if let Some(display_name) = updates.get("display_name").and_then(|v| v.as_str()) { params.insert("display_name", display_name); }
-        if let Some(cohort_id) = updates.get("cohort_id").and_then(|v| v.as_str()) { params.insert("cohort_id", cohort_id); }
-        if let Some(password_hash) = updates.get("password_hash").and_then(|v| v.as_str()) { params.insert("password_hash", password_hash); }
-        self.write("update_me", params).await
+        let mut queries: Vec<serde_json::Value> = vec![
+            serde_json::json!({
+                "Query": {
+                    "name": "student",
+                    "steps": [
+                        {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+                        {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+                        {"ValueMap": null}
+                    ],
+                    "condition": null
+                }
+            }),
+        ];
+
+        let mut params = serde_json::Map::new();
+        params.insert("student_id".to_string(), serde_json::Value::String(student_id.to_string()));
+
+        if let Some(display_name) = updates.get("display_name").and_then(|v| v.as_str()) {
+            if !display_name.is_empty() {
+                params.insert("display_name".to_string(), serde_json::Value::String(display_name.to_string()));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "set_display_name",
+                        "steps": [
+                            {"N": {"Var": "student"}},
+                            {"SetProperty": ["display_name", {"Expr": {"Param": "display_name"}}]}
+                        ],
+                        "condition": null
+                    }
+                }));
+            }
+        }
+
+        if let Some(password_hash) = updates.get("password_hash").and_then(|v| v.as_str()) {
+            if !password_hash.is_empty() {
+                params.insert("password_hash".to_string(), serde_json::Value::String(password_hash.to_string()));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "set_password_hash",
+                        "steps": [
+                            {"N": {"Var": "student"}},
+                            {"SetProperty": ["password_hash", {"Expr": {"Param": "password_hash"}}]}
+                        ],
+                        "condition": null
+                    }
+                }));
+            }
+        }
+
+        if let Some(cohort_id) = updates.get("cohort_id").and_then(|v| v.as_str()) {
+            if !cohort_id.is_empty() {
+                params.insert("cohort_id".to_string(), serde_json::Value::String(cohort_id.to_string()));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "set_cohort_id",
+                        "steps": [
+                            {"N": {"Var": "student"}},
+                            {"SetProperty": ["cohort_id", {"Expr": {"Param": "cohort_id"}}]}
+                        ],
+                        "condition": null
+                    }
+                }));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "old_cohort",
+                        "steps": [
+                            {"N": {"Var": "student"}},
+                            {"Out": "IN_COHORT"}
+                        ],
+                        "condition": null
+                    }
+                }));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "drop_old",
+                        "steps": [
+                            {"N": {"Var": "student"}},
+                            {"DropEdgeLabeled": {"to": {"Var": "old_cohort"}, "label": "IN_COHORT"}}
+                        ],
+                        "condition": {"VarNotEmpty": "old_cohort"}
+                    }
+                }));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "new_cohort",
+                        "steps": [
+                            {"NWhere": {"Eq": ["$label", {"String": "Cohort"}]}},
+                            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "cohort_id"}}}}
+                        ],
+                        "condition": null
+                    }
+                }));
+                queries.push(serde_json::json!({
+                    "Query": {
+                        "name": "link",
+                        "steps": [
+                            {"N": {"Var": "student"}},
+                            {"AddE": {"label": "IN_COHORT", "to": {"Var": "new_cohort"}, "properties": []}}
+                        ],
+                        "condition": {"VarNotEmpty": "new_cohort"}
+                    }
+                }));
+            }
+        }
+
+        let body = serde_json::json!({
+            "request_type": "write",
+            "query": {
+                "queries": queries,
+                "returns": ["student"]
+            },
+            "parameters": params,
+            "parameter_types": {
+                "student_id": "String",
+                "display_name": "String",
+                "password_hash": "String",
+                "cohort_id": "String"
+            }
+        });
+
+        self.raw_query(body).await
     }
 }
