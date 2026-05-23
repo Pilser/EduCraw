@@ -21,7 +21,7 @@ use crate::db::DbBackend;
 use crate::session::{
     broker::{now_secs, SessionBroker},
     dirs::cleanup_session_dir,
-    namespace::{kill_process_tree, umount_overlay},
+    namespace::{cleanup_veth, kill_process_tree, session_ip_block, umount_overlay},
     registry::SessionRegistry,
 };
 
@@ -100,6 +100,10 @@ pub async fn run_watchdog(
                     registry.remove(&config.session_id).await;
                 }
             }
+
+            // Remove veth pair (child end auto-destroyed with netns teardown)
+            let (b1, b2) = session_ip_block(&config.session_id);
+            cleanup_veth(b1, b2).await;
 
             if !umount_overlay(&config.overlay_mount).await {
                 tracing::warn!(

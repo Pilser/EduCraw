@@ -23,6 +23,7 @@ use crate::db::DbBackend;
 use crate::db::TurnTokens;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
+use crate::session::namespace::{build_pivot_root_script, session_ip_block, setup_veth_pair};
 use crate::session::registry::{ManagedSession, SessionRegistry};
 
 use super::client::spawn_sacp_client;
@@ -74,6 +75,7 @@ pub async fn init_acp_session(
     }
 
     tokio::fs::create_dir_all(&goose_path_root).await.ok();
+    tokio::fs::create_dir_all(&session_config_dir).await.ok();
 
     if let Some(ref prompt) = system_prompt {
         let prompt_dir = goose_path_root.join("config").join("prompts");
@@ -83,23 +85,31 @@ pub async fn init_acp_session(
             .ok();
     }
 
-    // Spawn goose
-    let goose_cmd = format!("{} acp", goose_bin.display());
+    // Resolve IP block from session_id (deterministic, no external state)
+    let (b1, b2) = session_ip_block(&session_id);
+
+    // Build pivot_root inner script (filesystem jail + network config inside ns)
+    let merged = workspace.display().to_string();
+    let goose_bin_path = goose_bin.display().to_string();
+    let inner_script = build_pivot_root_script(&merged, &session_id, &goose_bin_path, b1, b2);
+
     let mut cmd = tokio::process::Command::new("unshare");
     let is_root = unsafe { libc::getuid() } == 0;
     if is_root {
         cmd.args([
-            "--mount", "--pid", "--fork", "sh", "-c", &goose_cmd,
+            "--mount", "--pid", "--net", "--fork",
+            "sh", "-c", &inner_script,
         ]);
     } else {
         cmd.args([
-            "--user", "--map-root-user", "--mount", "--pid", "--fork",
-            "sh", "-c", &goose_cmd,
+            "--user", "--map-root-user", "--mount", "--pid", "--net", "--fork",
+            "sh", "-c", &inner_script,
         ]);
     }
     cmd.current_dir(&workspace);
     cmd.env_clear();
     cmd.env("GOOSE_PATH_ROOT", goose_path_root.display().to_string());
+    cmd.env("CLAW_CONFIG_HOME", session_config_dir.display().to_string());
     for (k, v) in &env_vars {
         cmd.env(k, v);
     }
@@ -107,12 +117,17 @@ pub async fn init_acp_session(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // seccomp + setsid in pre_exec
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;
         unsafe {
             cmd.pre_exec(|| {
                 libc::setsid();
+                if let Ok(filter) = crate::security::seccomp::build_student_filter() {
+                    seccompiler::apply_filter(&filter)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                }
                 Ok(())
             });
         }
@@ -121,6 +136,8 @@ pub async fn init_acp_session(
     tracing::info!(
         session_id = %session_id,
         model = ?model,
+        goose_path_root = %goose_path_root.display(),
+        config_home = %session_config_dir.display(),
         "📦 [GOOSE] Spawning ACP subprocess (SSE init)..."
     );
 
@@ -133,6 +150,10 @@ pub async fn init_acp_session(
     })?;
 
     tracing::info!(session_id = %session_id, pid = pid, "✓ [GOOSE] Subprocess spawned (SSE init)");
+
+    // Configure veth pair from host side (Option B: nsenter from host)
+    setup_veth_pair(pid, b1, b2).await?;
+    tracing::info!(session_id = %session_id, b1, b2, "veth pair configured");
 
     let child_stdin = child.stdin.take().expect("stdin piped");
     let child_stdout = child.stdout.take().expect("stdout piped");

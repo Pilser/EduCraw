@@ -28,7 +28,7 @@ use crate::error::{AppError, Result};
 use crate::session::{
     broker::now_secs,
     dirs::SessionDirs,
-    namespace::{mount_overlay, umount_overlay, kill_process_tree},
+    namespace::{cleanup_veth, kill_process_tree, mount_overlay, session_ip_block, umount_overlay},
     watchdog::{run_watchdog, WatchdogConfig},
 };
 
@@ -386,6 +386,10 @@ async fn terminate_session(
     if let Some(pid) = session.namespace_pid {
         kill_process_tree(pid, 5).await;
     }
+
+    // Remove veth pair (child end auto-destroyed with netns teardown)
+    let (b1, b2) = session_ip_block(&session_id);
+    cleanup_veth(b1, b2).await;
 
     let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
     if !umount_overlay(&dirs.merged).await {

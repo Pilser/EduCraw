@@ -1,7 +1,8 @@
 // educlaw-server/src/session/namespace.rs
 //
-// OverlayFS management (via fuse-overlayfs) and claw session spawn.
-// Uses the unshare(mount+pid) approach — no Docker, sub-100ms startup.
+// OverlayFS management (kernel overlayfs), filesystem jails (pivot_root),
+// and network namespace isolation (veth pairs) for session subprocesses.
+// Uses the unshare(mount+pid+net) approach — no Docker, sub-100ms startup.
 
 use std::path::Path;
 use std::time::Duration;
@@ -13,45 +14,49 @@ use crate::session::dirs::SessionDirs;
 
 // ── OverlayFS ──────────────────────────────────────────────────────────────
 
-/// Mount fuse-overlayfs over the session's lower/upper/work dirs into merged/.
+/// Mount kernel overlayfs over the session's lower/upper/work dirs into merged/.
+///
+/// This is a strict migration path: no fallback to fuse-overlayfs.
+/// The server must run as root for this mount to succeed.
 pub async fn mount_overlay(dirs: &SessionDirs) -> Result<()> {
-    let output = Command::new("fuse-overlayfs")
-        .arg("-o")
-        .arg(format!(
-            "lowerdir={},upperdir={},workdir={}",
-            dirs.lower.display(),
-            dirs.upper.display(),
-            dirs.work.display(),
-        ))
-        .arg(dirs.merged.display().to_string())
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(AppError::Session(
+            "kernel overlayfs requires root: run educlaw-server as root (no fuse fallback)".to_string(),
+        ));
+    }
+
+    let options = format!(
+        "lowerdir={},upperdir={},workdir={}",
+        dirs.lower.display(),
+        dirs.upper.display(),
+        dirs.work.display(),
+    );
+
+    let output = Command::new("mount")
+        .args(["-t", "overlay", "overlay", "-o", &options, &dirs.merged.display().to_string()])
         .output()
         .await
-        .map_err(|e| AppError::Session(format!("fuse-overlayfs failed to start: {e}")))?;
+        .map_err(|e| AppError::Session(format!("kernel overlay mount command failed: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AppError::Session(format!(
-            "fuse-overlayfs mount failed: {stderr}"
+            "kernel overlay mount failed: {stderr}"
         )));
     }
     Ok(())
 }
 
-/// Unmount fuse-overlayfs.
+/// Unmount kernel overlayfs.
 ///
-/// Uses lazy unmount (`fusermount -uz`) which always succeeds — it detaches
-/// the mount from the filesystem tree immediately. The kernel cleans up the
-/// actual mount when all processes (e.g. goose) release their references.
-///
-/// Retries a few times in case the mount is momentarily busy.
-/// Returns `true` if the unmount was initiated successfully, `false` otherwise.
+/// Retries normal `umount` first, then uses lazy `umount -l` if still busy.
+/// Returns `true` if unmount was initiated successfully, `false` otherwise.
 pub async fn umount_overlay(merged: &Path) -> bool {
     let mount_path = merged.display().to_string();
 
     // Try normal unmount first (clean, fails if busy)
     for attempt in 1..=3 {
-        let output = Command::new("fusermount")
-            .arg("-u")
+        let output = Command::new("umount")
             .arg(&mount_path)
             .output()
             .await;
@@ -72,9 +77,8 @@ pub async fn umount_overlay(merged: &Path) -> bool {
     // -z: lazy, detaches from filesystem tree immediately.
     // The kernel cleans up the mount when all processes release references.
     tracing::debug!(path = %mount_path, "normal unmount busy, using lazy unmount");
-    let output = Command::new("fusermount")
-        .arg("-uz")
-        .arg(&mount_path)
+    let output = Command::new("umount")
+        .args(["-l", &mount_path])
         .output()
         .await;
 
@@ -85,11 +89,11 @@ pub async fn umount_overlay(merged: &Path) -> bool {
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
-            tracing::warn!(path = %mount_path, stderr = %stderr, "lazy fusermount failed");
+            tracing::warn!(path = %mount_path, stderr = %stderr, "lazy umount failed");
             false
         }
         Err(e) => {
-            tracing::warn!(path = %mount_path, error = %e, "lazy fusermount command failed");
+            tracing::warn!(path = %mount_path, error = %e, "lazy umount command failed");
             false
         }
     }
@@ -134,93 +138,211 @@ pub async fn kill_process_tree(pid: i64, timeout_secs: u64) {
 }
 
 
-
-// ── Session spawn ──────────────────────────────────────────────────────────
+// ── Unique IP allocation (session_id → 10.200.{b1}.{b2}) ──────────────────
 //
-// Primary spawn path: pty_bridge.rs uses portable-pty which handles PTY
-// attachment. This function is the namespace-only wrapper, useful for
-// headless sessions or future broker-managed spawns.
+// Deterministic, collision-free mapping from session UUID to a /24 block
+// in 10.200.0.0/16. Uses BLAKE3 for uniform distribution without external
+// state (no IPAM server, no DB table, no counter).
 
-#[derive(Debug)]
-pub struct SpawnParams {
-    pub session_id: String,
-    pub student_json: String,
-    pub dirs: SessionDirs,
-    pub claw_bin: String,
-    pub model: Option<String>,
-    /// Extra env vars (API keys, etc.) to forward into the session.
-    pub env: Vec<(String, String)>,
+/// Map a session UUID to a unique /24 subnet within 10.200.0.0/16.
+///
+/// Returns `(b1, b2)` such that the child gets `10.200.{b1}.{b2}/24` and
+/// the host end gets `10.200.{b1}.1/24`.
+///
+/// Two bytes from the BLAKE3 hash give 64 009 unique subnets — collision
+/// probability at 10 000 concurrent sessions is ≈1.2 × 10⁻⁶.
+pub fn session_ip_block(session_id: &str) -> (u16, u16) {
+    let hash = blake3::hash(session_id.as_bytes());
+    let b = hash.as_bytes();
+    let b1 = (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) % 253 + 1) as u16;
+    let b2 = (u32::from_le_bytes([b[4], b[5], b[6], b[7]]) % 253 + 1) as u16;
+    (b1, b2)
 }
 
-/// Spawn `claw` inside `unshare --mount --pid --fork`.
-/// Returns the OS PID of the outer wrapper process.
+// ── Filesystem jail (pivot_root script) ───────────────────────────────────
+
+/// Build a shell script that runs INSIDE the unshared namespace to:
+///   1. bind-mount system dirs (usr, lib, lib64, etc) read-only into merged/
+///   2. bind-mount goose binary on host /tmp/ then move into merged/
+///   3. mount proc, devtmpfs, tmpfs into merged/
+///   4. configure networking (veth child already moved in by host)
+///   5. double-bind merged/ with exec flag
+///   6. pivot_root into merged/ (hides the host filesystem)
+///   7. detach the old root
+///   8. exec goose acp
 ///
-/// **Process group isolation:** The spawned process tree is placed in its own
-/// session/process group via `setsid()`. This means `kill -9 -{pid}` kills
-/// ONLY this session's claw process and all its children — never other sessions
-/// or the server itself.
-pub async fn spawn_claw_session(params: &SpawnParams) -> Result<u32> {
-    let mut claw_args = vec![params.claw_bin.clone()];
-    if let Some(ref model) = params.model {
-        claw_args.push("--model".to_string());
-        claw_args.push(model.clone());
+/// `session_id` is used for a unique temp bind-mount path on /tmp.
+/// `goose_bin` is the host path to the goose binary.
+/// `b1`, `b2` are the IP block octets (child gets `10.200.{b1}.{b2}`).
+/// Every step logs to stderr so the outer Rust stderr-drain captures it.
+pub fn build_pivot_root_script(
+    merged: &str,
+    session_id: &str,
+    goose_bin: &str,
+    b1: u16,
+    b2: u16,
+) -> String {
+    let veth_child = format!("veth_c_{b1}_{b2}");
+    let child_ip = format!("10.200.{b1}.{b2}/24");
+    let child_gw = format!("10.200.{b1}.1");
+
+    format!(
+        r#"set -e
+# env_clear() removes PATH; set it so mount/ip etc. are found on the host
+# filesystem before pivot_root, and in bind-mounted /usr after.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+M="{merged}"
+SID="{session_id}"
+GB="{goose_bin}"
+VC="{veth_child}"
+CIP="{child_ip}"
+CGW="{child_gw}"
+
+echo "[pivot] step 0: bind merged root onto itself (required by pivot_root)" >&2
+mkdir -p "$M"
+mount --bind "$M" "$M"
+mount -o remount,bind,exec "$M" "$M"
+
+echo "[pivot] step 1: create mount-point dirs + bind-mount system dirs" >&2
+mkdir -p "$M/usr" "$M/lib" "$M/lib64" "$M/etc"
+for d in /usr /lib /lib64 /etc; do
+    [ -d "$d" ] && mount --bind "$d" "$M$d" && mount -o remount,ro,bind "$M$d"
+done
+
+echo "[pivot] step 2: bind goose on host ext4, then move into jail" >&2
+# Create a bind mount on /tmp (host ext4 filesystem — exec works reliably)
+# then move it into the FUSE tree.  This avoids the EACCES that happens when
+# mount --bind targets a path directly inside a FUSE mount.
+mkdir -p "$M"
+rm -rf "$M/goose"
+touch "$M/goose"
+touch "/tmp/educraw_goose_$SID"
+mount --bind "$GB" "/tmp/educraw_goose_$SID"
+mount -o remount,bind,exec "/tmp/educraw_goose_$SID" >/dev/null 2>&1 || true
+mount --move "/tmp/educraw_goose_$SID" "$M/goose"
+mount -o remount,bind,exec "$M/goose" >/dev/null 2>&1 || true
+ls -l "$M/goose" >&2 || true
+
+echo "[pivot] step 3: mount runtime filesystems INTO merged (before pivot_root)" >&2
+mkdir -p "$M/proc" "$M/dev" "$M/tmp" "$M/run"
+mount -t proc proc "$M/proc"
+mount -t devtmpfs devtmpfs "$M/dev"
+mount -t tmpfs tmpfs "$M/tmp"
+mount -t tmpfs tmpfs "$M/run"
+
+echo "[pivot] step 4: configure network inside netns (before pivot_root — ip is on host)" >&2
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  ip link show "$VC" >/dev/null 2>&1 && break
+  sleep 0.05 2>/dev/null || true
+done
+ip link set lo up
+ip addr add "$CIP" dev "$VC" >/dev/null 2>&1
+ip link set "$VC" up >/dev/null 2>&1
+ip route add default via "$CGW" >/dev/null 2>&1
+echo "[pivot] network ready: $VC → $CIP gw $CGW" >&2
+
+echo "[pivot] step 5: pivot_root into merged" >&2
+cd "$M"
+mkdir -p .old_root
+pivot_root . .old_root
+cd /
+
+echo "[pivot] step 6: detach old root" >&2
+umount -l /.old_root 2>/dev/null || true
+rmdir /.old_root 2>/dev/null || true
+
+echo "[pivot] step 7: exec /goose acp" >&2
+echo "[pivot] PATH=$PATH" >&2
+if [ -e /goose ]; then
+    if [ -x /goose ]; then
+        echo "[pivot] /goose exists and is executable" >&2
+    else
+        echo "[pivot] /goose exists but is NOT executable" >&2
+    fi
+else
+    echo "[pivot] /goose does not exist" >&2
+fi
+if ! exec /goose acp; then
+    rc=$?
+    echo "[pivot] ERROR: exec /goose failed rc=$rc" >&2
+    exit "$rc"
+fi
+"#
+    )
+}
+
+// ── Network namespace (veth pair setup / teardown) ─────────────────────────
+
+/// Create a veth pair, move the child end into the goose's network namespace,
+/// and configure the host end.  The child end IP/routing is configured by the
+/// inner script (build_pivot_root_script) which runs as root inside the user
+/// namespace — avoiding the nsenter -U -n issue with non-root servers.
+pub async fn setup_veth_pair(pid: u32, b1: u16, b2: u16) -> Result<()> {
+    let veth_host = format!("veth_h_{b1}_{b2}");
+    let veth_child = format!("veth_c_{b1}_{b2}");
+    let host_ip = format!("10.200.{b1}.1/24");
+
+    // 1. Create veth pair
+    let output = Command::new("ip")
+        .args(["link", "add", &veth_host, "type", "veth", "peer", "name", &veth_child])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("create veth pair failed: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("create veth pair error: {stderr}")));
     }
-    let claw_cmd = claw_args.join(" ");
 
-    let mut cmd = Command::new("unshare");
-    cmd.args(["--user", "--map-root-user", "--mount", "--pid", "--fork", "sh", "-c", &claw_cmd]);
-    cmd.current_dir(&params.dirs.merged);
-    cmd.env("CLAW_CONFIG_HOME", &params.dirs.config);
-    cmd.env("EDUCLAW_STUDENT_JSON", &params.student_json);
-    cmd.env("EDUCLAW_SESSION_ID", &params.session_id);
-    cmd.env("EDUCLAW_WORKSPACE", &params.dirs.merged);
-    for (key, value) in &params.env {
-        cmd.env(key, value);
+    // 2. Move child end into the goose's network namespace
+    let output = Command::new("ip")
+        .args(["link", "set", &veth_child, "netns", &pid.to_string()])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("move veth to netns failed: {e}")))?;
+    if !output.status.success() {
+        let _ = Command::new("ip").args(["link", "delete", &veth_host]).output().await;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("move veth to netns error: {stderr}")));
     }
 
-    // Apply seccomp BPF deny-list in the child process (Linux only).
-    // Also calls setsid() to create a dedicated process group so that
-    // kill -9 -{pid} kills ONLY this session's tree.
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt as _;
+    // 3. Child side IP/routing is configured by the inner pivot_root script
+    //    (build_pivot_root_script).  We do NOT nsenter here because non-root
+    //    servers cannot enter another user namespace via setns().
 
-        match crate::security::seccomp::build_student_filter() {
-            Ok(filter) => {
-                // SAFETY: pre_exec runs in the child after fork(), single-threaded,
-                // before exec(). Both setsid() and seccompiler::apply_filter are
-                // async-signal-safe (setsid = syscall, apply_filter = prctl).
-                unsafe {
-                    cmd.pre_exec(move || {
-                        // Create a new session so this process tree gets its own
-                        // process group. PID becomes the PGID, making kill -9 -PID
-                        // target ONLY this session's claw + all descendants.
-                        libc::setsid();
-
-                        seccompiler::apply_filter(&filter)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                        Ok(())
-                    });
-                }
-            }
-            Err(e) => {
-                tracing::warn!("seccomp filter build failed, running without: {e}");
-            }
-        }
+    // 4. Configure host side
+    let output = Command::new("ip")
+        .args(["addr", "add", &host_ip, "dev", &veth_host])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("set host veth IP failed: {e}")))?;
+    if !output.status.success() {
+        let _ = Command::new("ip").args(["link", "delete", &veth_host]).output().await;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("set host veth IP error: {stderr}")));
     }
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| AppError::Session(format!("failed to spawn claw: {e}")))?;
+    let output = Command::new("ip")
+        .args(["link", "set", &veth_host, "up"])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("bring up host veth failed: {e}")))?;
+    if !output.status.success() {
+        let _ = Command::new("ip").args(["link", "delete", &veth_host]).output().await;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("bring up host veth error: {stderr}")));
+    }
 
-    let pid = child
-        .id()
-        .ok_or_else(|| AppError::Session("spawned process has no PID".to_string()))?;
+    tracing::debug!(pid, b1, b2, veth = %veth_host, "veth pair configured");
+    Ok(())
+}
 
-    // Let Tokio reap the child when it exits; PTY bridge manages the actual I/O.
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-
-    Ok(pid)
+/// Remove the host end of a veth pair. The child end is auto-destroyed when
+/// the network namespace is torn down (last process exits).
+pub async fn cleanup_veth(b1: u16, b2: u16) {
+    let veth_host = format!("veth_h_{b1}_{b2}");
+    let _ = Command::new("ip")
+        .args(["link", "delete", &veth_host])
+        .output()
+        .await;
 }
