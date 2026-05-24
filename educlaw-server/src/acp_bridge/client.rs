@@ -230,7 +230,9 @@ pub async fn spawn_sacp_client(
                 }
 
                 // ── Create ACP session ─────────────────────────────────
-                let mut nsr = NewSessionRequest::new(&workspace);
+                // Inside the pivot_root jail, the effective workspace root is '/'.
+                // Passing a host absolute merged path causes path resolution failures.
+                let mut nsr = NewSessionRequest::new("/");
                 if let Some(ref provider) = provider {
                     let mut meta = serde_json::Map::new();
                     meta.insert("provider".to_string(), Value::String(provider.clone()));

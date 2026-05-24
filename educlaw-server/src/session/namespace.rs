@@ -292,8 +292,8 @@ mount --bind "$M" "$M"
 mount -o remount,bind,exec "$M" "$M"
 
 echo "[pivot] step 1: create mount-point dirs + bind-mount system dirs" >&2
-mkdir -p "$M/usr" "$M/lib" "$M/lib64" "$M/etc"
-for d in /usr /lib /lib64 /etc; do
+mkdir -p "$M/usr" "$M/lib" "$M/lib64" "$M/etc" "$M/bin" "$M/sbin"
+for d in /usr /lib /lib64 /etc /bin /sbin; do
     [ -d "$d" ] && mount --bind "$d" "$M$d" && mount -o remount,ro,bind "$M$d"
 done
 

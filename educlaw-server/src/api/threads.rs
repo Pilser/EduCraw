@@ -152,7 +152,7 @@ async fn create_thread(
 
     let resp = managed
         .cx
-        .send_request(NewSessionRequest::new(&dirs.merged))
+        .send_request(NewSessionRequest::new("/"))
         .block_task()
         .await
         .map_err(|e| AppError::Session(format!("NewSession ACP error: {e}")))?;

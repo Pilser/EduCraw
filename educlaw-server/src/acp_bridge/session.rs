@@ -406,7 +406,8 @@ pub async fn handle_input_sse(
                         None => None,
                     }
                 };
-                let mut nsr = NewSessionRequest::new(&workspace_for_prompt);
+                // Inside the pivot_root jail, workspace root is '/'.
+                let mut nsr = NewSessionRequest::new("/");
                 if let Some(ref provider) = provider {
                     let mut meta = serde_json::Map::new();
                     meta.insert("provider".to_string(), serde_json::Value::String(provider.clone()));
