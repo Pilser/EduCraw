@@ -87,10 +87,11 @@ pub async fn spawn_sacp_client(
                     async move |notif: SessionNotification, _cx| {
                         let _session_id = notif.session_id.0.to_string(); // ACP session ID (not used for DB)
 
-                        // Forward all notifications to the WS writer.
+                        // Forward all notifications to the WS writer (non-blocking — never stall the event loop).
                         let frames = notification_to_frames(&notif);
-                            let sender = tx.lock().await.clone();
-                            let _ = sender.send(frames).await;
+                        if let Ok(sender) = tx.try_lock() {
+                            let _ = sender.try_send(frames);
+                        }
 
                         // Persist statistics to backend based on notification type.
                         match &notif.update {
