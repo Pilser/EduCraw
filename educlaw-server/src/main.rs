@@ -20,6 +20,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use crate::auth::AuthConfig;
 use crate::db::HelixBackend;
 use crate::session::broker::SessionBroker;
+use crate::session::namespace::ensure_host_networking;
 use crate::session::registry::SessionRegistry;
 
 use educlaw_helix::{HelixClient, HelixConfig};
@@ -72,6 +73,10 @@ async fn main() -> anyhow::Result<()> {
     let students_root = std::env::var("EDUCLAW_STUDENTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/students".to_string());
     std::fs::create_dir_all(&students_root)?;
+
+    // Ensure host routing/NAT prerequisites for per-session network namespaces.
+    ensure_host_networking().await
+        .map_err(|e| anyhow::anyhow!("host networking bootstrap failed: {e}"))?;
 
     let broker = SessionBroker::new();
 

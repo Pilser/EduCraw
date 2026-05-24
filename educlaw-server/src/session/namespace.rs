@@ -12,6 +12,89 @@ use tokio::process::Command;
 use crate::error::{AppError, Result};
 use crate::session::dirs::SessionDirs;
 
+// ── Host networking bootstrap (NAT + forwarding) ─────────────────────────
+
+/// Ensure host networking prerequisites exist for session netns egress.
+///
+/// Idempotent behavior:
+/// - enables `net.ipv4.ip_forward=1`
+/// - ensures NAT MASQUERADE for 10.200.0.0/16
+/// - ensures FORWARD accept rules for outbound + established return traffic
+///
+/// Must run with root privileges.
+pub async fn ensure_host_networking() -> Result<()> {
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(AppError::Session(
+            "host networking bootstrap requires root (ip_forward/iptables)".to_string(),
+        ));
+    }
+
+    let output = Command::new("sysctl")
+        .args(["-w", "net.ipv4.ip_forward=1"])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("failed to run sysctl for ip_forward: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!(
+            "failed to enable net.ipv4.ip_forward: {stderr}"
+        )));
+    }
+
+    ensure_iptables_rule(
+        &["-t", "nat", "-C", "POSTROUTING", "-s", "10.200.0.0/16", "-j", "MASQUERADE"],
+        &["-t", "nat", "-A", "POSTROUTING", "-s", "10.200.0.0/16", "-j", "MASQUERADE"],
+        "NAT MASQUERADE for 10.200.0.0/16",
+    )
+    .await?;
+
+    ensure_iptables_rule(
+        &["-C", "FORWARD", "-s", "10.200.0.0/16", "-j", "ACCEPT"],
+        &["-A", "FORWARD", "-s", "10.200.0.0/16", "-j", "ACCEPT"],
+        "FORWARD allow outbound 10.200.0.0/16",
+    )
+    .await?;
+
+    ensure_iptables_rule(
+        &["-C", "FORWARD", "-d", "10.200.0.0/16", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+        &["-A", "FORWARD", "-d", "10.200.0.0/16", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+        "FORWARD allow established/related to 10.200.0.0/16",
+    )
+    .await?;
+
+    tracing::info!("host networking bootstrap ready (ip_forward + NAT/FORWARD rules)");
+    Ok(())
+}
+
+async fn ensure_iptables_rule(check_args: &[&str], add_args: &[&str], label: &str) -> Result<()> {
+    let check = Command::new("iptables")
+        .args(check_args)
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("iptables check failed for {label}: {e}")))?;
+
+    if check.status.success() {
+        tracing::debug!(rule = label, "iptables rule already present");
+        return Ok(());
+    }
+
+    let add = Command::new("iptables")
+        .args(add_args)
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("iptables add failed for {label}: {e}")))?;
+
+    if !add.status.success() {
+        let stderr = String::from_utf8_lossy(&add.stderr);
+        return Err(AppError::Session(format!(
+            "iptables add failed for {label}: {stderr}"
+        )));
+    }
+
+    tracing::info!(rule = label, "iptables rule added");
+    Ok(())
+}
+
 // ── OverlayFS ──────────────────────────────────────────────────────────────
 
 /// Mount kernel overlayfs over the session's lower/upper/work dirs into merged/.
@@ -252,17 +335,26 @@ ip link set "$VC" up >/dev/null 2>&1
 ip route add default via "$CGW" >/dev/null 2>&1
 echo "[pivot] network ready: $VC → $CIP gw $CGW" >&2
 
-echo "[pivot] step 6: pivot_root into merged" >&2
+echo "[pivot] step 6: override resolv.conf for working DNS (host's 127.0.0.53 is unreachable inside netns)" >&2
+# The host's /etc/resolv.conf is bind-mounted read-only from the host and points
+# to 127.0.0.53 (systemd-resolved stub), unreachable inside the isolated netns.
+# Write to a temp file and bind-mount over it — this shadows the ro-bind without
+# modifying the host file. Each session has its own temp file ($SID), so no
+# cross-session leakage in this multi-tenant setup.
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0 trust-ad\nsearch .\n' > "/tmp/educraw_resolv_$SID"
+mount --bind "/tmp/educraw_resolv_$SID" "$M/etc/resolv.conf"
+
+echo "[pivot] step 7: pivot_root into merged" >&2
 cd "$M"
 mkdir -p .old_root
 pivot_root . .old_root
 cd /
 
-echo "[pivot] step 7: detach old root" >&2
+echo "[pivot] step 8: detach old root" >&2
 umount -l /.old_root 2>/dev/null || true
 rmdir /.old_root 2>/dev/null || true
 
-echo "[pivot] step 8: exec /goose acp" >&2
+echo "[pivot] step 9: exec /goose acp" >&2
 echo "[pivot] PATH=$PATH" >&2
 if [ -e /goose ]; then
     if [ -x /goose ]; then
