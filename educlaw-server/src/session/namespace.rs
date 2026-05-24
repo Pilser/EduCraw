@@ -179,6 +179,8 @@ pub fn build_pivot_root_script(
     merged: &str,
     session_id: &str,
     goose_bin: &str,
+    goose_path_root_host: &str,
+    claw_config_home_host: &str,
     b1: u16,
     b2: u16,
 ) -> String {
@@ -195,6 +197,8 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 M="{merged}"
 SID="{session_id}"
 GB="{goose_bin}"
+GPRH="{goose_path_root_host}"
+CFGH="{claw_config_home_host}"
 VC="{veth_child}"
 CIP="{child_ip}"
 CGW="{child_gw}"
@@ -224,14 +228,20 @@ mount --move "/tmp/educraw_goose_$SID" "$M/goose"
 mount -o remount,bind,exec "$M/goose" >/dev/null 2>&1 || true
 ls -l "$M/goose" >&2 || true
 
-echo "[pivot] step 3: mount runtime filesystems INTO merged (before pivot_root)" >&2
+echo "[pivot] step 3: bind student Goose root + session config into jail" >&2
+mkdir -p "$GPRH" "$CFGH"
+mkdir -p "$M/goose_home" "$M/claw_config"
+mount --bind "$GPRH" "$M/goose_home"
+mount --bind "$CFGH" "$M/claw_config"
+
+echo "[pivot] step 4: mount runtime filesystems INTO merged (before pivot_root)" >&2
 mkdir -p "$M/proc" "$M/dev" "$M/tmp" "$M/run"
 mount -t proc proc "$M/proc"
 mount -t devtmpfs devtmpfs "$M/dev"
 mount -t tmpfs tmpfs "$M/tmp"
 mount -t tmpfs tmpfs "$M/run"
 
-echo "[pivot] step 4: configure network inside netns (before pivot_root — ip is on host)" >&2
+echo "[pivot] step 5: configure network inside netns (before pivot_root — ip is on host)" >&2
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   ip link show "$VC" >/dev/null 2>&1 && break
   sleep 0.05 2>/dev/null || true
@@ -242,17 +252,17 @@ ip link set "$VC" up >/dev/null 2>&1
 ip route add default via "$CGW" >/dev/null 2>&1
 echo "[pivot] network ready: $VC → $CIP gw $CGW" >&2
 
-echo "[pivot] step 5: pivot_root into merged" >&2
+echo "[pivot] step 6: pivot_root into merged" >&2
 cd "$M"
 mkdir -p .old_root
 pivot_root . .old_root
 cd /
 
-echo "[pivot] step 6: detach old root" >&2
+echo "[pivot] step 7: detach old root" >&2
 umount -l /.old_root 2>/dev/null || true
 rmdir /.old_root 2>/dev/null || true
 
-echo "[pivot] step 7: exec /goose acp" >&2
+echo "[pivot] step 8: exec /goose acp" >&2
 echo "[pivot] PATH=$PATH" >&2
 if [ -e /goose ]; then
     if [ -x /goose ]; then

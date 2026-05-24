@@ -91,7 +91,19 @@ pub async fn init_acp_session(
     // Build pivot_root inner script (filesystem jail + network config inside ns)
     let merged = workspace.display().to_string();
     let goose_bin_path = goose_bin.display().to_string();
-    let inner_script = build_pivot_root_script(&merged, &session_id, &goose_bin_path, b1, b2);
+    let goose_path_root_host = goose_path_root.display().to_string();
+    let claw_config_home_host = session_config_dir.display().to_string();
+    let goose_path_root_in_jail = "/goose_home";
+    let claw_config_home_in_jail = "/claw_config";
+    let inner_script = build_pivot_root_script(
+        &merged,
+        &session_id,
+        &goose_bin_path,
+        &goose_path_root_host,
+        &claw_config_home_host,
+        b1,
+        b2,
+    );
 
     let mut cmd = tokio::process::Command::new("unshare");
     let is_root = unsafe { libc::getuid() } == 0;
@@ -108,8 +120,8 @@ pub async fn init_acp_session(
     }
     cmd.current_dir(&workspace);
     cmd.env_clear();
-    cmd.env("GOOSE_PATH_ROOT", goose_path_root.display().to_string());
-    cmd.env("CLAW_CONFIG_HOME", session_config_dir.display().to_string());
+    cmd.env("GOOSE_PATH_ROOT", goose_path_root_in_jail);
+    cmd.env("CLAW_CONFIG_HOME", claw_config_home_in_jail);
     for (k, v) in &env_vars {
         cmd.env(k, v);
     }
@@ -136,8 +148,10 @@ pub async fn init_acp_session(
     tracing::info!(
         session_id = %session_id,
         model = ?model,
-        goose_path_root = %goose_path_root.display(),
-        config_home = %session_config_dir.display(),
+        goose_path_root_host = %goose_path_root.display(),
+        config_home_host = %session_config_dir.display(),
+        goose_path_root_in_jail = goose_path_root_in_jail,
+        config_home_in_jail = claw_config_home_in_jail,
         "📦 [GOOSE] Spawning ACP subprocess (SSE init)..."
     );
 
