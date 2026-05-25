@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -163,6 +163,12 @@ fn collect_tree(root: &Path, max_depth: Option<usize>) -> DirectoryNode {
         builder.max_depth(Some(depth + 1));
     }
 
+    let excluded = parse_excluded_dirs();
+    builder.filter_entry(move |entry| {
+        let path = entry.path();
+        !excluded.iter().any(|e| path == e || path.starts_with(e))
+    });
+
     let mut tree = DirectoryNode::default();
     for entry in builder.build().flatten() {
         let path = entry.path();
@@ -211,6 +217,15 @@ fn count_file_lines(path: &Path) -> usize {
         Ok(content) => content.lines().count(),
         Err(_) => 0,
     }
+}
+
+fn parse_excluded_dirs() -> HashSet<String> {
+    std::env::var("GOOSE_EXCLUDED_DIRS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn format_lines(lines: usize) -> String {

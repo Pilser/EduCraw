@@ -19,6 +19,7 @@ use rmcp::model::{
 use schemars::{schema_for, JsonSchema};
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
@@ -132,6 +133,11 @@ impl AnalyzeClient {
         if max_depth > 0 {
             builder.max_depth(Some(max_depth as usize));
         }
+        let excluded = parse_excluded_dirs();
+        builder.filter_entry(move |entry| {
+            let path = entry.path();
+            !excluded.iter().any(|e| path == e || path.starts_with(e))
+        });
         builder
             .build()
             .filter_map(|e| e.ok())
@@ -262,6 +268,15 @@ impl McpClientTrait for AnalyzeClient {
     fn get_info(&self) -> Option<&InitializeResult> {
         Some(&self.info)
     }
+}
+
+fn parse_excluded_dirs() -> HashSet<String> {
+    std::env::var("GOOSE_EXCLUDED_DIRS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]

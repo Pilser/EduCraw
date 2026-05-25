@@ -251,6 +251,17 @@ fn should_include_file(path: &Path, extensions: &Option<Vec<String>>) -> bool {
     }
 }
 
+fn is_excluded_dir(path: &Path) -> bool {
+    let Ok(val) = std::env::var("GOOSE_EXCLUDED_DIRS") else {
+        return false;
+    };
+    let path_str = path.to_string_lossy();
+    val.split(',').any(|e| {
+        let e = e.trim();
+        !e.is_empty() && (path_str == e || path_str.starts_with(e))
+    })
+}
+
 fn collect_files(
     paths: &[String],
     working_dir: &Path,
@@ -337,6 +348,9 @@ fn collect_from_dir(
         }
 
         if is_dir {
+            if is_excluded_dir(&path) {
+                continue;
+            }
             collect_from_dir(&path, files, extensions, gitignore, total_size)?;
         } else if is_file && should_include_file(&path, extensions) {
             collect_file(&path, files, total_size)?;
