@@ -10,6 +10,7 @@ pub mod summarize;
 pub mod summon;
 pub mod todo;
 pub mod tom;
+pub mod websearch;
 
 use std::collections::HashMap;
 
@@ -186,6 +187,20 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 unprefixed_tools: false,
                 hidden: false,
                 client_factory: |ctx| Box::new(tom::TomClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            websearch::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: websearch::EXTENSION_NAME,
+                display_name: "Web Search",
+                description:
+                    "Search the web for current information using Exa AI",
+                default_enabled: true,
+                unprefixed_tools: true,
+                hidden: false,
+                client_factory: |_ctx| Box::new(websearch::WebSearchClient::new()),
             },
         );
 
