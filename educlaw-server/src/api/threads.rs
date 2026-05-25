@@ -91,6 +91,7 @@ async fn get_managed_session(
         "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
         "OPENAI_BASE_URL",
         "GOOSE_EXCLUDED_DIRS",
+        "EXA_API_KEY",
     ] {
         if let Ok(val) = std::env::var(key) {
             env_vars.push((key.to_string(), val));

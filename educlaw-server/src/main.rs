@@ -47,10 +47,11 @@ async fn main() -> anyhow::Result<()> {
         Err(e)   => tracing::warn!(error = %e, "dotenv NOT loaded — running on OS environment only"),
     }
     tracing::info!(
-        xai_key    = std::env::var("XAI_API_KEY").is_ok(),
-        goose_model = ?std::env::var("GOOSE_MODEL").ok(),
-        goose_bin   = ?std::env::var("GOOSE_BIN").ok(),
-        cwd        = %std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
+        xai_key       = std::env::var("XAI_API_KEY").is_ok(),
+        exa_key       = std::env::var("EXA_API_KEY").is_ok(),
+        goose_model   = ?std::env::var("GOOSE_MODEL").ok(),
+        goose_bin     = ?std::env::var("GOOSE_BIN").ok(),
+        cwd           = %std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
         "startup env"
     );
 
