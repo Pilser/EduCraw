@@ -125,6 +125,8 @@ pub async fn init_acp_session(
     for (k, v) in &env_vars {
         cmd.env(k, v);
     }
+    // Force HOME to an in-jail path; forwarded host HOME may not exist after pivot_root.
+    cmd.env("HOME", goose_path_root_in_jail);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

@@ -102,6 +102,7 @@ async fn session_input(
         "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
         "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
         "OPENAI_BASE_URL",
+        "GOOSE_EXCLUDED_DIRS",
     ] {
         if let Ok(val) = std::env::var(key) {
             env_vars.push((key.to_string(), val));
