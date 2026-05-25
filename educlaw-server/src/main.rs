@@ -107,6 +107,31 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(HelixBackend::new(client))
     };
 
+    // ── Clean up stale sessions from previous instance ──────────────────
+    // On restart, old sessions in the persistent DB still have state="active"
+    // but their veth pairs, overlay mounts, and goose processes are gone.
+    // Clean them up to prevent veth name collisions when the frontend
+    // tries to restore an old session ID from localStorage.
+    {
+        let active = backend.list_active_sessions().await?;
+        if !active.is_empty() {
+            tracing::info!("cleaning up {} stale session(s) from previous instance", active.len());
+            for s in &active {
+                let (b1, b2) = crate::session::namespace::session_ip_block(&s.id);
+                crate::session::namespace::cleanup_veth(b1, b2).await;
+                if !s.overlay_mount.is_empty() {
+                    use std::path::Path;
+                    crate::session::namespace::umount_overlay(Path::new(&s.overlay_mount)).await;
+                }
+                if let Some(pid) = s.namespace_pid {
+                    crate::session::namespace::kill_process_tree(pid, 3).await;
+                }
+                let _ = backend.set_session_state(&s.id, "ended").await;
+                tracing::info!(session_id = %s.id, "stale session cleaned up");
+            }
+        }
+    }
+
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
