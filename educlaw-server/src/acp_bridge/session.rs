@@ -635,13 +635,43 @@ pub async fn handle_replay_sse(
                 let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
             }
             Err(e) => {
-                loading_flag.store(false, Ordering::Relaxed);
-                let frame = serde_json::json!({
-                    "type": "error",
-                    "message": format!("Failed to load session: {}", e),
-                })
-                .to_string();
-                let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
+                tracing::warn!(
+                    thread_id = %tid,
+                    error = %e,
+                    "⚠ [SSE] LoadSession failed — creating new thread"
+                );
+                let nsr = NewSessionRequest::new("/");
+                match cx.send_request(nsr).block_task().await {
+                    Ok(new_sess_resp) => {
+                        let new_sid = new_sess_resp.session_id.clone();
+                        *acp_sid_holder.lock().await = Some(new_sid.clone());
+                        if let Err(e) = backend.set_recent_thread_id(&student_id, &new_sid.0).await {
+                            tracing::warn!(
+                                student_id = %student_id,
+                                thread_id = %new_sid.0,
+                                error = %e,
+                                "⚠ [SSE] Failed to persist recent_thread_id on new session"
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        loading_flag.store(false, Ordering::Relaxed);
+                        let frame = serde_json::json!({
+                            "type": "load_session_complete",
+                            "thread_id": new_sid.0,
+                        })
+                        .to_string();
+                        let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
+                    }
+                    Err(e2) => {
+                        loading_flag.store(false, Ordering::Relaxed);
+                        let frame = serde_json::json!({
+                            "type": "error",
+                            "message": format!("Failed to create new session: {}", e2),
+                        })
+                        .to_string();
+                        let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
+                    }
+                }
             }
         }
         let _ = sse_tx_load.send(SseEvent::Close).await;
