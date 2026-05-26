@@ -90,6 +90,12 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect();
 
+    // Per-student disk quota (bytes). 0 = unlimited. Default 500 MiB.
+    let student_quota_bytes: u64 = std::env::var("EDUCRAW_STUDENT_QUOTA_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500 * 1024 * 1024);
+
     // Ensure host routing/NAT prerequisites for per-session network namespaces.
     ensure_host_networking().await
         .map_err(|e| anyhow::anyhow!("host networking bootstrap failed: {e}"))?;
@@ -150,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root, excluded_dirs);
+    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes);
 
     let app = Router::new()
         .merge(api::routes())

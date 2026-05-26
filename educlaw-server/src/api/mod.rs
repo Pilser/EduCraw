@@ -37,6 +37,8 @@ pub struct AppState {
     pub students_root: String,
     /// Directory basenames to exclude from file tree listings (GOOSE_EXCLUDED_DIRS).
     pub excluded_dirs: std::collections::HashSet<String>,
+    /// Per-student disk quota in bytes (0 = unlimited).
+    pub student_quota_bytes: u64,
 }
 
 impl AppState {
@@ -50,6 +52,7 @@ impl AppState {
         subjects_root: String,
         students_root: String,
         excluded_dirs: std::collections::HashSet<String>,
+        student_quota_bytes: u64,
     ) -> Self {
         Self {
             backend,
@@ -61,6 +64,7 @@ impl AppState {
             subjects_root,
             students_root,
             excluded_dirs,
+            student_quota_bytes,
         }
     }
 }

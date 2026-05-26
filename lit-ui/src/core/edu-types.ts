@@ -136,6 +136,12 @@ export interface UpdateMeRequest {
   new_password?: string;
 }
 
+// GET /files/student/:session_id/quota response
+export interface QuotaResponse {
+  used_bytes: number;
+  quota_bytes: number;
+}
+
 // PATCH /me response
 export interface UpdateMeResponse {
   token: string;

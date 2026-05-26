@@ -2,6 +2,7 @@ import type {
   Cohort,
   LoginResponse,
   MeResponse,
+  QuotaResponse,
   Session,
   SessionListItem,
   ForkThreadResult,
@@ -456,6 +457,16 @@ export const eduApi = {
     if (!res.ok) {
       throw new Error(`Failed to delete file: ${res.status}`);
     }
+  },
+
+  /** Get student workspace disk usage and quota */
+  async getStudentQuota(
+    sessionId: string,
+    token: string,
+  ): Promise<QuotaResponse> {
+    return request<QuotaResponse>(`/files/student/${sessionId}/quota`, {
+      headers: authHeader(token),
+    });
   },
 
   /** Get current student's profile */

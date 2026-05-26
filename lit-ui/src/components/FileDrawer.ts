@@ -22,7 +22,8 @@ import {
 	FileAudio,
 	Archive,
 	FileType,
-	Loader2
+	Loader2,
+	HardDrive
 } from "lucide";
 import { eduApi } from "../core/edu-api.js";
 import { i18n } from "../utils/i18n.js";
@@ -59,6 +60,7 @@ export class FileDrawer extends LitElement {
 	@state() private attachedFiles = new Set<string>(); // Track attached files for visual feedback
 	@state() private uploading = false;
 	@state() private uploadError = "";
+	@state() private quota: { used_bytes: number; quota_bytes: number } | null = null;
 
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
 		return this;
@@ -120,6 +122,14 @@ export class FileDrawer extends LitElement {
 				} catch (err) {
 					console.warn("[FileDrawer] Failed to load student files:", err);
 					this.error = `Failed to load workspace files`;
+				}
+				try {
+					this.quota = await eduApi.getStudentQuota(
+						this.sessionId,
+						this.sessionToken
+					);
+				} catch (err) {
+					console.warn("[FileDrawer] Failed to load quota:", err);
 				}
 			}
 		} catch (err) {
@@ -294,6 +304,23 @@ export class FileDrawer extends LitElement {
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
+	private renderQuotaBar() {
+		if (!this.quota || this.quota.quota_bytes === 0) return "";
+		const pct = Math.min(100, Math.round((this.quota.used_bytes / this.quota.quota_bytes) * 100));
+		const color = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-primary';
+		return html`
+			<div class="shrink-0 px-3 py-2 border-b border-border bg-muted/20">
+				<div class="flex items-center justify-between text-xs text-muted-foreground mb-1">
+					<span class="flex items-center gap-1">${icon(HardDrive, "xs")} ${this.formatFileSize(this.quota.used_bytes)} / ${this.formatFileSize(this.quota.quota_bytes)}</span>
+					<span>${pct}%</span>
+				</div>
+				<div class="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+					<div class="h-full ${color} rounded-full transition-all" style="width: ${pct}%"></div>
+				</div>
+			</div>
+		`;
+	}
+
 	private async handleUploadFiles(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const files = Array.from(input.files || []);
@@ -415,6 +442,9 @@ export class FileDrawer extends LitElement {
 						</div>
 					`
 					: ""}
+
+				<!-- Quota bar (workspace tab only) -->
+				${this.tab === 'workspace' ? this.renderQuotaBar() : ""}
 
 				<!-- Content Area -->
 				<div class="flex-1 overflow-y-auto p-2">

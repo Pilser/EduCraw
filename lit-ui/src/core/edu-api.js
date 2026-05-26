@@ -303,6 +303,12 @@ export const eduApi = {
             throw new Error(`Failed to delete file: ${res.status}`);
         }
     },
+    /** Get student workspace disk usage and quota */
+    async getStudentQuota(sessionId, token) {
+        return request(`/files/student/${sessionId}/quota`, {
+            headers: authHeader(token),
+        });
+    },
     /** Get current student's profile */
     async getMe(token) {
         return request("/me", {

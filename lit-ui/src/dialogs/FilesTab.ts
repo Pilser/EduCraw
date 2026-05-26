@@ -4,7 +4,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Download, Trash2, FilePlus, FileText, FileCode, FileJson, Image as ImageIcon, FileSpreadsheet, FileVideo, FileAudio, Archive, FileType } from "lucide";
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Download, Trash2, FilePlus, FileText, FileCode, FileJson, Image as ImageIcon, FileSpreadsheet, FileVideo, FileAudio, Archive, FileType, HardDrive } from "lucide";
 
 interface FileNode {
 	name: string;
@@ -28,6 +28,7 @@ export class FilesTab extends MenuTab {
 	@state() private error = "";
 	@state() private expandedPaths = new Set<string>();
 	@state() private initialized = false;
+	@state() private quota: { used_bytes: number; quota_bytes: number } | null = null;
 
 	async updated(changedProperties: Map<string, any>) {
 		super.updated(changedProperties);
@@ -84,6 +85,14 @@ export class FilesTab extends MenuTab {
 					if (!this.error) {
 						this.error = `Student files: ${err instanceof Error ? err.message : "Unknown error"}`;
 					}
+				}
+				try {
+					this.quota = await eduApi.getStudentQuota(
+						this.sessionId,
+						this.sessionToken
+					);
+				} catch (err) {
+					console.warn("[FilesTab] Failed to load quota:", err);
 				}
 			} else {
 				console.log("[FilesTab] Skipping student files - no session ID or token");
@@ -393,6 +402,22 @@ export class FilesTab extends MenuTab {
 										onClick: () => this.handleUploadFile(),
 									})}
 								</div>
+								${this.quota && this.quota.quota_bytes > 0
+									? (() => {
+										const pct = Math.min(100, Math.round((this.quota!.used_bytes / this.quota!.quota_bytes) * 100));
+										const color = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-primary';
+										return html`
+											<div class="flex items-center gap-2 px-2 py-1.5 bg-muted/30 rounded text-xs text-muted-foreground">
+												${icon(HardDrive, "sm")}
+												<span class="flex-1">${this.formatFileSize(this.quota!.used_bytes)} / ${this.formatFileSize(this.quota!.quota_bytes)}</span>
+												<div class="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+													<div class="h-full ${color} rounded-full transition-all" style="width: ${pct}%"></div>
+												</div>
+												<span>${pct}%</span>
+											</div>
+										`;
+									})()
+									: ""}
 								<div class="border border-border rounded-lg overflow-hidden">
 									<div class="max-h-64 overflow-y-auto p-2">
 										${this.studentFiles.length > 0

@@ -52,6 +52,7 @@ pub fn routes() -> Router<AppState> {
         .route("/files/student/:session_id/read",   get(read_student_file))
         .route("/files/student/:session_id/write",  put(write_student_file))
         .route("/files/student/:session_id/delete", delete(delete_student_file))
+        .route("/files/student/:session_id/quota",  get(get_student_quota))
 }
 
 // ── Shared types ──────────────────────────────────────────────────────────
@@ -342,6 +343,51 @@ async fn delete_student_file(
             .map_err(|e| AppError::NotFound(format!("file not found: {e}")))?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Quota ─────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct QuotaResponse {
+    pub used_bytes: u64,
+    pub quota_bytes: u64,
+}
+
+/// Measure the apparent (logical) size of a directory via `du -sb`.
+async fn measure_dir_size(path: &Path) -> u64 {
+    let output = tokio::process::Command::new("du")
+        .args(["-sb", &path.display().to_string()])
+        .output()
+        .await;
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            stdout.split('\t').next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0)
+        }
+        _ => 0,
+    }
+}
+
+async fn get_student_quota(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<QuotaResponse>> {
+    let claims = require_claims(&state, &headers)?;
+    let session_id = validate_id(&session_id, "session_id")?;
+    assert_session_access(&claims, &session_id)?;
+
+    let upper = student_home_dir(&state, &claims.sub).await?;
+    let used_bytes = if upper.exists() {
+        measure_dir_size(&upper).await
+    } else {
+        0
+    };
+
+    Ok(Json(QuotaResponse {
+        used_bytes,
+        quota_bytes: state.student_quota_bytes,
+    }))
 }
 
 // ── Access control ────────────────────────────────────────────────────────
