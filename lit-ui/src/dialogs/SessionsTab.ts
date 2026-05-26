@@ -5,7 +5,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
 import type { SessionListItem } from "../core/edu-types.js";
-import { Download, Upload, GitFork, Plus } from "lucide";
+import { Download, Upload, GitFork, Plus, Trash2 } from "lucide";
 
 @customElement("sessions-tab")
 export class SessionsTab extends MenuTab {
@@ -99,6 +99,18 @@ export class SessionsTab extends MenuTab {
 		} catch (err) {
 			console.error("Failed to fork session:", err);
 			alert(`Failed to fork session: ${err instanceof Error ? err.message : "Unknown error"}`);
+		}
+	}
+
+	private async deleteSession(sessionId: string) {
+		if (!confirm("Delete this session permanently? This cannot be undone.")) return;
+		try {
+			await eduApi.deleteThread(this.sessionId, sessionId, this.sessionToken);
+			console.log("[SessionsTab] Session deleted:", sessionId);
+			await this.loadSessionList();
+		} catch (err) {
+			console.error("Failed to delete session:", err);
+			alert(`Failed to delete session: ${err instanceof Error ? err.message : "Unknown error"}`);
 		}
 	}
 
@@ -200,6 +212,14 @@ export class SessionsTab extends MenuTab {
 														children: icon(GitFork, "xs"),
 														onClick: () => this.forkSession(session.id),
 														title: "Fork",
+													})}
+													${Button({
+														variant: "ghost",
+														size: "sm",
+														children: icon(Trash2, "xs"),
+														onClick: () => this.deleteSession(session.id),
+														title: "Delete",
+														className: "text-destructive hover:text-destructive",
 													})}
 												</div>
 											</div>

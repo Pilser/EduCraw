@@ -5,6 +5,6 @@
 // source so import/export session stays in sync with Goose.
 
 pub use goose_sdk::custom_requests::{
-    ExportSessionRequest, ExportSessionResponse, ImportSessionRequest, ImportSessionResponse,
-    SetSessionModelConfigRequest, SetSessionModelConfigResponse,
+    DeleteSessionRequest, ExportSessionRequest, ExportSessionResponse, ImportSessionRequest,
+    ImportSessionResponse, SetSessionModelConfigRequest, SetSessionModelConfigResponse,
 };

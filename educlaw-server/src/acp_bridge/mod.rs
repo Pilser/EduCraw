@@ -22,8 +22,8 @@ mod session;
 mod token_calculator;
 
 pub use commands::{
-    handle_export_session, handle_fork_session, handle_import_session, handle_list_sessions,
-    ForkSessionResult, SessionListItem,
+    handle_delete_session, handle_export_session, handle_fork_session, handle_import_session,
+    handle_list_sessions, ForkSessionResult, SessionListItem,
 };
 
 pub use custom_requests::ImportSessionResponse;

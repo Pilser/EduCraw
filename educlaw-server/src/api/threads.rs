@@ -23,8 +23,9 @@ use sacp::schema::NewSessionRequest;
 use serde::Deserialize;
 
 use crate::acp_bridge::{
-    handle_export_session, handle_fork_session, handle_import_session, handle_list_sessions,
-    init_acp_session, ForkSessionResult, ImportSessionResponse, SessionListItem,
+    handle_delete_session, handle_export_session, handle_fork_session, handle_import_session,
+    handle_list_sessions, init_acp_session, ForkSessionResult, ImportSessionResponse,
+    SessionListItem,
 };
 use crate::error::{AppError, Result};
 use crate::session::dirs::SessionDirs;
@@ -44,6 +45,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/sessions/:id/threads/:thread_id/export",
             get(export_thread),
+        )
+        .route(
+            "/sessions/:id/threads/:thread_id",
+            axum::routing::delete(delete_thread),
         )
 }
 
@@ -201,6 +206,17 @@ async fn export_thread(
     let managed = get_managed_session(&state, &session_id).await?;
     let data: String = handle_export_session(&managed.cx, thread_id).await?;
     Ok(Json(serde_json::json!({ "data": data })))
+}
+
+// ── DELETE /sessions/:id/threads/:thread_id ──────────────────────────────
+
+async fn delete_thread(
+    State(state): State<AppState>,
+    Path((session_id, thread_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse> {
+    let managed = get_managed_session(&state, &session_id).await?;
+    handle_delete_session(&managed.cx, thread_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── POST /sessions/:id/threads/import ─────────────────────────────────────

@@ -230,6 +230,17 @@ export const eduApi = {
             headers: authHeader(token),
         });
     },
+    /** Delete a thread permanently */
+    async deleteThread(sessionId, threadId, token) {
+        const res = await fetch(`${BASE}/sessions/${sessionId}/threads/${threadId}`, {
+            method: "DELETE",
+            headers: authHeader(token),
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "Unknown error");
+            throw new Error(`${res.status}: ${text || res.statusText}`);
+        }
+    },
     /** Import a thread from JSON string */
     async importThread(sessionId, data, token) {
         return request(`/sessions/${sessionId}/threads/import`, {

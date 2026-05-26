@@ -8,7 +8,9 @@ use sacp::{Agent as SacpAgent, ConnectionTo};
 use serde::Serialize;
 use std::path::PathBuf;
 
-use super::custom_requests::{ExportSessionRequest, ImportSessionRequest, ImportSessionResponse};
+use super::custom_requests::{
+    DeleteSessionRequest, ExportSessionRequest, ImportSessionRequest, ImportSessionResponse,
+};
 use crate::error::{AppError, Result};
 
 /// Response for list_sessions command
@@ -98,6 +100,19 @@ pub async fn handle_export_session(
         .await
         .map_err(|e| AppError::Session(format!("ExportSession ACP error: {e}")))?;
     Ok(resp.data)
+}
+
+/// Handle DeleteSessionRequest: permanently delete a thread and all its data
+pub async fn handle_delete_session(
+    cx: &ConnectionTo<SacpAgent>,
+    session_id: String,
+) -> Result<()> {
+    let req = DeleteSessionRequest { session_id };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("DeleteSession ACP error: {e}")))?;
+    Ok(())
 }
 
 /// Handle ImportSessionRequest: import a session from JSON string

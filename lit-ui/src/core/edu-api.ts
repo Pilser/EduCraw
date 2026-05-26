@@ -336,6 +336,22 @@ export const eduApi = {
     );
   },
 
+  /** Delete a thread permanently */
+  async deleteThread(
+    sessionId: string,
+    threadId: string,
+    token: string,
+  ): Promise<void> {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/threads/${threadId}`, {
+      method: "DELETE",
+      headers: authHeader(token),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "Unknown error");
+      throw new Error(`${res.status}: ${text || res.statusText}`);
+    }
+  },
+
   /** Import a thread from JSON string */
   async importThread(
     sessionId: string,
