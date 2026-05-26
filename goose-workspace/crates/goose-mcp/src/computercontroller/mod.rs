@@ -1,7 +1,6 @@
 #[cfg(not(windows))]
 use crate::subprocess::merged_path;
 use crate::subprocess::SubprocessExt;
-#[cfg(target_os = "macos")]
 use base64::Engine;
 use etcetera::{choose_app_strategy, AppStrategy};
 use indoc::{formatdoc, indoc};
@@ -31,6 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::os::unix::fs::PermissionsExt;
 
 mod docx_tool;
+mod image_utils;
 mod pdf_tool;
 mod xlsx_tool;
 
@@ -159,6 +159,19 @@ pub struct PdfToolParams {
     pub path: String,
     /// Operation to perform on the PDF
     pub operation: PdfOperation,
+}
+
+/// Parameters for the read_image tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ReadImageParams {
+    /// Path to the image file (absolute or relative path)
+    pub path: String,
+    /// Maximum dimension threshold in pixels (default: 1024).
+    /// Images exceeding 1024x1024 (square) or 1500px longest edge (non-square)
+    /// will trigger a conversion warning instead of returning base64.
+    pub max_dimension: Option<usize>,
+    /// Maximum file size in MB (default: 5).
+    pub max_file_size_mb: Option<u32>,
 }
 
 /// Enum for operation parameter in docx_tool
@@ -1485,6 +1498,74 @@ impl ComputerControllerServer {
                 .map_err(|e| ErrorData::new(e.code, e.message, e.data))?;
 
         Ok(CallToolResult::success(result))
+    }
+
+    /// Read an image file from disk and return it as base64 for LLM analysis.
+    /// If the image exceeds limits (1024x1024 square / 1500px longest edge / 5MB),
+    /// returns a warning with an optimized Pillow conversion command instead.
+    #[tool(
+        name = "read_image",
+        description = "
+            Read an image file and return its contents as base64 for LLM analysis.
+            If the image exceeds size limits (1024x1024 square / 1500px longest edge / 5MB),
+            returns a warning with a Pillow conversion command instead.
+            Supports: PNG, JPEG, WebP, GIF, BMP, TIFF, ICO.
+        "
+    )]
+    pub async fn read_image(
+        &self,
+        params: Parameters<ReadImageParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let params = params.0;
+        let path = &params.path;
+
+        if !std::path::Path::new(path).exists() {
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("File not found: {}", path),
+                None,
+            ));
+        }
+
+        let (width, height) = image_utils::get_dimensions(path).map_err(|e| {
+            ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("Unsupported or invalid image: {}", e),
+                None,
+            )
+        })?;
+
+        let file_size_mb = image_utils::get_file_size_mb(path).map_err(|e| {
+            ErrorData::new(ErrorCode::INTERNAL_ERROR, e, None)
+        })?;
+
+        let max_square = params.max_dimension.unwrap_or(image_utils::DEFAULT_MAX_SQUARE as usize) as u32;
+        let max_file_size_mb = params.max_file_size_mb.unwrap_or(image_utils::DEFAULT_MAX_FILE_SIZE_MB as u32) as u64;
+
+        if image_utils::needs_resize_with_limit(width, height, max_square)
+            || file_size_mb > max_file_size_mb as f64
+        {
+            let warning = image_utils::size_warning_with_limit(
+                path, width, height, file_size_mb, max_square, max_file_size_mb,
+            );
+            return Ok(CallToolResult::success(vec![Content::text(warning)]));
+        }
+
+        let data = fs::read(path).map_err(|e| {
+            ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("Failed to read file: {}", e),
+                None,
+            )
+        })?;
+
+        let mime_type = image_utils::mime_type_for_path(path);
+        let encoded = base64::prelude::BASE64_STANDARD.encode(&data);
+
+        Ok(CallToolResult::success(vec![
+            Content::text(format!("Image: {} ({}x{}, {:.1} MB)", path, width, height, file_size_mb)),
+            Content::image(encoded, mime_type),
+        ]))
     }
 
     /// Manage cached files and data

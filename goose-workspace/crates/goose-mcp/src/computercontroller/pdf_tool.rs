@@ -321,13 +321,34 @@ pub async fn pdf_tool(
                                             )
                                         })?;
 
-                                        images.push(format!(
-                                            "Saved image to: {} ({}x{}, {} bits per component)",
+                                        let file_size = fs::metadata(&image_path)
+                                            .map(|m| m.len())
+                                            .unwrap_or(0);
+                                        let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
+                                        let size_str = super::image_utils::format_file_size(file_size);
+
+                                        let mut image_info = format!(
+                                            "Saved image to: {} ({}x{}, {} bpc, {})",
                                             image_path.display(),
                                             width,
                                             height,
-                                            bpc
-                                        ));
+                                            bpc,
+                                            size_str,
+                                        );
+
+                                        if super::image_utils::needs_resize(width as u32, height as u32)
+                                            || file_size_mb > super::image_utils::DEFAULT_MAX_FILE_SIZE_MB as f64
+                                        {
+                                            let warning = super::image_utils::size_warning(
+                                                &image_path.to_string_lossy(),
+                                                width as u32,
+                                                height as u32,
+                                                file_size_mb,
+                                            );
+                                            image_info.push_str(&warning);
+                                        }
+
+                                        images.push(image_info);
                                         image_count += 1;
                                     }
                                 }
