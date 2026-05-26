@@ -1036,8 +1036,18 @@ export class ChatPage extends LitElement {
         alert("No recent session found. Start a new chat!");
       }
     } catch (err) {
-      console.error("[chat-page] Failed to resume recent session:", err);
-      alert("Failed to load recent session. Please try again.");
+      const msg = err instanceof Error ? err.message : String(err);
+      if (this.isSessionDead(msg)) {
+        console.warn("[chat-page] Session dead on Continue Recent — refreshing session...");
+        const refreshed = await this.handleSessionRefresh();
+        if (!refreshed) {
+          alert("Session expired. Please log in again.");
+        }
+        // handleSessionRefresh already calls spawn("recent") + loadSessionById internally
+      } else {
+        console.error("[chat-page] Failed to resume recent session:", err);
+        alert("Failed to load recent session. Please try again.");
+      }
     }
   }
 
