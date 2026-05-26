@@ -378,11 +378,20 @@ async fn get_student_quota(
     assert_session_access(&claims, &session_id)?;
 
     let upper = student_home_dir(&state, &claims.sub).await?;
-    let used_bytes = if upper.exists() {
+    let mut used_bytes = if upper.exists() {
         measure_dir_size(&upper).await
     } else {
         0
     };
+
+    // Also measure the goose home directory (`{students_root}/{sub}`).
+    // The session spawn code at sessions.rs:456 creates this as a separate directory
+    // (keyed on UUID, not on home_dir/username) and bind-mounts it into the jail as
+    // /goose_home — agent configs, conversation DB, etc. all live here.
+    let goose_home = std::path::PathBuf::from(&state.students_root).join(&claims.sub);
+    if goose_home.exists() && goose_home.canonicalize().ok() != upper.canonicalize().ok() {
+        used_bytes += measure_dir_size(&goose_home).await;
+    }
 
     Ok(Json(QuotaResponse {
         used_bytes,
