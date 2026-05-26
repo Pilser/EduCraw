@@ -41,6 +41,12 @@ impl HelixBackend {
     pub async fn _set_last_model(&self, id: &str, model: &str) -> BackendResult<()> {
         Ok(HelixDb::set_last_model(&self.client, id, model).await?)
     }
+    pub async fn _set_recent_thread_id(&self, id: &str, thread_id: &str) -> BackendResult<()> {
+        Ok(HelixDb::set_recent_thread_id(&self.client, id, thread_id).await?)
+    }
+    pub async fn _get_recent_thread_id(&self, id: &str) -> BackendResult<Option<String>> {
+        Ok(HelixDb::get_recent_thread_id(&self.client, id).await?)
+    }
     pub async fn _get_token_balance(&self, id: &str) -> BackendResult<i64> {
         Ok(HelixDb::get_token_balance(&self.client, id).await?)
     }

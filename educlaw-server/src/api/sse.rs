@@ -122,6 +122,12 @@ async fn session_input(
         .join(format!("students/{}", student_id))
         .join(".goose/logs");
 
+    // Read recent_thread_id from student node for session resume
+    let recent_thread_id = state.backend
+        .get_recent_thread_id(&student_id)
+        .await
+        .unwrap_or(None);
+
     // Init goose session if not already in registry
     let registry = Arc::clone(&state.registry);
     let existing = registry.get(&session_id).await;
@@ -139,6 +145,7 @@ async fn session_input(
             logs_dir,
             system_prompt,
             Arc::clone(&registry),
+            recent_thread_id,
         )
         .await?;
     }

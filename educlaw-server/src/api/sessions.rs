@@ -22,6 +22,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::acp_bridge::init_acp_session;
 use crate::auth::bearer_token;
 use crate::db::{DbBackend, Session, Student};
 use crate::error::{AppError, Result};
@@ -44,6 +45,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions", post(create_session))
         .route("/sessions/:id", get(get_session))
         .route("/sessions/:id", delete(terminate_session))
+        .route("/sessions/:id/spawn", post(spawn_session))
         .route("/sessions/:id/broadcast", post(broadcast_message))
         .route("/sessions/:id/models", get(get_session_models))
         .route("/sessions/:id/model", axum::routing::put(set_model))
@@ -52,7 +54,7 @@ pub fn routes() -> Router<AppState> {
 
 // ── Create session ────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct CreateSessionRequest {
     student_id: String,
     model: Option<String>,
@@ -60,6 +62,8 @@ struct CreateSessionRequest {
     /// Backend validates it's a proper UUID; falls back to random if invalid/missing.
     #[serde(default)]
     session_id: Option<String>,
+    /// Does the frontend send a thread_id when creating a new session after session death?
+    thread_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,6 +77,7 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<impl IntoResponse> {
+    tracing::info!(?body, "create_session called");
     let student = state.backend.get_student(&body.student_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("student {} not found", body.student_id)))?;
@@ -345,6 +350,164 @@ async fn set_model(
 
     tracing::info!(session_id = %session_id, model = %model, "model update requested");
     Ok((StatusCode::NO_CONTENT, ()))
+}
+
+// ── Spawn goose for session ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SpawnSessionRequest {
+    action: SpawnAction,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SpawnAction {
+    Recent,
+    New,
+}
+
+#[derive(Serialize)]
+struct SpawnSessionResponse {
+    status: String,
+    thread_id: Option<String>,
+}
+
+/// POST /sessions/:id/spawn
+///
+/// Eagerly spawns goose for this session.
+/// - `action: "recent"` → resume the most recent thread from HelixDB
+/// - `action: "new"`    → create a fresh thread (overwrites recent_thread_id)
+///
+/// Idempotent: returns immediately if goose is already running.
+async fn spawn_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SpawnSessionRequest>,
+) -> Result<impl IntoResponse> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let claims = state.auth.verify(token)?;
+
+    let session = state.backend.get_session(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+
+    if claims.role == "student" && claims.sub != session.student_id {
+        return Err(AppError::Forbidden);
+    }
+
+    if session.state != "active" {
+        return Err(AppError::BadRequest(format!(
+            "session {session_id} is not active (state: {})",
+            session.state
+        )));
+    }
+
+    let student_id = session.student_id.clone();
+
+    // Goose already running — return thread_id immediately
+    if let Some(managed) = state.registry.get(&session_id).await {
+        let thread_id = {
+            let guard = managed.acp_session_id.lock().await;
+            guard.as_ref().map(|sid| sid.0.to_string())
+        };
+        return Ok(Json(SpawnSessionResponse {
+            status: "already_running".to_string(),
+            thread_id,
+        }));
+    }
+
+    let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
+
+    // Resolve system_prompt from student.json
+    let system_prompt = std::fs::read_to_string(dirs.config.join("student.json"))
+        .ok()
+        .and_then(|blob| serde_json::from_str::<serde_json::Value>(&blob).ok())
+        .and_then(|v| v["system_prompt"].as_str().map(|s| s.to_string()))
+        .and_then(|b64| {
+            use base64::{engine::general_purpose::STANDARD, Engine as _};
+            STANDARD.decode(b64).ok().and_then(|bytes| String::from_utf8(bytes).ok())
+        });
+
+    // Resolve env_vars (same list as sse.rs and threads.rs)
+    let mut env_vars: Vec<(String, String)> = Vec::new();
+    for key in &[
+        "HOME", "USER", "PATH", "TERM",
+        "XAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
+        "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "NOVITA_API_KEY",
+        "NVIDIA_API_KEY", "CEREBRAS_API_KEY", "INCEPTION_API_KEY",
+        "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
+        "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
+        "OPENAI_BASE_URL",
+        "GOOSE_EXCLUDED_DIRS",
+        "EXA_API_KEY",
+    ] {
+        if let Ok(val) = std::env::var(key) {
+            env_vars.push((key.to_string(), val));
+        }
+    }
+
+    let model = session.model.clone()
+        .filter(|m| !m.is_empty())
+        .or_else(|| std::env::var("GOOSE_MODEL").ok());
+
+    let goose_path_root = std::path::PathBuf::from(&state.students_root).join(&student_id);
+    let logs_dir = std::path::PathBuf::from(&state.workspace_root)
+        .parent()
+        .unwrap_or(std::path::Path::new("/data"))
+        .join(format!("students/{}", student_id))
+        .join(".goose/logs");
+
+    let recent_thread_id = match body.action {
+        SpawnAction::Recent => {
+            match state.backend.get_recent_thread_id(&student_id).await {
+                Ok(Some(tid)) => Some(tid),
+                _ => {
+                    return Ok(Json(SpawnSessionResponse {
+                        status: "no_recent".to_string(),
+                        thread_id: None,
+                    }));
+                }
+            }
+        }
+        SpawnAction::New => None,
+    };
+
+    init_acp_session(
+        std::path::PathBuf::from(&state.goose_bin),
+        dirs.merged.clone(),
+        goose_path_root,
+        dirs.config.clone(),
+        env_vars,
+        model,
+        state.backend.clone(),
+        session_id.clone(),
+        student_id,
+        logs_dir,
+        system_prompt,
+        Arc::clone(&state.registry),
+        recent_thread_id,
+    )
+    .await?;
+
+    // Read back thread_id from registry after spawn
+    let thread_id = {
+        let managed = state.registry.get(&session_id).await;
+        match managed {
+            Some(m) => {
+                let guard = m.acp_session_id.lock().await;
+                (*guard).as_ref().map(|sid| sid.0.to_string())
+            }
+            None => None,
+        }
+    };
+
+    Ok(Json(SpawnSessionResponse {
+        status: "ready".to_string(),
+        thread_id,
+    }))
 }
 
 // ── Token usage summary ───────────────────────────────────────────────────

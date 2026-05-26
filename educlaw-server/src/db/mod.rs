@@ -68,6 +68,8 @@ pub trait DbBackend: Send + Sync {
     async fn ban_student(&self, id: &str, message: Option<&str>) -> BackendResult<()>;
     async fn unban_student(&self, id: &str) -> BackendResult<()>;
     async fn set_last_model(&self, id: &str, model: &str) -> BackendResult<()>;
+    async fn set_recent_thread_id(&self, id: &str, thread_id: &str) -> BackendResult<()>;
+    async fn get_recent_thread_id(&self, id: &str) -> BackendResult<Option<String>>;
     async fn get_token_balance(&self, id: &str) -> BackendResult<i64>;
     async fn deduct_tokens(&self, id: &str, amount: i64) -> BackendResult<i64>;
     async fn topup_tokens(&self, id: &str, amount: i64) -> BackendResult<i64>;
@@ -146,6 +148,8 @@ impl DbBackend for HelixBackend {
     async fn ban_student(&self, id: &str, message: Option<&str>) -> BackendResult<()> { self._ban_student(id, message).await }
     async fn unban_student(&self, id: &str) -> BackendResult<()> { self._unban_student(id).await }
     async fn set_last_model(&self, id: &str, model: &str) -> BackendResult<()> { self._set_last_model(id, model).await }
+    async fn set_recent_thread_id(&self, id: &str, thread_id: &str) -> BackendResult<()> { self._set_recent_thread_id(id, thread_id).await }
+    async fn get_recent_thread_id(&self, id: &str) -> BackendResult<Option<String>> { self._get_recent_thread_id(id).await }
     async fn get_token_balance(&self, id: &str) -> BackendResult<i64> { self._get_token_balance(id).await }
     async fn deduct_tokens(&self, id: &str, amount: i64) -> BackendResult<i64> { self._deduct_tokens(id, amount).await }
     async fn topup_tokens(&self, id: &str, amount: i64) -> BackendResult<i64> { self._topup_tokens(id, amount).await }

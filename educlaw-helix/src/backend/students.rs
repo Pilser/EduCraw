@@ -82,6 +82,72 @@ impl crate::client::HelixClient {
         Ok(())
     }
 
+    pub async fn _set_recent_thread_id(&self, id: &str, thread_id: &str) -> Result<()> {
+        let body = serde_json::json!({
+            "request_type": "write",
+            "query": {
+                "queries": [{
+                    "Query": {
+                        "name": "student",
+                        "steps": [
+                            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+                            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+                            {"SetProperty": ["recent_thread_id", {"Expr": {"Param": "thread_id"}}]}
+                        ],
+                        "condition": null
+                    }
+                }],
+                "returns": ["student"]
+            },
+            "parameters": {
+                "student_id": id,
+                "thread_id": thread_id
+            },
+            "parameter_types": {
+                "student_id": "String",
+                "thread_id": "String"
+            }
+        });
+        self.raw_query(body).await?;
+        Ok(())
+    }
+
+    pub async fn _get_recent_thread_id(&self, id: &str) -> Result<Option<String>> {
+        let body = serde_json::json!({
+            "request_type": "read",
+            "query": {
+                "queries": [{
+                    "Query": {
+                        "name": "student",
+                        "steps": [
+                            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+                            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+                            {"ValueMap": ["recent_thread_id"]}
+                        ],
+                        "condition": null
+                    }
+                }],
+                "returns": ["student"]
+            },
+            "parameters": {
+                "student_id": id
+            },
+            "parameter_types": {
+                "student_id": "String"
+            }
+        });
+        let resp = self.raw_query(body).await?;
+        let thread_id = resp
+            .get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("recent_thread_id"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        Ok(thread_id)
+    }
+
     pub async fn _get_token_balance(&self, id: &str) -> Result<i64> {
         let resp = self.read("get_token_balance", QueryParams::new().add("student_id", id)).await?;
         resp.get("student").and_then(|v| v.get("properties")).and_then(|v| v.as_array()).and_then(|arr| arr.first()).and_then(|v| v.get("token_balance")).and_then(|v| v.as_i64())

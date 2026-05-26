@@ -68,6 +68,7 @@ pub async fn init_acp_session(
     _logs_dir: PathBuf,
     system_prompt: Option<String>,
     registry: Arc<SessionRegistry>,
+    recent_thread_id: Option<String>,
 ) -> Result<()> {
     // Already initialised?
     if registry.get(&session_id).await.is_some() {
@@ -221,6 +222,7 @@ pub async fn init_acp_session(
         session_id.clone(),
         loading_flag.clone(),
         model_arc.clone(),
+        recent_thread_id,
     )
     .await?;
 
@@ -383,6 +385,7 @@ pub async fn handle_input_sse(
     let session_id_for_prompt = session_id.to_string();
     let workspace_for_prompt = workspace.clone();
     let backend_for_prompt = backend.clone();
+    let student_id_for_prompt = student_id.to_string();
 
     tokio::spawn(async move {
         let sid_prompt = {
@@ -425,6 +428,19 @@ pub async fn handle_input_sse(
                         .to_string();
                         let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
                         *holder = Some(new_sid.clone());
+
+                        if let Err(e) = backend_for_prompt
+                            .set_recent_thread_id(&student_id_for_prompt, &new_sid.0)
+                            .await
+                        {
+                            tracing::warn!(
+                                student_id = %student_id_for_prompt,
+                                thread_id = %new_sid.0,
+                                error = %e,
+                                "⚠ [SSE] Failed to persist recent_thread_id on new session"
+                            );
+                        }
+
                         new_sid
                     }
                     Err(e) => {
@@ -587,6 +603,8 @@ pub async fn handle_replay_sse(
     let loading_flag = managed.loading_flag.clone();
     let acp_sid_holder = managed.acp_session_id.clone();
     let tid = thread_id.to_string();
+    let student_id = managed.student_id.clone();
+    let backend = managed.backend.clone();
 
     let sse_tx_load = sse_tx.clone();
     tokio::spawn(async move {
@@ -596,6 +614,16 @@ pub async fn handle_replay_sse(
             Ok(()) => {
                 let loaded_sid = SessionId::new(tid.clone());
                 *acp_sid_holder.lock().await = Some(loaded_sid);
+
+                if let Err(e) = backend.set_recent_thread_id(&student_id, &tid).await {
+                    tracing::warn!(
+                        student_id = %student_id,
+                        thread_id = %tid,
+                        error = %e,
+                        "⚠ [SSE] Failed to persist recent_thread_id on thread switch"
+                    );
+                }
+
                 tokio::time::sleep(Duration::from_millis(150)).await;
                 loading_flag.store(false, Ordering::Relaxed);
 

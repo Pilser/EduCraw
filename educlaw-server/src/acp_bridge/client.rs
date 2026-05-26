@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sacp::schema::{
-    ClientCapabilities, InitializeRequest, NewSessionRequest, ProtocolVersion,
+    ClientCapabilities, InitializeRequest, LoadSessionRequest, NewSessionRequest, ProtocolVersion,
     RequestPermissionRequest, SessionId, SessionNotification, SessionUpdate,
 };
 use sacp::{Agent as SacpAgent, ByteStreams, Client, ConnectionTo};
@@ -41,6 +41,7 @@ pub async fn spawn_sacp_client(
     session_id: String,
     loading_flag: Arc<AtomicBool>,
     model_arc: Arc<tokio::sync::Mutex<Option<String>>>,
+    recent_thread_id: Option<String>,
 ) -> Result<(ConnectionTo<SacpAgent>, Arc<tokio::sync::Mutex<Option<SessionId>>>, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
@@ -73,6 +74,11 @@ pub async fn spawn_sacp_client(
     let educlaw_session_id = session_id.clone();
     let loading_flag_clone = loading_flag.clone();
     let model_arc_clone = model_arc.clone();
+
+    // Clone values needed inside connect_with
+    let backend_init = backend.clone();
+    let student_id_init = student_id.clone();
+    let recent_thread_id_init = recent_thread_id.clone();
 
     tokio::spawn(async move {
         let result = Client
@@ -140,7 +146,7 @@ pub async fn spawn_sacp_client(
                                     session_id = %session_id,
                                     student_id = %student_id,
                                     mode_id = %mode.current_mode_id.0,
-                                    "� [STATS] Mode change received from goose (persistence deferred)"
+                                    "📋 [STATS] Mode change received from goose (persistence deferred)"
                                 );
                             }
                             SessionUpdate::SessionInfoUpdate(info) => {
@@ -156,7 +162,7 @@ pub async fn spawn_sacp_client(
                                     session_id = %session_id,
                                     student_id = %student_id,
                                     title = ?title,
-                                    "� [STATS] Session info update received from goose (persistence deferred)"
+                                    "📋 [STATS] Session info update received from goose (persistence deferred)"
                                 );
                             }
                             SessionUpdate::AvailableCommandsUpdate(cmds) => {
@@ -165,7 +171,7 @@ pub async fn spawn_sacp_client(
                                     session_id = %session_id,
                                     student_id = %student_id,
                                     command_count = cmds.available_commands.len(),
-                                    "� [STATS] Available commands update received from goose (persistence deferred)"
+                                    "📋 [STATS] Available commands update received from goose (persistence deferred)"
                                 );
                             }
                             SessionUpdate::ConfigOptionUpdate(config) => {
@@ -174,7 +180,7 @@ pub async fn spawn_sacp_client(
                                     session_id = %session_id,
                                     student_id = %student_id,
                                     config_count = config.config_options.len(),
-                                    "� [STATS] Config options update received from goose (persistence deferred)"
+                                    "📋 [STATS] Config options update received from goose (persistence deferred)"
                                 );
                             }
                             _ => {}
@@ -229,61 +235,114 @@ pub async fn spawn_sacp_client(
                     }
                 }
 
-                // ── Create ACP session ─────────────────────────────────
-                // Inside the pivot_root jail, the effective workspace root is '/'.
-                // Passing a host absolute merged path causes path resolution failures.
-                let mut nsr = NewSessionRequest::new("/");
-                if let Some(ref provider) = provider {
-                    let mut meta = serde_json::Map::new();
-                    meta.insert("provider".to_string(), Value::String(provider.clone()));
-                    nsr = nsr.meta(meta);
-                }
-                let sess_resp = match cx
-                    .send_request(nsr)
-                    .block_task()
-                    .await
-                {
-                    Ok(r) => {
-                        tracing::info!(
-                            session_id = %r.session_id.0,
-                            "✓ [GOOSE-ACP] Session created successfully"
+                // ── Create or Load ACP session ─────────────────────────
+                // If we have a recent_thread_id, try loading the existing thread.
+                // This lets Goose resume the last conversation for this student.
+                // If loading fails (thread was corrupted/deleted), create a new one.
+                let session_id_result: Option<SessionId> = 'session: {
+                    if let Some(ref tid) = recent_thread_id_init {
+                        let load_req = LoadSessionRequest::new(
+                            SessionId::new(tid.clone()),
+                            PathBuf::from("/"),
                         );
-                        tracing::debug!(
-                            "📋 [GOOSE-ACP] Session ID: {}, Workspace: {}",
-                            r.session_id.0,
-                            workspace.display()
-                        );
-                        r
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "✗ [GOOSE-ACP] Session creation FAILED: {}",
-                            e
-                        );
-                        if let Some(tx) = ready_tx_spawn.lock().await.take() {
-                            let _ = tx.send(Err(AppError::Session(format!(
-                                "ACP new_session failed: {e}"
-                            ))));
+                        match cx.send_request(load_req).block_task().await {
+                            Ok(r) => {
+                                tracing::info!(
+                                    thread_id = %tid,
+                                    "✓ [GOOSE-ACP] Existing thread loaded successfully"
+                                );
+                                if let Err(e) = backend_init
+                                    .set_recent_thread_id(&student_id_init, tid)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        student_id = %student_id_init,
+                                        thread_id = %tid,
+                                        error = %e,
+                                        "⚠ [GOOSE-ACP] Failed to persist recent_thread_id on load"
+                                    );
+                                }
+                                #[cfg(feature = "unstable_session_model")]
+                                if let Some(model_state) = r.models {
+                                    let model_names: Vec<String> = model_state
+                                        .available_models
+                                        .iter()
+                                        .map(|m| m.name.clone())
+                                        .collect();
+                                    *models_holder_spawn.lock().await = model_names.clone();
+                                }
+                                break 'session Some(SessionId::new(tid.clone()));
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    thread_id = %tid,
+                                    error = %e,
+                                    "⚠ [GOOSE-ACP] LoadSession failed — falling back to NewSession"
+                                );
+                            }
                         }
-                        return Err(e);
+                    }
+
+                    // No recent_thread_id or load failed — create a new thread
+                    let mut nsr = NewSessionRequest::new("/");
+                    if let Some(ref provider) = provider {
+                        let mut meta = serde_json::Map::new();
+                        meta.insert("provider".to_string(), Value::String(provider.clone()));
+                        nsr = nsr.meta(meta);
+                    }
+                    match cx.send_request(nsr).block_task().await {
+                        Ok(resp) => {
+                            tracing::info!(
+                                session_id = %resp.session_id.0,
+                                "✓ [GOOSE-ACP] New session created successfully"
+                            );
+                            let thread_id = resp.session_id.0.clone();
+                            if let Err(e) = backend_init
+                                .set_recent_thread_id(&student_id_init, &thread_id)
+                                .await
+                            {
+                                tracing::warn!(
+                                    student_id = %student_id_init,
+                                    thread_id = %thread_id,
+                                    error = %e,
+                                    "⚠ [GOOSE-ACP] Failed to persist recent_thread_id"
+                                );
+                            }
+                            #[cfg(feature = "unstable_session_model")]
+                            if let Some(model_state) = resp.models {
+                                let model_names: Vec<String> = model_state
+                                    .available_models
+                                    .iter()
+                                    .map(|m| m.name.clone())
+                                    .collect();
+                                *models_holder_spawn.lock().await = model_names.clone();
+                                tracing::info!(
+                                    model_count = model_names.len(),
+                                    models = ?model_names,
+                                    "✓ [GOOSE-ACP] Captured available models"
+                                );
+                            }
+                            #[cfg(not(feature = "unstable_session_model"))]
+                            {
+                                let _ = resp.models;
+                            }
+                            break 'session Some(resp.session_id.clone());
+                        }
+                        Err(e) => {
+                            tracing::error!("✗ [GOOSE-ACP] NewSession FAILED: {e}");
+                            if let Some(tx) = ready_tx_spawn.lock().await.take() {
+                                let _ = tx.send(Err(AppError::Session(format!(
+                                    "ACP new_session failed: {e}"
+                                ))));
+                            }
+                            return Err(e);
+                        }
                     }
                 };
-                *acp_sid_spawn.lock().await = Some(sess_resp.session_id.clone());
 
-                // ── Capture available models from SessionModelState ────────────────────────
-                if let Some(model_state) = sess_resp.models {
-                    let model_names: Vec<String> = model_state
-                        .available_models
-                        .iter()
-                        .map(|m| m.name.clone())
-                        .collect();
-                    *models_holder_spawn.lock().await = model_names.clone();
-                    tracing::info!(
-                        model_count = model_names.len(),
-                        models = ?model_names,
-                        "✓ [GOOSE-ACP] Captured available models from temp session"
-                    );
-                }
+                let acp_sid = session_id_result
+                    .expect("session_id_result must be Some after either Load or New");
+                *acp_sid_spawn.lock().await = Some(acp_sid);
 
                 // Note: Can't set initial model yet since we have no active session.
                 // Model will be set when the session is created (LoadSession or NewSession).

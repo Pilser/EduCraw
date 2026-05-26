@@ -109,6 +109,11 @@ async fn get_managed_session(
         .join(format!("students/{}", student_id))
         .join(".goose/logs");
 
+    let recent_thread_id = state.backend
+        .get_recent_thread_id(&student_id)
+        .await
+        .unwrap_or(None);
+
     init_acp_session(
         std::path::PathBuf::from(&state.goose_bin),
         dirs.merged.clone(),
@@ -122,6 +127,7 @@ async fn get_managed_session(
         logs_dir,
         system_prompt,
         Arc::clone(&state.registry),
+        recent_thread_id,
     )
     .await?;
 
