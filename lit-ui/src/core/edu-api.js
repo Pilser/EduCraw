@@ -169,6 +169,14 @@ export const eduApi = {
             body: JSON.stringify({ student_id: studentId, model, session_id: sessionId }),
         });
     },
+    /** Eagerly spawn goose for a session */
+    async spawnSession(sessionId, token, action) {
+        return request(`/sessions/${sessionId}/spawn`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ action }),
+        });
+    },
     /** End/terminate a session */
     async endSession(sessionId, token) {
         await fetch(`${BASE}/sessions/${sessionId}`, {

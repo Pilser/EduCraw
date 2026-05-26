@@ -38,7 +38,7 @@ let MermaidBlockComponent = class MermaidBlockComponent extends LitElement {
         const svg = container?.querySelector("svg");
         if (!svg || !container)
             return;
-        // Get container width
+        // Get container and svg dimensions
         const containerWidth = container.clientWidth;
         const svgWidth = svg.getAttribute("width");
         const svgHeight = svg.getAttribute("height");
@@ -46,8 +46,21 @@ let MermaidBlockComponent = class MermaidBlockComponent extends LitElement {
             return;
         const width = parseFloat(svgWidth);
         const height = parseFloat(svgHeight);
-        if (width > containerWidth - 32) {
-            const scale = (containerWidth - 32) / width;
+        const padding = 32;
+        // On small screens (< 640px), center the diagram without scaling
+        // to avoid truncation of complex diagrams
+        if (containerWidth < 640) {
+            // Don't scale, just center it
+            svg.style.transform = "none";
+            svg.style.maxWidth = "100%";
+            svg.style.height = "auto";
+            container.style.justifyContent = "center";
+            container.style.overflow = "auto";
+            return;
+        }
+        // On larger screens, scale down if needed
+        if (width > containerWidth - padding) {
+            const scale = (containerWidth - padding) / width;
             svg.setAttribute("width", `${width * scale}px`);
             svg.setAttribute("height", `${height * scale}px`);
             svg.style.transform = `scale(${scale})`;
@@ -151,27 +164,38 @@ let MermaidBlockComponent = class MermaidBlockComponent extends LitElement {
         }
         return html `
 			<style>
-				.mermaid-container {
+				.mermaid-wrapper {
 					width: 100%;
-					overflow-x: auto;
-					overflow-y: hidden;
+					overflow: auto;
 					display: flex;
 					justify-content: center;
+					align-items: flex-start;
+				}
+				.mermaid-container {
+					width: 100%;
+					height: 100%;
+					display: flex;
+					justify-content: center;
+					align-items: flex-start;
+					overflow: visible;
 				}
 				.mermaid-diagram {
 					display: block;
 					max-width: 100%;
-					width: 100%;
+					width: auto;
 					height: auto;
 				}
 				.mermaid-diagram svg {
 					max-width: 100%;
 					height: auto;
 					display: block;
+					margin: 0 auto;
 				}
 			</style>
-			<div class="mermaid-container my-2 p-2 sm:p-3 md:p-4 rounded-lg bg-white dark:bg-slate-950 border border-border min-h-[150px] sm:min-h-[200px]">
-				<div class="mermaid-diagram"></div>
+			<div class="mermaid-wrapper my-2 p-2 sm:p-3 md:p-4 rounded-lg bg-white dark:bg-slate-950 border border-border" style="min-height: 200px; max-height: 70vh;">
+				<div class="mermaid-container">
+					<div class="mermaid-diagram"></div>
+				</div>
 			</div>
 		`;
     }

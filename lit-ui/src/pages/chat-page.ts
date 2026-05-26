@@ -111,7 +111,6 @@ export class ChatPage extends LitElement {
         ai.requestUpdate();
       }
 
-      this.loadMostRecentSession();
     } catch (err) {
       if (this.isAuthError(err)) {
         console.warn(
@@ -956,12 +955,11 @@ export class ChatPage extends LitElement {
 
   private async newSession() {
     try {
-      const { thread_id } = await eduApi.createThread(this.sessionId, this.sessionToken);
-      console.log("[chat-page] New thread created:", thread_id);
+      const resp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "new");
 
       this.messages = [];
       this.currentTitle = "";
-      this.lastLoadedThreadId = thread_id;
+      this.lastLoadedThreadId = resp.thread_id || null;
       this.showLanding = false;
       this.isStreaming = false;
       this.streamingMessage = null;
@@ -969,7 +967,23 @@ export class ChatPage extends LitElement {
       this.updateUI();
       this.requestUpdate();
     } catch (err) {
-      console.error("[chat-page] Failed to create new thread:", err);
+      console.error("[chat-page] Failed to create new session:", err);
+      alert("Failed to create new session. Please try again.");
+    }
+  }
+
+  private async handleContinueRecent() {
+    try {
+      const resp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "recent");
+      if (resp.thread_id) {
+        console.log("[chat-page] Resuming recent thread:", resp.thread_id);
+        this.loadSessionById(resp.thread_id);
+      } else {
+        alert("No recent session found. Start a new chat!");
+      }
+    } catch (err) {
+      console.error("[chat-page] Failed to resume recent session:", err);
+      alert("Failed to load recent session. Please try again.");
     }
   }
 
@@ -1120,7 +1134,7 @@ export class ChatPage extends LitElement {
           ${this.showLanding && this._ready
             ? html`<landing-banner
                 .onNewChat=${() => this.newSession()}
-                .onContinueRecent=${() => this.loadMostRecentSession()}
+                .onContinueRecent=${() => this.handleContinueRecent()}
                 .onCheckBalance=${() => this.openMenuWithAccount()}
               ></landing-banner>`
             : ''}

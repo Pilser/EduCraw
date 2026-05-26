@@ -228,6 +228,19 @@ export const eduApi = {
     });
   },
 
+  /** Eagerly spawn goose for a session */
+  async spawnSession(
+    sessionId: string,
+    token: string,
+    action: "recent" | "new",
+  ): Promise<{ status: string; thread_id: string | null }> {
+    return request(`/sessions/${sessionId}/spawn`, {
+      method: "POST",
+      headers: authHeader(token),
+      body: JSON.stringify({ action }),
+    });
+  },
+
   /** End/terminate a session */
   async endSession(sessionId: string, token: string): Promise<void> {
     await fetch(`${BASE}/sessions/${sessionId}`, {
