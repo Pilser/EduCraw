@@ -78,6 +78,8 @@ function renderApp() {
                             sessionToken: session.token,
                         };
                         renderApp();
+                        // Auto-resume the most recent thread from HelixDB
+                        document.querySelector("chat-page")?.tryResumeRecentThread();
                     })
                         .catch((err) => {
                         console.error("Failed to refresh session:", err);
@@ -106,11 +108,21 @@ function renderApp() {
     }
     render(content, app);
 }
+function makeChatView(auth, sessionId, sessionToken) {
+    return { kind: "chat", auth, sessionId, sessionToken };
+}
+function startNewSession(auth) {
+    return eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID())
+        .then((session) => {
+        SessionManager.clearSession();
+        SessionManager.saveSession(session.session_id, session.token);
+        return makeChatView(auth, session.session_id, session.token);
+    });
+}
 // Initialize
 async function init() {
     const auth = SessionManager.loadAuth();
     if (auth) {
-        // Check JWT expiry client-side (no server call, no side effects)
         const isJwtValid = SessionManager.isTokenValid(auth.token);
         if (!isJwtValid) {
             console.warn("[main] JWT token is expired - forcing re-login");
@@ -119,74 +131,36 @@ async function init() {
             renderApp();
             return;
         }
-        // JWT is valid - try to use existing session
+        // JWT is valid
         const sessionId = SessionManager.loadSessionId();
         const sessionToken = SessionManager.loadSessionToken();
-        if (sessionId && sessionToken) {
-            const isSessionTokenValid = SessionManager.isTokenValid(sessionToken);
-            if (isSessionTokenValid) {
-                try {
-                    await eduApi.getSessionModels(sessionId, auth.token);
-                    console.log("[main] Restoring existing session");
-                    currentView = {
-                        kind: "chat",
-                        auth,
-                        sessionId,
-                        sessionToken,
-                    };
-                }
-                catch {
-                    console.log("[main] Session not found on backend, creating new session...");
-                    SessionManager.clearSession();
-                    try {
-                        const session = await eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID());
-                        SessionManager.saveSession(session.session_id, session.token);
-                        currentView = {
-                            kind: "chat",
-                            auth,
-                            sessionId: session.session_id,
-                            sessionToken: session.token,
-                        };
-                    }
-                    catch (createErr) {
-                        console.error("Failed to create session:", createErr);
-                        SessionManager.clearAuth();
-                        currentView = { kind: "login" };
-                    }
-                }
+        let isNewSession = false;
+        if (sessionId && sessionToken && SessionManager.isTokenValid(sessionToken)) {
+            try {
+                await eduApi.getSessionModels(sessionId, auth.token);
+                console.log("[main] Restoring existing session");
+                currentView = makeChatView(auth, sessionId, sessionToken);
             }
-            else {
-                // Session token expired but JWT is valid - try to refresh session
-                console.log("[main] Session token expired, refreshing session...");
+            catch {
+                // Session not found on backend — create new
+                console.log("[main] Session not found on backend, creating new session...");
                 try {
-                    const session = await eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID());
-                    SessionManager.saveSession(session.session_id, session.token);
-                    currentView = {
-                        kind: "chat",
-                        auth,
-                        sessionId: session.session_id,
-                        sessionToken: session.token,
-                    };
+                    currentView = await startNewSession(auth);
+                    isNewSession = true;
                 }
-                catch (err) {
-                    console.error("Failed to refresh session:", err);
+                catch (createErr) {
+                    console.error("Failed to create session:", createErr);
                     SessionManager.clearAuth();
                     currentView = { kind: "login" };
                 }
             }
         }
         else {
-            // No session stored but JWT is valid - create new session
-            console.log("[main] No session stored, creating new session...");
+            // Session token expired or no session stored — create new
+            console.log("[main] Creating new session...");
             try {
-                const session = await eduApi.createSession(auth.student_id, auth.token, undefined, crypto.randomUUID());
-                SessionManager.saveSession(session.session_id, session.token);
-                currentView = {
-                    kind: "chat",
-                    auth,
-                    sessionId: session.session_id,
-                    sessionToken: session.token,
-                };
+                currentView = await startNewSession(auth);
+                isNewSession = true;
             }
             catch (err) {
                 console.error("Failed to create session:", err);
@@ -194,10 +168,15 @@ async function init() {
                 currentView = { kind: "login" };
             }
         }
+        renderApp();
+        // Auto-resume recent thread when a new session was created
+        if (isNewSession) {
+            document.querySelector("chat-page")?.tryResumeRecentThread();
+        }
     }
     else {
         currentView = { kind: "login" };
+        renderApp();
     }
-    renderApp();
 }
 init();

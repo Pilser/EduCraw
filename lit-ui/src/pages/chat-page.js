@@ -118,6 +118,8 @@ let ChatPage = class ChatPage extends LitElement {
         return msg.includes("404") || msg.includes("not found") || msg.includes("not active") || msg.includes("ended");
     }
     async ensureValidSession() {
+        if (this._isRefreshing)
+            return;
         try {
             await eduApi.getSessionModels(this.sessionId, this.auth.token);
         }
@@ -126,6 +128,8 @@ let ChatPage = class ChatPage extends LitElement {
                 throw err;
             const msg = err instanceof Error ? err.message : String(err);
             if (this.isSessionDead(msg)) {
+                if (this._isRefreshing)
+                    return;
                 console.warn("[chat-page] Session dead during validation, refreshing...");
                 const refreshed = await this.handleSessionRefresh();
                 if (!refreshed) {
@@ -215,6 +219,20 @@ let ChatPage = class ChatPage extends LitElement {
             // Persist (clearSession removes stale thread ref + old session before saving new)
             SessionManager.clearSession();
             SessionManager.saveSession(session.session_id, session.token);
+            // Auto-resume the most recent thread from HelixDB
+            try {
+                const spawnResp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "recent");
+                if (spawnResp.thread_id) {
+                    console.log("[chat-page] Auto-resuming recent thread after refresh:", spawnResp.thread_id);
+                    await this.loadSessionById(spawnResp.thread_id);
+                }
+                else {
+                    console.log("[chat-page] No recent thread to resume — user will see landing page");
+                }
+            }
+            catch (spawnErr) {
+                console.warn("[chat-page] Failed to auto-resume recent thread (non-fatal):", spawnErr);
+            }
             return { sessionId: session.session_id, sessionToken: session.token };
         }
         catch (err) {
@@ -222,6 +240,23 @@ let ChatPage = class ChatPage extends LitElement {
             // If refresh fails, JWT may also be expired - force re-login
             this.dispatchSessionExpired();
             return null;
+        }
+    }
+    /**
+     * Public entry point for main.ts to call after @session-expired creates
+     * a new session. Tries to resume the most recent thread from HelixDB.
+     * No-op if no recent thread exists.
+     */
+    async tryResumeRecentThread() {
+        try {
+            const resp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "recent");
+            if (resp.thread_id) {
+                console.log("[chat-page] Auto-resuming recent thread after session refresh:", resp.thread_id);
+                await this.loadSessionById(resp.thread_id);
+            }
+        }
+        catch (err) {
+            console.warn("[chat-page] Failed to auto-resume recent thread (non-fatal):", err);
         }
     }
     async handleSend(text) {

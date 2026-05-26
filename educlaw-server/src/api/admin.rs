@@ -391,7 +391,7 @@ async fn terminate_session(
 
     let session = state.backend.get_session(&id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("session {id}")))?;
+        .ok_or_else(|| AppError::NotFound(format!("session {id} not found")))?;
 
     if let Some(pid) = session.namespace_pid {
         crate::session::namespace::kill_process_tree(pid, 5).await;

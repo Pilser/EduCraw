@@ -524,6 +524,17 @@ async fn get_session_models(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    let session = state.backend.get_session(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+
+    if session.state != "active" {
+        return Err(AppError::BadRequest(format!(
+            "session {session_id} is not active (state: {})",
+            session.state
+        )));
+    }
+
     let result = state.backend.get_session_models(&session_id).await?;
     Ok(Json(result))
 }
