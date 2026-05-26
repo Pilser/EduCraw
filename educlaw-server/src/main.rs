@@ -10,6 +10,7 @@ mod error;
 mod security;
 mod session;
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,6 +76,20 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "/srv/educlaw/data/students".to_string());
     std::fs::create_dir_all(&students_root)?;
 
+    // Parse GOOSE_EXCLUDED_DIRS into a set of directory basenames to filter
+    // from file tree listings (OverlayFS copy-up stubs of system dirs).
+    let excluded_dirs: HashSet<String> = std::env::var("GOOSE_EXCLUDED_DIRS")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            std::path::Path::new(s)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| s.trim_start_matches('/').to_string())
+        })
+        .collect();
+
     // Ensure host routing/NAT prerequisites for per-session network namespaces.
     ensure_host_networking().await
         .map_err(|e| anyhow::anyhow!("host networking bootstrap failed: {e}"))?;
@@ -135,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root);
+    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root, excluded_dirs);
 
     let app = Router::new()
         .merge(api::routes())

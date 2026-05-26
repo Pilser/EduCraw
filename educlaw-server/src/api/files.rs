@@ -112,7 +112,7 @@ fn validate_id(s: &str, label: &str) -> Result<String> {
 
 // ── File tree builder ─────────────────────────────────────────────────────
 
-fn build_tree(root: &Path, root_prefix: &str) -> Vec<FileNode> {
+fn build_tree(root: &Path, root_prefix: &str, excluded: &std::collections::HashSet<String>) -> Vec<FileNode> {
     let mut nodes: Vec<FileNode> = Vec::new();
 
     let entries = match std::fs::read_dir(root) {
@@ -129,8 +129,9 @@ fn build_tree(root: &Path, root_prefix: &str) -> Vec<FileNode> {
             Err(_) => continue,
         };
         let name = entry.file_name().to_string_lossy().to_string();
-        // Skip hidden files and OverlayFS internals
+        // Skip hidden files, OverlayFS internals, and GOOSE_EXCLUDED_DIRS
         if name.starts_with('.') { continue; }
+        if ft.is_dir() && excluded.contains(&name) { continue; }
         let rel_path = format!("{root_prefix}/{name}");
 
         if ft.is_dir() {
@@ -151,7 +152,7 @@ fn build_tree(root: &Path, root_prefix: &str) -> Vec<FileNode> {
     files.sort_by(|a, b| a.name.cmp(&b.name));
 
     for (name, rel_path, abs_path) in dirs {
-        let children = build_tree(&abs_path, &rel_path);
+        let children = build_tree(&abs_path, &rel_path, excluded);
         nodes.push(FileNode {
             name,
             path: rel_path,
@@ -229,7 +230,7 @@ async fn list_subject_files(
         return Err(AppError::NotFound(format!("subject {subject_id} not found")));
     }
 
-    Ok(Json(build_tree(&base, "")))
+    Ok(Json(build_tree(&base, "", &state.excluded_dirs)))
 }
 
 async fn read_subject_file(
@@ -273,7 +274,7 @@ async fn list_student(
     let subject_slugs: std::collections::HashSet<&str> =
         claims.subject_ids.iter().map(|s| s.as_str()).collect();
 
-    let tree = build_tree(&upper, "");
+    let tree = build_tree(&upper, "", &state.excluded_dirs);
     let filtered = tree
         .into_iter()
         .filter(|node| !(node.kind == "dir" && subject_slugs.contains(node.name.as_str())))

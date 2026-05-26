@@ -35,6 +35,8 @@ pub struct AppState {
     /// Root dir containing one sub-dir per student: `{students_root}/{student_id}/`
     /// This is the OverlayFS upper layer — student persistent home, read-write.
     pub students_root: String,
+    /// Directory basenames to exclude from file tree listings (GOOSE_EXCLUDED_DIRS).
+    pub excluded_dirs: std::collections::HashSet<String>,
 }
 
 impl AppState {
@@ -47,6 +49,7 @@ impl AppState {
         registry: Arc<SessionRegistry>,
         subjects_root: String,
         students_root: String,
+        excluded_dirs: std::collections::HashSet<String>,
     ) -> Self {
         Self {
             backend,
@@ -57,6 +60,7 @@ impl AppState {
             registry,
             subjects_root,
             students_root,
+            excluded_dirs,
         }
     }
 }
