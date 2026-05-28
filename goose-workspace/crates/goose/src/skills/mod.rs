@@ -199,6 +199,13 @@ pub fn all_skill_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
         dirs.push((wd.join(".agents").join("skills"), false));
         dirs.push((wd.join(".goose").join("skills"), false));
         dirs.push((wd.join(".claude").join("skills"), false));
+
+        let mut subdir_skills: Vec<PathBuf> = Vec::new();
+        discover_agents_subdirs(wd, &mut subdir_skills, 0, 5);
+        subdir_skills.sort_by(|a, b| depth(a).cmp(&depth(b)));
+        for path in subdir_skills {
+            dirs.push((path, false));
+        }
     }
 
     let home = dirs::home_dir();
@@ -212,6 +219,35 @@ pub fn all_skill_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
     }
 
     dirs
+}
+
+fn discover_agents_subdirs(dir: &Path, results: &mut Vec<PathBuf>, depth: u32, max_depth: u32) {
+    if depth > max_depth { return; }
+    let excluded = parse_excluded_dirs();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir()
+            || path.file_name().and_then(|n| n.to_str()) == Some(".git")
+            || is_excluded_dir(&path, &excluded)
+        {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some("skills")
+            && path.parent().and_then(|p| p.file_name().and_then(|n| n.to_str())) == Some(".agents")
+        {
+            results.push(path);
+        } else {
+            discover_agents_subdirs(&path, results, depth + 1, max_depth);
+        }
+    }
+}
+
+fn depth(p: &PathBuf) -> usize {
+    p.components().count()
 }
 
 fn parse_skill_content(content: &str, path: &Path, global: bool) -> Option<SourceEntry> {
@@ -249,6 +285,19 @@ fn parse_skill_content(content: &str, path: &Path, global: bool) -> Option<Sourc
         global,
         supporting_files: Vec::new(),
     })
+}
+
+fn parse_excluded_dirs() -> HashSet<String> {
+    std::env::var("GOOSE_EXCLUDED_DIRS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn is_excluded_dir(path: &Path, excluded: &HashSet<String>) -> bool {
+    excluded.iter().any(|e| path == e.as_str() || path.starts_with(e))
 }
 
 fn should_skip_dir(path: &Path) -> bool {
@@ -296,11 +345,12 @@ fn walk_files_recursively<F, G>(
 fn scan_skills_from_dir(dir: &Path, global: bool, seen: &mut HashSet<String>) -> Vec<SourceEntry> {
     let mut skill_files = Vec::new();
     let mut visited_dirs = HashSet::new();
+    let excluded = parse_excluded_dirs();
 
     walk_files_recursively(
         dir,
         &mut visited_dirs,
-        &mut |path| !should_skip_dir(path),
+        &mut |path| !should_skip_dir(path) && !is_excluded_dir(path, &excluded),
         &mut |path| {
             if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
                 skill_files.push(path.to_path_buf());
@@ -328,7 +378,7 @@ fn scan_skills_from_dir(dir: &Path, global: bool, seen: &mut HashSet<String>) ->
                 walk_files_recursively(
                     skill_dir,
                     &mut visited_support_dirs,
-                    &mut |path| !should_skip_dir(path) && !path.join("SKILL.md").is_file(),
+                    &mut |path| !should_skip_dir(path) && !is_excluded_dir(path, &excluded) && !path.join("SKILL.md").is_file(),
                     &mut |path| {
                         if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
                             files.push(path.to_string_lossy().into_owned());

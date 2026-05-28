@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,7 @@ use crate::recipe::read_recipe_file_content::{read_recipe_file, RecipeFile};
 use crate::recipe::Recipe;
 use crate::recipe::RECIPE_FILE_EXTENSIONS;
 
-const GOOSE_RECIPE_PATH_ENV_VAR: &str = "GOOSE_RECIPE_PATH";
+const GOOSE_RECIPE_PATH_ENV_VAR: &str = "CROW_RECIPE_PATH";
 
 pub fn get_recipe_library_dir(is_global: bool) -> PathBuf {
     if is_global {
@@ -31,6 +32,10 @@ fn local_recipe_dirs() -> Vec<PathBuf> {
     // Also scan .agents/recipes/ for consistency with the .agents/ convention
     if let Ok(cwd) = env::current_dir() {
         local_dirs.push(cwd.join(".agents/recipes"));
+
+        let mut subdir_recipes: Vec<PathBuf> = Vec::new();
+        discover_agents_subdirs_for_recipes(&cwd, &mut subdir_recipes, 0, 5);
+        local_dirs.extend(subdir_recipes);
     }
     if let Some(home) = dirs::home_dir() {
         local_dirs.push(home.join(".agents/recipes"));
@@ -40,7 +45,10 @@ fn local_recipe_dirs() -> Vec<PathBuf> {
         .into_iter()
         .map(|dir| dir.canonicalize().unwrap_or(dir))
         .collect();
-    dirs.sort();
+    dirs.sort_by(|a, b| {
+        let depth_cmp = a.components().count().cmp(&b.components().count());
+        depth_cmp.then(a.cmp(b))
+    });
     dirs.dedup();
     dirs
 }
@@ -125,9 +133,15 @@ fn scan_directory_for_recipes(dir: &Path) -> Result<Vec<(PathBuf, Recipe)>> {
         return Ok(recipes);
     }
 
+    let excluded = parse_excluded_dirs();
+
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
+
+        if is_excluded_dir(&path, &excluded) {
+            continue;
+        }
 
         if path.is_file() {
             if let Some(extension) = path.extension() {
@@ -179,6 +193,44 @@ fn generate_recipe_filename(title: &str, recipe_library_dir: &Path) -> PathBuf {
             return candidate;
         }
         counter += 1;
+    }
+}
+
+fn parse_excluded_dirs() -> HashSet<String> {
+    std::env::var("GOOSE_EXCLUDED_DIRS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn is_excluded_dir(path: &Path, excluded: &HashSet<String>) -> bool {
+    excluded.iter().any(|e| path == e.as_str() || path.starts_with(e))
+}
+
+fn discover_agents_subdirs_for_recipes(dir: &Path, results: &mut Vec<PathBuf>, depth: u32, max_depth: u32) {
+    if depth > max_depth { return; }
+    let excluded = parse_excluded_dirs();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir()
+            || path.file_name().and_then(|n| n.to_str()) == Some(".git")
+            || is_excluded_dir(&path, &excluded)
+        {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some("recipes")
+            && path.parent().and_then(|p| p.file_name().and_then(|n| n.to_str())) == Some(".agents")
+        {
+            results.push(path);
+        } else {
+            discover_agents_subdirs_for_recipes(&path, results, depth + 1, max_depth);
+        }
     }
 }
 

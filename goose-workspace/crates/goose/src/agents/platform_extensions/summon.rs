@@ -21,7 +21,7 @@ use rmcp::model::{
     ServerCapabilities, ServerNotification, Tool,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -137,14 +137,36 @@ fn scan_recipes_from_dir(
     sources: &mut Vec<SourceEntry>,
     seen: &mut std::collections::HashSet<String>,
 ) {
+    scan_recipes_from_dir_depth(dir, kind, sources, seen, 0, 5);
+}
+
+fn scan_recipes_from_dir_depth(
+    dir: &Path,
+    kind: SourceType,
+    sources: &mut Vec<SourceEntry>,
+    seen: &mut std::collections::HashSet<String>,
+    depth: u32,
+    max_depth: u32,
+) {
+    if depth > max_depth { return; }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
+    let excluded = parse_excluded_dirs();
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() {
+        if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) != Some(".git")
+                && !is_excluded_dir(&path, &excluded)
+            {
+                scan_recipes_from_dir_depth(&path, kind, sources, seen, depth + 1, max_depth);
+            }
+            continue;
+        }
+
+        if is_excluded_dir(&path, &excluded) {
             continue;
         }
 
@@ -188,14 +210,35 @@ fn scan_agents_from_dir(
     sources: &mut Vec<SourceEntry>,
     seen: &mut std::collections::HashSet<String>,
 ) {
+    scan_agents_from_dir_depth(dir, sources, seen, 0, 5);
+}
+
+fn scan_agents_from_dir_depth(
+    dir: &Path,
+    sources: &mut Vec<SourceEntry>,
+    seen: &mut std::collections::HashSet<String>,
+    depth: u32,
+    max_depth: u32,
+) {
+    if depth > max_depth { return; }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
+    let excluded = parse_excluded_dirs();
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() {
+        if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) != Some(".git")
+                && !is_excluded_dir(&path, &excluded)
+            {
+                scan_agents_from_dir_depth(&path, sources, seen, depth + 1, max_depth);
+            }
+            continue;
+        }
+
+        if is_excluded_dir(&path, &excluded) {
             continue;
         }
 
@@ -221,6 +264,66 @@ fn scan_agents_from_dir(
     }
 }
 
+fn parse_excluded_dirs() -> HashSet<String> {
+    std::env::var("GOOSE_EXCLUDED_DIRS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn is_excluded_dir(path: &Path, excluded: &HashSet<String>) -> bool {
+    excluded.iter().any(|e| path == e.as_str() || path.starts_with(e))
+}
+
+fn discover_subdir_agents(
+    dir: &Path,
+    recipes: &mut Vec<PathBuf>,
+    agents: &mut Vec<PathBuf>,
+    depth: u32,
+    max_depth: u32,
+) {
+    if depth > max_depth { return; }
+    if !dir.is_dir() { return; }
+    let excluded = parse_excluded_dirs();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let fname = match path.file_name().and_then(|n| n.to_str()) {
+            Some(".git") | Some(".hg") | Some(".svn") => continue,
+            Some(name) => name,
+            None => continue,
+        };
+        if is_excluded_dir(&path, &excluded) {
+            continue;
+        }
+        if fname == "recipes" {
+            if let Some(parent) = path.parent() {
+                if parent.file_name().and_then(|n| n.to_str()) == Some(".agents") {
+                    recipes.push(path);
+                    continue;
+                }
+            }
+        }
+        if fname == "agents" {
+            if let Some(parent) = path.parent() {
+                if parent.file_name().and_then(|n| n.to_str()) == Some(".agents") {
+                    agents.push(path);
+                    continue;
+                }
+            }
+        }
+        discover_subdir_agents(&path, recipes, agents, depth + 1, max_depth);
+    }
+}
+
 pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
     let mut sources: Vec<SourceEntry> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -228,13 +331,21 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
     let home = dirs::home_dir();
     let config = Paths::config_dir();
 
-    let local_recipe_dirs: Vec<PathBuf> = vec![
+    let mut local_recipe_dirs: Vec<PathBuf> = vec![
         working_dir.to_path_buf(),
         working_dir.join(".goose/recipes"),
         working_dir.join(".agents/recipes"),
     ];
 
-    let global_recipe_dirs: Vec<PathBuf> = std::env::var("GOOSE_RECIPE_PATH")
+    let mut local_agent_dirs: Vec<PathBuf> = vec![
+        working_dir.join(".goose/agents"),
+        working_dir.join(".claude/agents"),
+        working_dir.join(".agents/agents"),
+    ];
+
+    discover_subdir_agents(working_dir, &mut local_recipe_dirs, &mut local_agent_dirs, 0, 5);
+
+    let global_recipe_dirs: Vec<PathBuf> = std::env::var("CROW_RECIPE_PATH")
         .ok()
         .into_iter()
         .flat_map(|p| {
@@ -251,12 +362,6 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
             .flatten(),
         )
         .collect();
-
-    let local_agent_dirs: Vec<PathBuf> = vec![
-        working_dir.join(".goose/agents"),
-        working_dir.join(".claude/agents"),
-        working_dir.join(".agents/agents"),
-    ];
 
     let global_agent_dirs: Vec<PathBuf> = [
         home.as_ref().map(|h| h.join(".goose/agents")),
@@ -820,9 +925,14 @@ impl SummonClient {
                 "No sources available for load/delegate.\n\n\
                  Sources are discovered from:\n\
                  • Current recipe's sub_recipes\n\
-                 • .agents/recipes/, .agents/agents/ (project-level)\n\
+                 • .agents/recipes/, .agents/agents/ (project-level + subdirectories)\n\
+                 • .goose/recipes/, .goose/agents/ (project-level)\n\
+                 • .claude/agents/ (project-level)\n\
                  • ~/.agents/agents/ (global)\n\
-                 • GOOSE_RECIPE_PATH directories",
+                 • ~/.goose/recipes/, ~/.goose/agents/ (global)\n\
+                 • ~/.claude/agents/ (global)\n\
+                 • config/recipes/, config/agents/ (global)\n\
+                 • CROW_RECIPE_PATH directories",
             )]);
         }
 
