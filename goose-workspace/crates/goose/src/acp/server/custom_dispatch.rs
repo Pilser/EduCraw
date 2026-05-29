@@ -343,4 +343,78 @@ impl GooseAcpAgent {
     ) -> Result<SetSessionModelConfigResponse, sacp::Error> {
         self.on_set_model_config(req).await
     }
+
+    // ── Recipe CRUD ────────────────────────────────────────────────
+
+    #[custom_method(CreateRecipeRequest)]
+    async fn dispatch_create_recipe(
+        &self,
+        req: CreateRecipeRequest,
+    ) -> Result<CreateRecipeResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_create(req)
+    }
+
+    #[custom_method(ListRecipesRequest)]
+    async fn dispatch_list_recipes(
+        &self,
+        req: ListRecipesRequest,
+    ) -> Result<ListRecipesResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_list(req)
+    }
+
+    #[custom_method(ReadRecipeRequest)]
+    async fn dispatch_read_recipe(
+        &self,
+        req: ReadRecipeRequest,
+    ) -> Result<ReadRecipeResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_read(req)
+    }
+
+    #[custom_method(DeleteRecipeRequest)]
+    async fn dispatch_delete_recipe(
+        &self,
+        req: DeleteRecipeRequest,
+    ) -> Result<EmptyResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_delete(req)?;
+        Ok(EmptyResponse {})
+    }
+
+    #[custom_method(ExportRecipeRequest)]
+    async fn dispatch_export_recipe(
+        &self,
+        req: ExportRecipeRequest,
+    ) -> Result<ExportRecipeResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_export(req)
+    }
+
+    #[custom_method(ImportRecipeRequest)]
+    async fn dispatch_import_recipe(
+        &self,
+        req: ImportRecipeRequest,
+    ) -> Result<ImportRecipeResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_import(req)
+    }
+
+    #[custom_method(ApplyRecipeToSessionRequest)]
+    async fn dispatch_apply_recipe_to_session(
+        &self,
+        req: ApplyRecipeToSessionRequest,
+    ) -> Result<ApplyRecipeToSessionResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_apply_to_session(req, &self.session_manager).await
+    }
+
+    #[custom_method(GenerateFromSessionRequest)]
+    async fn dispatch_generate_from_session(
+        &self,
+        req: GenerateFromSessionRequest,
+    ) -> Result<GenerateFromSessionResponse, sacp::Error> {
+        crate::recipe::acp_handlers::handle_generate_from_session(
+            req,
+            self.session_manager.clone(),
+            self.permission_manager.clone(),
+            self.goose_mode,
+            self.goose_platform.clone(),
+        )
+        .await
+    }
 }

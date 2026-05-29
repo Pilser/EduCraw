@@ -128,3 +128,125 @@ pub async fn handle_import_session(
         .map_err(|e| AppError::Session(format!("ImportSession ACP error: {e}")))?;
     Ok(resp)
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Recipe ACP handlers
+// ═══════════════════════════════════════════════════════════════════════
+
+use goose_sdk::custom_requests::{
+    ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse, CreateRecipeRequest,
+    CreateRecipeResponse, DeleteRecipeRequest, ExportRecipeRequest, ExportRecipeResponse,
+    GenerateFromSessionRequest, GenerateFromSessionResponse, ImportRecipeRequest,
+    ImportRecipeResponse, ListRecipesRequest, ListRecipesResponse, ReadRecipeRequest,
+    ReadRecipeResponse, RecipeEntry,
+};
+
+/// Create a recipe from YAML/JSON content — saved to {projectDir}/.agents/recipes/
+pub async fn handle_create_recipe(
+    cx: &ConnectionTo<SacpAgent>,
+    content: String,
+    project_dir: String,
+    filename: Option<String>,
+) -> Result<CreateRecipeResponse> {
+    let req = CreateRecipeRequest { content, filename, project_dir };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("CreateRecipe ACP error: {e}")))
+}
+
+/// List discoverable recipes
+pub async fn handle_list_recipes(
+    cx: &ConnectionTo<SacpAgent>,
+    global: Option<bool>,
+    project_dir: Option<String>,
+) -> Result<ListRecipesResponse> {
+    let req = ListRecipesRequest { global, project_dir };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ListRecipes ACP error: {e}")))
+}
+
+/// Read a recipe file by path or name
+pub async fn handle_read_recipe(
+    cx: &ConnectionTo<SacpAgent>,
+    path: String,
+    project_dir: Option<String>,
+) -> Result<ReadRecipeResponse> {
+    let req = ReadRecipeRequest { path, project_dir };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ReadRecipe ACP error: {e}")))
+}
+
+/// Delete a recipe file
+pub async fn handle_delete_recipe(
+    cx: &ConnectionTo<SacpAgent>,
+    path: String,
+) -> Result<()> {
+    let req = DeleteRecipeRequest { path };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("DeleteRecipe ACP error: {e}")))?;
+    Ok(())
+}
+
+/// Export a recipe as deeplink + JSON
+pub async fn handle_export_recipe(
+    cx: &ConnectionTo<SacpAgent>,
+    path: String,
+    project_dir: Option<String>,
+) -> Result<ExportRecipeResponse> {
+    let req = ExportRecipeRequest { path, project_dir };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ExportRecipe ACP error: {e}")))
+}
+
+/// Import a recipe from deeplink or JSON — saved to {projectDir}/.agents/recipes/
+pub async fn handle_import_recipe(
+    cx: &ConnectionTo<SacpAgent>,
+    deeplink: Option<String>,
+    recipe_json: Option<String>,
+    filename: Option<String>,
+    project_dir: String,
+) -> Result<ImportRecipeResponse> {
+    let req = ImportRecipeRequest { deeplink, recipe_json, filename, project_dir };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ImportRecipe ACP error: {e}")))
+}
+
+/// Generate a recipe from a session's conversation history via sub-agent spawning
+pub async fn handle_generate_from_session(
+    cx: &ConnectionTo<SacpAgent>,
+    session_id: String,
+    project_dir: String,
+    instructions: Option<String>,
+) -> Result<GenerateFromSessionResponse> {
+    let req = GenerateFromSessionRequest { session_id, project_dir, instructions };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("GenerateFromSession ACP error: {e}")))
+}
+
+/// Apply a recipe to an active session, persisting recipe metadata + resolved params
+pub async fn handle_apply_recipe_to_session(
+    cx: &ConnectionTo<SacpAgent>,
+    session_id: String,
+    recipe_path: String,
+    parameter_values: Option<std::collections::HashMap<String, String>>,
+    project_dir: Option<String>,
+) -> Result<ApplyRecipeToSessionResponse> {
+    let req = ApplyRecipeToSessionRequest { session_id, recipe_path, parameter_values, project_dir };
+    cx.send_request(req)
+        .block_task()
+        .await
+        .map_err(|e| AppError::Session(format!("ApplyRecipeToSession ACP error: {e}")))
+}

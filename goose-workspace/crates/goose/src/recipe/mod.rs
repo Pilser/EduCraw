@@ -13,6 +13,7 @@ use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub mod acp_handlers;
 pub mod build_recipe;
 pub mod local_recipes;
 pub mod read_recipe_file_content;

@@ -1045,3 +1045,213 @@ pub struct SetSessionModelConfigRequest {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct SetSessionModelConfigResponse {}
+
+// ── Recipe ACP methods ────────────────────────────────────────────────
+
+/// A single recipe entry returned by list/read operations.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeEntry {
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    pub path: String,
+    pub global: bool,
+    #[serde(default)]
+    pub parameters: Vec<RecipeParameterDto>,
+}
+
+/// Serializable recipe parameter for ACP responses.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeParameterDto {
+    pub key: String,
+    pub input_type: String,
+    pub requirement: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<String>>,
+}
+
+/// Create a new recipe file in {projectDir}/.agents/recipes/.
+/// The directory is created if it doesn't exist.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/create", response = CreateRecipeResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRecipeRequest {
+    /// YAML or JSON recipe body
+    pub content: String,
+    /// Optional filename stem (without extension). Defaults to title-slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Project root directory — recipe is saved to {projectDir}/.agents/recipes/
+    pub project_dir: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRecipeResponse {
+    pub path: String,
+    pub title: String,
+    pub description: String,
+}
+
+/// List discoverable recipes.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/list", response = ListRecipesResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRecipesRequest {
+    /// If true, only global recipes; if false, only project-scoped; omit for all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global: Option<bool>,
+    /// Project root for scoping the search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRecipesResponse {
+    pub recipes: Vec<RecipeEntry>,
+}
+
+/// Read a recipe's full content by path or name.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/read", response = ReadRecipeResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadRecipeRequest {
+    /// Absolute path or recipe name to resolve
+    pub path: String,
+    /// Project root for name resolution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadRecipeResponse {
+    /// Full Recipe struct as JSON
+    pub recipe: serde_json::Value,
+    /// Raw YAML/JSON content
+    pub content: String,
+    /// Resolved absolute path
+    pub path: String,
+}
+
+/// Delete a recipe file by absolute path.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/delete", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteRecipeRequest {
+    pub path: String,
+}
+
+/// Export a recipe as a shareable deeplink or standalone JSON.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/export", response = ExportRecipeResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportRecipeRequest {
+    /// Absolute path or recipe name
+    pub path: String,
+    /// Project root for name resolution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportRecipeResponse {
+    /// goose://recipe?config=<base64> deeplink
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deeplink: Option<String>,
+    /// Standalone JSON export
+    pub recipe_json: String,
+    /// Suggested filename for download
+    pub filename: String,
+}
+
+/// Import a recipe from a deeplink or JSON export.
+/// Always saves to {projectDir}/.agents/recipes/.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/import", response = ImportRecipeResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRecipeRequest {
+    /// goose://recipe?config=<base64> deeplink
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deeplink: Option<String>,
+    /// JSON export payload
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_json: Option<String>,
+    /// Optional filename for the saved file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Project root — recipe saved to {projectDir}/.agents/recipes/
+    pub project_dir: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRecipeResponse {
+    pub path: String,
+    pub title: String,
+    pub description: String,
+}
+
+/// Apply a recipe to an active session.
+/// Loads the recipe file, resolves template parameters, and persists the result
+/// as the session's recipe metadata (enabling sub-recipe resolution, etc.).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/apply_to_session", response = ApplyRecipeToSessionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyRecipeToSessionRequest {
+    pub session_id: String,
+    /// Path to the recipe file (absolute or name resolvable via project_dir)
+    pub recipe_path: String,
+    /// Template parameter values for substitution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameter_values: Option<std::collections::HashMap<String, String>>,
+    /// Project root for name resolution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyRecipeToSessionResponse {
+    pub title: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub resolved_extensions: Vec<String>,
+    #[serde(default)]
+    pub parameters: Vec<RecipeParameterDto>,
+}
+
+/// Generate a recipe from a session's conversation history using a sub-agent.
+/// The sub-agent receives the session's messages + recipe.md prompt and produces
+/// a new recipe that is saved to {projectDir}/.agents/recipes/.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/recipe/generate_from_session", response = GenerateFromSessionResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateFromSessionRequest {
+    /// Source session whose conversation will be analyzed for recipe generation.
+    pub session_id: String,
+    /// Project root — recipe saved to {projectDir}/.agents/recipes/
+    pub project_dir: String,
+    /// Optional steering instructions for the recipe generation sub-agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateFromSessionResponse {
+    pub path: String,
+    pub title: String,
+    pub description: String,
+}

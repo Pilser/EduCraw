@@ -7,4 +7,10 @@
 pub use goose_sdk::custom_requests::{
     DeleteSessionRequest, ExportSessionRequest, ExportSessionResponse, ImportSessionRequest,
     ImportSessionResponse, SetSessionModelConfigRequest, SetSessionModelConfigResponse,
+    // Recipe ACP types
+    ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse, CreateRecipeRequest,
+    CreateRecipeResponse, DeleteRecipeRequest, ExportRecipeRequest, ExportRecipeResponse,
+    GenerateFromSessionRequest, GenerateFromSessionResponse, ImportRecipeRequest,
+    ImportRecipeResponse, ListRecipesRequest, ListRecipesResponse, ReadRecipeRequest,
+    ReadRecipeResponse, RecipeEntry, RecipeParameterDto,
 };

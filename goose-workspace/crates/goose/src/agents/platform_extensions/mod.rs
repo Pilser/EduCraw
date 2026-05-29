@@ -3,6 +3,7 @@ pub mod apps;
 pub mod chatrecall;
 #[cfg(feature = "code-mode")]
 pub mod code_execution;
+pub mod delete_recipe;
 pub mod developer;
 pub mod ext_manager;
 pub mod orchestrator;
@@ -83,6 +84,20 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 unprefixed_tools: false,
                 hidden: false,
                 client_factory: |ctx| Box::new(chatrecall::ChatRecallClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            delete_recipe::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: delete_recipe::EXTENSION_NAME,
+                display_name: "Delete Recipe",
+                description:
+                    "Delete a recipe from {projectDir}/.agents/recipes/ root",
+                default_enabled: true,
+                unprefixed_tools: true,
+                hidden: false,
+                client_factory: |ctx| Box::new(delete_recipe::DeleteRecipeClient::new(ctx).unwrap()),
             },
         );
 
