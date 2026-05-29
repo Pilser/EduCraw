@@ -39,6 +39,24 @@ pub enum AppError {
     Internal(#[from] anyhow::Error),
 }
 
+impl AppError {
+    /// Machine-readable error code for frontend classification.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound(_) => "NOT_FOUND",
+            Self::BadRequest(_) => "BAD_REQUEST",
+            Self::Unauthorized => "UNAUTHORIZED",
+            Self::Forbidden => "FORBIDDEN",
+            Self::Conflict(_) => "CONFLICT",
+            Self::Session(_) => "SESSION_ERROR",
+            Self::Restricted(_) => "RESTRICTED",
+            Self::Io(_) => "IO_ERROR",
+            Self::Helix(_) => "HELIX_ERROR",
+            Self::Internal(_) => "INTERNAL_ERROR",
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
@@ -63,7 +81,7 @@ impl IntoResponse for AppError {
             }
         };
 
-        (status, Json(json!({ "error": message }))).into_response()
+        (status, Json(json!({ "error": message, "code": self.code() }))).into_response()
     }
 }
 
