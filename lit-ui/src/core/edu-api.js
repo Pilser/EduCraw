@@ -73,7 +73,16 @@ function sseStream(input, init) {
                         }
                         // Need more data — read next chunk
                         if (reader) {
-                            const result = await reader.read();
+                            let result;
+                            try {
+                                result = await reader.read();
+                            }
+                            catch (readErr) {
+                                const readErrName = readErr?.name || "ReadError";
+                                const readErrMsg = readErr?.message || String(readErr);
+                                console.error(`[sse-stream] reader.read() failed: ${readErrName}: ${readErrMsg}`, "\n  buffer.length:", buffer.length, "\n  full error:", readErr);
+                                throw readErr;
+                            }
                             if (result.done) {
                                 done = true;
                                 return { value: undefined, done: true };
