@@ -26,6 +26,21 @@ pub enum AppError {
     #[error("session error: {0}")]
     Session(String),
 
+    #[error("session not found: {0}")]
+    SessionNotFound(String),
+
+    #[error("session not active: {0}")]
+    SessionNotActive(String),
+
+    #[error("session expired: {0}")]
+    SessionExpired(String),
+
+    #[error("buffer timed out: {0}")]
+    BufferTimedOut(String),
+
+    #[error("buffer drained: {0}")]
+    BufferDrained(String),
+
     #[error("restricted: {0}")]
     Restricted(String),
 
@@ -49,6 +64,11 @@ impl AppError {
             Self::Forbidden(_) => "FORBIDDEN",
             Self::Conflict(_) => "CONFLICT",
             Self::Session(_) => "SESSION_ERROR",
+            Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
+            Self::SessionNotActive(_) => "SESSION_NOT_ACTIVE",
+            Self::SessionExpired(_) => "SESSION_EXPIRED",
+            Self::BufferTimedOut(_) => "BUFFER_TIMED_OUT",
+            Self::BufferDrained(_) => "BUFFER_DRAINED",
             Self::Restricted(_) => "RESTRICTED",
             Self::Io(_) => "IO_ERROR",
             Self::Helix(_) => "HELIX_ERROR",
@@ -66,6 +86,11 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Session(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AppError::SessionNotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            AppError::SessionNotActive(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::SessionExpired(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::BufferTimedOut(msg) => (StatusCode::CONFLICT, msg.clone()),
+            AppError::BufferDrained(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Restricted(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::Io(e) => {
                 tracing::error!("io error: {e}");

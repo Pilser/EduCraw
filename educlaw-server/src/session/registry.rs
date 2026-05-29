@@ -38,6 +38,9 @@ pub struct ManagedSession {
     // Message buffer for in-flight text frames at the moment of disconnect
     pub message_buffer: Arc<Mutex<VecDeque<String>>>,
     pub total_buffer_bytes: Arc<AtomicU64>,
+    pub frame_counter: Arc<AtomicU64>,
+    pub buffer_last_written: Arc<Mutex<Instant>>,
+    pub buffer_on_disconnect_only: Arc<AtomicBool>,
 
     // Grace period tracking
     pub disconnected_at: Arc<Mutex<Option<Instant>>>,
@@ -70,6 +73,9 @@ impl ManagedSession {
         session_config_dir: PathBuf,
         message_buffer: Arc<Mutex<VecDeque<String>>>,
         total_buffer_bytes: Arc<AtomicU64>,
+        frame_counter: Arc<AtomicU64>,
+        buffer_last_written: Arc<Mutex<Instant>>,
+        buffer_on_disconnect_only: Arc<AtomicBool>,
     ) -> Self {
         Self {
             cx,
@@ -82,6 +88,9 @@ impl ManagedSession {
             loading_flag,
             message_buffer,
             total_buffer_bytes,
+            frame_counter,
+            buffer_last_written,
+            buffer_on_disconnect_only,
             disconnected_at: Arc::new(Mutex::new(None)),
             disconnect_timeout,
             student_id,
@@ -115,6 +124,7 @@ impl ManagedSession {
         let mut buf = self.message_buffer.lock().await;
         self.total_buffer_bytes.fetch_add(msg.len() as u64, Ordering::Relaxed);
         buf.push_back(msg);
+        *self.buffer_last_written.lock().await = Instant::now();
         // Evict oldest frames when either cap is exceeded
         while buf.len() > 10_000 || self.total_buffer_bytes.load(Ordering::Relaxed) > 5 * 1024 * 1024 {
             if let Some(oldest) = buf.pop_front() {
@@ -130,6 +140,23 @@ impl ManagedSession {
         let msgs = self.message_buffer.lock().await.drain(..).collect::<Vec<_>>();
         self.total_buffer_bytes.store(0, Ordering::Relaxed);
         msgs
+    }
+
+    /// Clear buffered frames without returning them.
+    pub async fn clear_buffer(&self) {
+        self.message_buffer.lock().await.clear();
+        self.total_buffer_bytes.store(0, Ordering::Relaxed);
+    }
+
+    /// Returns true when buffered frames are older than timeout seconds.
+    pub async fn is_buffer_timed_out(&self, timeout: Duration) -> bool {
+        let guard = self.buffer_last_written.lock().await;
+        guard.elapsed() >= timeout
+    }
+
+    /// Number of currently buffered frames.
+    pub async fn buffered_len(&self) -> usize {
+        self.message_buffer.lock().await.len()
     }
 
     /// True when the grace period has elapsed (session should be killed).

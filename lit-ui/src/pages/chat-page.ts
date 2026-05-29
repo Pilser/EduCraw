@@ -320,6 +320,9 @@ export class ChatPage extends LitElement {
     let streamEnded = false;
     let needsRetry = false;
     let receivedAnyFrame = false;
+    let retrySameRequest = false;
+    let bufferDrained = false;
+    const receivedFrameIds = new Set<number>();
 
     const { events, abort } = eduApi.sendInput(
       this.sessionId,
@@ -332,6 +335,16 @@ export class ChatPage extends LitElement {
       if (streamEnded) return;
       const frame = ev.data;
       const frameType = ev.event;
+      receivedAnyFrame = true;
+
+      const frameId = typeof frame?.id === "number" ? (frame.id as number) : undefined;
+      if (frameId !== undefined) {
+        if (receivedFrameIds.has(frameId)) {
+          console.log(`[sse-stream] Skipping duplicate frame id=${frameId}`);
+          return;
+        }
+        receivedFrameIds.add(frameId);
+      }
 
       if (frameType !== "token_usage") {
         console.log(
@@ -345,7 +358,6 @@ export class ChatPage extends LitElement {
 
       switch (frameType) {
         case "chat_start":
-          receivedAnyFrame = true;
           if (this.showLanding) {
             this.showLanding = false;
             this.requestUpdate();
@@ -362,6 +374,7 @@ export class ChatPage extends LitElement {
         }
 
         case "chat_end": {
+          if (streamEnded) break;
           currentThinkingBlock = null;
           if (currentTextBlock) {
             // Flush current text block if needed
@@ -518,6 +531,7 @@ export class ChatPage extends LitElement {
         }
 
         case "chat_error": {
+          if (streamEnded) break;
           const e = classifySseFrame("chat_error", frame);
           if (e) handleError(e);
           console.error("[sse-stream] Chat error:", frame.error);
@@ -532,6 +546,7 @@ export class ChatPage extends LitElement {
         }
 
         case "restriction": {
+          if (streamEnded) break;
           const e = classifySseFrame("restriction", frame);
           if (e) handleError(e);
           assistantMsg.stopReason = "restriction";
@@ -540,6 +555,17 @@ export class ChatPage extends LitElement {
           this.streamingMessage = null;
           this.messages = [...this.messages, assistantMsg];
           this.updateUI();
+          streamEnded = true;
+          break;
+        }
+
+        case "buffer_drained": {
+          const e = classifySseFrame("buffer_drained", frame);
+          if (e) handleError(e);
+          console.log("[sse-stream] Buffer timed out on backend; reloading thread state");
+          bufferDrained = true;
+          this.isStreaming = false;
+          this.streamingMessage = null;
           streamEnded = true;
           break;
         }
@@ -576,6 +602,11 @@ export class ChatPage extends LitElement {
       if (!receivedAnyFrame && (e.code === ErrorCode.SESSION_NOT_FOUND || e.code === ErrorCode.SESSION_NOT_ACTIVE || e.code === ErrorCode.GOOSE_DEAD)) {
         needsRetry = true;
         streamEnded = true;
+      } else if (receivedAnyFrame && e.retryable) {
+        console.log("[sse-stream] Retryable mid-stream error; retrying same request");
+        needsRetry = true;
+        retrySameRequest = true;
+        streamEnded = true;
       } else if (!streamEnded) {
         assistantMsg.stopReason = "error";
         assistantMsg.errorMessage = e.message || "Stream error";
@@ -598,11 +629,24 @@ export class ChatPage extends LitElement {
       this.messages = this.messages.filter((m) => m.role !== "assistant" || (m as BackendAssistantMessage).content?.length);
       this.isStreaming = false;
       this.streamingMessage = null;
+      if (retrySameRequest) {
+        console.log("[sse-stream] Retrying same request in same session");
+        this.handleSend(text);
+        return;
+      }
       console.log("[sse-stream] Refreshing session for retry...");
       const refreshed = await this.handleSessionRefresh();
       if (refreshed) {
         console.log("[sse-stream] Retrying message with new session:", refreshed.sessionId);
         this.handleSend(text);
+      }
+      return;
+    }
+
+    if (bufferDrained) {
+      const recentThreadId = this.lastLoadedThreadId || SessionManager.loadLastThreadId(this.sessionId);
+      if (recentThreadId) {
+        await this.loadSessionById(recentThreadId);
       }
     }
   }

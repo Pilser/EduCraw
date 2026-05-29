@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sacp::schema::{
     CancelNotification, ContentBlock, NewSessionRequest, PromptRequest, SessionId,
@@ -51,6 +51,17 @@ pub enum SseEvent {
 /// a `text/event-stream` response body.
 pub struct SseEventStream {
     pub rx: mpsc::Receiver<SseEvent>,
+}
+
+async fn frame_with_id(managed: &Arc<ManagedSession>, mut frame: serde_json::Value) -> String {
+    let frame_id = managed.frame_counter.fetch_add(1, Ordering::Relaxed);
+    if let serde_json::Value::Object(ref mut map) = frame {
+        map.insert(
+            "id".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(frame_id)),
+        );
+    }
+    frame.to_string()
 }
 
 /// Initialise the ACP session (spawn goose, register in registry).
@@ -210,6 +221,9 @@ pub async fn init_acp_session(
     let message_buffer: Arc<Mutex<VecDeque<String>>> =
         Arc::new(Mutex::new(VecDeque::new()));
     let buffer_bytes: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let frame_counter: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let buffer_last_written = Arc::new(Mutex::new(Instant::now()));
+    let buffer_on_disconnect_only = Arc::new(AtomicBool::new(false));
 
     // Resolve provider
     let provider = match &model {
@@ -237,6 +251,9 @@ pub async fn init_acp_session(
         recent_thread_id,
         message_buffer.clone(),
         buffer_bytes.clone(),
+        frame_counter.clone(),
+        buffer_last_written.clone(),
+        buffer_on_disconnect_only.clone(),
     )
     .await?;
 
@@ -273,6 +290,9 @@ pub async fn init_acp_session(
         session_config_dir.clone(),
         message_buffer,
         buffer_bytes,
+        frame_counter,
+        buffer_last_written,
+        buffer_on_disconnect_only,
     );
     registry.register(session_id.clone(), managed).await;
 
@@ -295,7 +315,12 @@ pub async fn handle_input_sse(
     let managed = registry
         .get(session_id)
         .await
-        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+        .ok_or_else(|| AppError::SessionNotFound(format!("session {session_id} not found")))?;
+
+    // Active stream is attached now; only start buffering if we detect disconnect later.
+    managed
+        .buffer_on_disconnect_only
+        .store(false, Ordering::Relaxed);
 
     // Check if goose child has exited
     {
@@ -309,12 +334,12 @@ pub async fn handle_input_sse(
                 tracing::info!(session_id = %session_id, "💀 [SSE] Goose dead — removed from registry");
 
                 let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
-                let frame = serde_json::json!({
+                let frame = frame_with_id(&managed, serde_json::json!({
                     "type": "session_terminated",
                     "code": "GOOSE_DEAD",
                     "reason": "goose_dead",
-                })
-                .to_string();
+                }))
+                .await;
                 let _ = sse_tx.send(SseEvent::Text(frame)).await;
                 let _ = sse_tx.send(SseEvent::Close).await;
                 return Ok(SseEventStream { rx: sse_rx });
@@ -340,7 +365,11 @@ pub async fn handle_input_sse(
                 "Your account has been restricted. Please contact your administrator.".to_string()
             });
         let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
-        let frame = serde_json::json!({"type": "restriction", "code": "RESTRICTED", "message": message}).to_string();
+        let frame = frame_with_id(
+            &managed,
+            serde_json::json!({"type": "restriction", "code": "RESTRICTED", "message": message}),
+        )
+        .await;
         let _ = sse_tx.send(SseEvent::Text(frame)).await;
         let _ = sse_tx.send(SseEvent::Close).await;
         return Ok(SseEventStream { rx: sse_rx });
@@ -357,8 +386,24 @@ pub async fn handle_input_sse(
     // Create the SSE channel for this request
     let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(256);
 
+    // Expire stale replay buffer and ask frontend to recover from thread replay.
+    if managed.buffered_len().await > 0 && managed.is_buffer_timed_out(Duration::from_secs(120)).await {
+        managed.clear_buffer().await;
+        let frame = frame_with_id(&managed, serde_json::json!({
+            "type": "buffer_drained",
+            "code": "BUFFER_DRAINED",
+            "reason": "buffer_timed_out",
+        }))
+        .await;
+        let _ = sse_tx.send(SseEvent::Text(frame)).await;
+        let _ = sse_tx.send(SseEvent::Close).await;
+        return Ok(SseEventStream { rx: sse_rx });
+    }
+
     // Drain buffered notifications from prior disconnect (replay missed frames)
     let buffered = managed.take_buffered_messages().await;
+    let resume_only = !buffered.is_empty();
+    let mut buffered_had_terminal = false;
     if !buffered.is_empty() {
         tracing::info!(
             session_id = %session_id,
@@ -366,6 +411,16 @@ pub async fn handle_input_sse(
             "📥 [SSE] Replaying buffered notifications from prior disconnect"
         );
         for frame_text in buffered {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&frame_text) {
+                if let Some(t) = v.get("type").and_then(|x| x.as_str()) {
+                    if matches!(
+                        t,
+                        "chat_end" | "chat_error" | "restriction" | "session_terminated" | "buffer_drained"
+                    ) {
+                        buffered_had_terminal = true;
+                    }
+                }
+            }
             let _ = sse_tx.send(SseEvent::Text(frame_text)).await;
         }
     }
@@ -378,11 +433,15 @@ pub async fn handle_input_sse(
     // Spawn notification forwarding task
     let sse_tx_notif = sse_tx.clone();
     let session_id_notif = session_id.to_string();
+    let managed_notif = managed.clone();
     tokio::spawn(async move {
         while let Some((json_frame, _binary_frame)) = notif_rx_req.recv().await {
             if let Some(j) = json_frame {
                 if let Ok(text) = serde_json::to_string(&j) {
                     if sse_tx_notif.send(SseEvent::Text(text)).await.is_err() {
+                        managed_notif
+                            .buffer_on_disconnect_only
+                            .store(true, Ordering::Relaxed);
                         tracing::warn!(
                             session_id = %session_id_notif,
                             "📤 [SSE] Notification forwarding stopped — frontend disconnected"
@@ -394,9 +453,19 @@ pub async fn handle_input_sse(
         }
     });
 
-    // Send chat_start
+    // Reconnect replay should only resume in-flight stream; do not submit a new prompt.
+    if resume_only {
+        if buffered_had_terminal {
+            let _ = sse_tx.send(SseEvent::Close).await;
+        }
+        return Ok(SseEventStream { rx: sse_rx });
+    }
+
+    // Send chat_start for a fresh prompt only.
     if sse_tx
-        .send(SseEvent::Text(r#"{"type":"chat_start"}"#.to_string()))
+        .send(SseEvent::Text(
+            frame_with_id(&managed, serde_json::json!({"type": "chat_start"})).await,
+        ))
         .await
         .is_err()
     {
@@ -425,9 +494,9 @@ pub async fn handle_input_sse(
     let sid_holder_prompt = managed.acp_session_id.clone();
     let sse_tx_prompt = sse_tx.clone();
     let session_id_for_prompt = session_id.to_string();
-    let workspace_for_prompt = workspace.clone();
     let backend_for_prompt = backend.clone();
     let student_id_for_prompt = student_id.to_string();
+    let managed_prompt = managed.clone();
 
     tokio::spawn(async move {
         let sid_prompt = {
@@ -463,11 +532,11 @@ pub async fn handle_input_sse(
                 match cx_prompt.send_request(nsr).block_task().await {
                     Ok(new_sess_resp) => {
                         let new_sid = new_sess_resp.session_id.clone();
-                        let frame = serde_json::json!({
+                        let frame = frame_with_id(&managed_prompt, serde_json::json!({
                             "type": "session_created",
                             "session_id": new_sid.0,
-                        })
-                        .to_string();
+                        }))
+                        .await;
                         let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
                         *holder = Some(new_sid.clone());
 
@@ -491,12 +560,12 @@ pub async fn handle_input_sse(
                             error = %e,
                             "❌ [SSE] ACP session creation failed"
                         );
-                        let frame = serde_json::json!({
+                        let frame = frame_with_id(&managed_prompt, serde_json::json!({
                             "type": "chat_error",
                             "code": "ACP_SESSION_CREATE_FAILED",
                             "error": format!("Failed to create session: {}", e),
-                        })
-                        .to_string();
+                        }))
+                        .await;
                         let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
                         let _ = sse_tx_prompt.send(SseEvent::Close).await;
                         return;
@@ -559,14 +628,14 @@ pub async fn handle_input_sse(
             Ok(r) => {
                 match r.stop_reason {
                     StopReason::EndTurn | StopReason::Cancelled => {
-                        r#"{"type":"chat_end"}"#.to_string()
+                        frame_with_id(&managed_prompt, serde_json::json!({"type": "chat_end"})).await
                     }
-                    other => serde_json::json!({
+                    other => frame_with_id(&managed_prompt, serde_json::json!({
                         "type": "chat_error",
                         "code": "UNEXPECTED_STOP_REASON",
                         "error": format!("stop_reason: {other:?}")
-                    })
-                    .to_string(),
+                    }))
+                    .await,
                 }
             }
             Err(e) => {
@@ -575,12 +644,12 @@ pub async fn handle_input_sse(
                     error = %e,
                     "❌ [SSE] Prompt failed"
                 );
-                serde_json::json!({
+                frame_with_id(&managed_prompt, serde_json::json!({
                     "type": "chat_error",
                     "code": "PROMPT_FAILED",
                     "error": e.to_string()
-                })
-                .to_string()
+                }))
+                .await
             }
         };
         if sse_tx_prompt.send(SseEvent::Text(frame)).await.is_err() {
@@ -603,7 +672,7 @@ pub async fn handle_cancel(
     let managed = registry
         .get(session_id)
         .await
-        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+        .ok_or_else(|| AppError::SessionNotFound(format!("session {session_id} not found")))?;
 
     let Some(sid) = managed.acp_session_id.lock().await.clone() else {
         return Ok(()); // No active session to cancel — no-op
@@ -629,7 +698,7 @@ pub async fn handle_replay_sse(
     let managed = registry
         .get(session_id)
         .await
-        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+        .ok_or_else(|| AppError::SessionNotFound(format!("session {session_id} not found")))?;
 
     let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(256);
 
@@ -641,11 +710,15 @@ pub async fn handle_replay_sse(
     // Forward notifications to SSE
     let sse_tx_notif = sse_tx.clone();
     let session_id_replay_notif = session_id.to_string();
+    let managed_replay_notif = managed.clone();
     tokio::spawn(async move {
         while let Some((json_frame, _binary_frame)) = notif_rx_req.recv().await {
             if let Some(j) = json_frame {
                 if let Ok(text) = serde_json::to_string(&j) {
                     if sse_tx_notif.send(SseEvent::Text(text)).await.is_err() {
+                        managed_replay_notif
+                            .buffer_on_disconnect_only
+                            .store(true, Ordering::Relaxed);
                         tracing::warn!(
                             session_id = %session_id_replay_notif,
                             "📤 [SSE] Replay notification forwarding stopped — frontend disconnected"
@@ -677,6 +750,7 @@ pub async fn handle_replay_sse(
     let tid = thread_id.to_string();
     let student_id = managed.student_id.clone();
     let backend = managed.backend.clone();
+    let managed_load = managed.clone();
 
     let sse_tx_load = sse_tx.clone();
     tokio::spawn(async move {
@@ -702,8 +776,8 @@ pub async fn handle_replay_sse(
                 let frame = serde_json::json!({
                     "type": "load_session_complete",
                     "thread_id": tid,
-                })
-                .to_string();
+                });
+                let frame = frame_with_id(&managed_load, frame).await;
                 let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
             }
             Err(e) => {
@@ -730,8 +804,8 @@ pub async fn handle_replay_sse(
                         let frame = serde_json::json!({
                             "type": "load_session_complete",
                             "thread_id": new_sid.0,
-                        })
-                        .to_string();
+                        });
+                        let frame = frame_with_id(&managed_load, frame).await;
                         let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
                     }
                     Err(e2) => {
@@ -745,8 +819,8 @@ pub async fn handle_replay_sse(
                             "type": "chat_error",
                             "code": "REPLAY_FALLBACK_FAILED",
                             "error": format!("Failed to create new session: {}", e2),
-                        })
-                        .to_string();
+                        });
+                        let frame = frame_with_id(&managed_load, frame).await;
                         let _ = sse_tx_load.send(SseEvent::Text(frame)).await;
                     }
                 }

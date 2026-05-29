@@ -64,10 +64,10 @@ async fn session_input(
 
     let session = state.backend.get_session(&session_id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
+        .ok_or_else(|| AppError::SessionNotFound(format!("session {session_id} not found")))?;
 
     if session.state != "active" {
-        return Err(AppError::BadRequest(format!(
+        return Err(AppError::SessionNotActive(format!(
             "session {session_id} is not active (state: {})",
             session.state
         )));

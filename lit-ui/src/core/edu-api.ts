@@ -61,9 +61,13 @@ function sseStream(
               console.error(`[sse] Request failed: ${response.status}`, text);
               let parsed: { error?: string; code?: string } = {};
               try { parsed = JSON.parse(text); } catch { /* not JSON */ }
-              handleError({ status: response.status, message: parsed.error || text, code: parsed.code });
-              done = true;
-              return { value: undefined, done: true };
+              const classified = classifyError({
+                status: response.status,
+                message: parsed.error || text,
+                code: parsed.code,
+              });
+              handleError(classified);
+              throw classified;
             }
 
             if (!response.body) {

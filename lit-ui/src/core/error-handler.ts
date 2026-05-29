@@ -45,6 +45,9 @@ export const ErrorCode = {
   SESSION_ERROR: "SESSION_ERROR",
   SESSION_NOT_ACTIVE: "SESSION_NOT_ACTIVE",
   GOOSE_DEAD: "GOOSE_DEAD",
+  SESSION_EXPIRED: "SESSION_EXPIRED",
+  BUFFER_TIMED_OUT: "BUFFER_TIMED_OUT",
+  BUFFER_DRAINED: "BUFFER_DRAINED",
   GOOSE_SPAWN_FAILED: "GOOSE_SPAWN_FAILED",
   ACP_INIT_FAILED: "ACP_INIT_FAILED",
   ACP_SESSION_FAILED: "ACP_SESSION_FAILED",
@@ -144,6 +147,12 @@ function classifyByCode(code: string, message: string, status: number | undefine
     case "UNAUTHORIZED": return makeError(ErrorCode.UNAUTHORIZED, message || "Unauthorized", { status, retryable: false, raw });
     case "FORBIDDEN": return makeError(ErrorCode.FORBIDDEN, message || "Forbidden", { status, retryable: false, raw });
     case "NOT_FOUND": return makeError(ErrorCode.NOT_FOUND, message || "Not found", { status, retryable: false, raw });
+    case "SESSION_NOT_FOUND": return makeError(ErrorCode.SESSION_NOT_FOUND, message || "Session not found", { status, retryable: true, raw });
+    case "SESSION_NOT_ACTIVE": return makeError(ErrorCode.SESSION_NOT_ACTIVE, message || "Session not active", { status, retryable: true, raw });
+    case "SESSION_EXPIRED": return makeError(ErrorCode.SESSION_EXPIRED, message || "Session expired", { status, retryable: true, raw });
+    case "GOOSE_DEAD": return makeError(ErrorCode.GOOSE_DEAD, message || "Goose process ended", { status, retryable: true, raw });
+    case "BUFFER_TIMED_OUT": return makeError(ErrorCode.BUFFER_TIMED_OUT, message || "Replay buffer timed out", { status, retryable: true, raw });
+    case "BUFFER_DRAINED": return makeError(ErrorCode.BUFFER_DRAINED, message || "Replay buffer drained", { status, retryable: true, raw });
     case "SESSION_ERROR": return makeError(ErrorCode.SESSION_ERROR, message || "Session error", { status, retryable: false, raw });
     case "BAD_REQUEST": return makeError(ErrorCode.BAD_REQUEST, message || "Bad request", { status, retryable: false, raw });
     case "CONFLICT": return makeError(ErrorCode.USERNAME_TAKEN, message || "Conflict", { status, retryable: false, raw });
@@ -167,11 +176,16 @@ function classifyByStatus(status: number, message: string, raw: unknown): AppErr
   }
   if (status === 404) {
     if (message.includes("session")) {
-      return makeError(ErrorCode.SESSION_NOT_FOUND, message, { status, retryable: false, raw });
+      return makeError(ErrorCode.SESSION_NOT_FOUND, message, { status, retryable: true, raw });
     }
     return makeError(ErrorCode.NOT_FOUND, message || "Not found", { status, retryable: false, raw });
   }
-  if (status === 400) return makeError(ErrorCode.BAD_REQUEST, message || "Bad request", { status, retryable: false, raw });
+  if (status === 400) {
+    if (message.toLowerCase().includes("not active")) {
+      return makeError(ErrorCode.SESSION_NOT_ACTIVE, message || "Session not active", { status, retryable: true, raw });
+    }
+    return makeError(ErrorCode.BAD_REQUEST, message || "Bad request", { status, retryable: false, raw });
+  }
   if (status === 409) return makeError(ErrorCode.USERNAME_TAKEN, message || "Conflict", { status, retryable: false, raw });
   if (status >= 500) return makeError(ErrorCode.SERVER_ERROR, message || "Server error", { status, retryable: true, raw });
   return makeError(ErrorCode.UNKNOWN, message || `HTTP ${status}`, { status, retryable: false, raw });
@@ -232,9 +246,15 @@ export function handleError(err: unknown): AppError {
     case ErrorCode.NOT_FOUND:
     case ErrorCode.SESSION_NOT_FOUND:
     case ErrorCode.SESSION_NOT_ACTIVE:
+    case ErrorCode.SESSION_EXPIRED:
     case ErrorCode.STUDENT_NOT_FOUND:
     case ErrorCode.GOOSE_DEAD:
       dispatch("session-dead", e);
+      break;
+
+    case ErrorCode.BUFFER_TIMED_OUT:
+    case ErrorCode.BUFFER_DRAINED:
+      dispatch("buffer-drained", e);
       break;
 
     // Restricted → session-expired with restriction info
@@ -275,6 +295,7 @@ export function isSessionFatal(err: unknown): boolean {
     ErrorCode.JWT_INVALID,
     ErrorCode.SESSION_NOT_FOUND,
     ErrorCode.SESSION_NOT_ACTIVE,
+    ErrorCode.SESSION_EXPIRED,
     ErrorCode.GOOSE_DEAD,
     ErrorCode.ACCOUNT_RESTRICTED,
     ErrorCode.RESTRICTED,
@@ -324,6 +345,10 @@ export function classifySseFrame(frameType: string, frame: Record<string, unknow
     case "restriction": {
       if (code) return classifyByCode(code, message || "Account restricted", undefined, frame);
       return makeError(ErrorCode.RESTRICTED, message || "Account restricted", { retryable: false, raw: frame });
+    }
+    case "buffer_drained": {
+      if (code) return classifyByCode(code, message || "Replay buffer drained", undefined, frame);
+      return makeError(ErrorCode.BUFFER_DRAINED, message || "Replay buffer drained", { retryable: true, raw: frame });
     }
     case "error": {
       if (code) return classifyByCode(code, message || "Stream error", undefined, frame);

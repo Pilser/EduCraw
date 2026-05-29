@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Instant;
 
 use sacp::schema::{
     ClientCapabilities, InitializeRequest, LoadSessionRequest, NewSessionRequest, ProtocolVersion,
@@ -45,6 +46,9 @@ pub async fn spawn_sacp_client(
     recent_thread_id: Option<String>,
     message_buffer: Arc<Mutex<VecDeque<String>>>,
     buffer_bytes: Arc<AtomicU64>,
+    frame_counter: Arc<AtomicU64>,
+    buffer_last_written: Arc<Mutex<Instant>>,
+    buffer_on_disconnect_only: Arc<AtomicBool>,
 ) -> Result<(ConnectionTo<SacpAgent>, Arc<tokio::sync::Mutex<Option<SessionId>>>, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
@@ -79,6 +83,9 @@ pub async fn spawn_sacp_client(
     let model_arc_clone = model_arc.clone();
     let message_buffer_clone = message_buffer.clone();
     let buffer_bytes_clone = buffer_bytes.clone();
+    let frame_counter_clone = frame_counter.clone();
+    let buffer_last_written_clone = buffer_last_written.clone();
+    let buffer_on_disconnect_only_clone = buffer_on_disconnect_only.clone();
 
     // Clone values needed inside connect_with
     let backend_init = backend.clone();
@@ -97,26 +104,54 @@ pub async fn spawn_sacp_client(
                     let loading_flag = loading_flag_clone.clone();
                     let msg_buf = message_buffer_clone.clone();
                     let buf_bytes = buffer_bytes_clone.clone();
+                    let frame_counter = frame_counter_clone.clone();
+                    let buffer_last_written = buffer_last_written_clone.clone();
+                    let buffer_on_disconnect_only = buffer_on_disconnect_only_clone.clone();
                     async move |notif: SessionNotification, _cx| {
                         let _session_id = notif.session_id.0.to_string(); // ACP session ID (not used for DB)
 
                         // Convert notification to frames
-                        let frames = notification_to_frames(&notif);
+                        let mut frames = notification_to_frames(&notif);
 
-                        // Always buffer JSON frame for reconnect replay (non-blocking)
+                        // Attach monotonic frame id to every JSON frame.
+                        if let Some(ref mut json_val) = frames.0 {
+                            let frame_id = frame_counter.fetch_add(1, Ordering::Relaxed);
+                            match json_val {
+                                Value::Object(map) => {
+                                    map.insert(
+                                        "id".to_string(),
+                                        Value::Number(serde_json::Number::from(frame_id)),
+                                    );
+                                }
+                                _ => {
+                                    *json_val = serde_json::json!({
+                                        "id": frame_id,
+                                        "type": "unknown",
+                                        "payload": json_val,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Only buffer when disconnected replay capture is enabled.
                         if let Some(ref json_val) = frames.0 {
-                            if let Ok(text) = serde_json::to_string(json_val) {
-                                if let Ok(mut buf) = msg_buf.try_lock() {
-                                    buf_bytes.fetch_add(text.len() as u64, Ordering::Relaxed);
-                                    buf.push_back(text);
-                                    // Evict oldest when count > 10 000 or size > 5 MB
-                                    while buf.len() > 10_000
-                                        || buf_bytes.load(Ordering::Relaxed) > 5 * 1024 * 1024
-                                    {
-                                        if let Some(oldest) = buf.pop_front() {
-                                            buf_bytes.fetch_sub(oldest.len() as u64, Ordering::Relaxed);
-                                        } else {
-                                            break;
+                            if buffer_on_disconnect_only.load(Ordering::Relaxed) {
+                                if let Ok(text) = serde_json::to_string(json_val) {
+                                    if let Ok(mut buf) = msg_buf.try_lock() {
+                                        buf_bytes.fetch_add(text.len() as u64, Ordering::Relaxed);
+                                        buf.push_back(text);
+                                        if let Ok(mut last_written) = buffer_last_written.try_lock() {
+                                            *last_written = Instant::now();
+                                        }
+                                        // Evict oldest when count > 10 000 or size > 5 MB
+                                        while buf.len() > 10_000
+                                            || buf_bytes.load(Ordering::Relaxed) > 5 * 1024 * 1024
+                                        {
+                                            if let Some(oldest) = buf.pop_front() {
+                                                buf_bytes.fetch_sub(oldest.len() as u64, Ordering::Relaxed);
+                                            } else {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
