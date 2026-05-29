@@ -206,7 +206,11 @@ fn parse_excluded_dirs() -> HashSet<String> {
 }
 
 fn is_excluded_dir(path: &Path, excluded: &HashSet<String>) -> bool {
-    excluded.iter().any(|e| path == e.as_str() || path.starts_with(e))
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    excluded.iter().any(|e| {
+        let ep = Path::new(e);
+        canonical == ep || canonical.starts_with(ep)
+    })
 }
 
 fn discover_agents_subdirs_for_recipes(dir: &Path, results: &mut Vec<PathBuf>, depth: u32, max_depth: u32) {
