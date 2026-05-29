@@ -147,7 +147,9 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(pid) = s.namespace_pid {
                     crate::session::namespace::kill_process_tree(pid, 3).await;
                 }
-                let _ = backend.set_session_state(&s.id, "ended").await;
+                if let Err(e) = backend.set_session_state(&s.id, "ended").await {
+                    tracing::warn!(session_id = %s.id, error = %e, "Failed to mark stale session as ended");
+                }
                 tracing::info!(session_id = %s.id, "stale session cleaned up");
             }
         }

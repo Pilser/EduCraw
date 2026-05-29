@@ -94,6 +94,9 @@ async fn list_enabled_models(
 ) -> Json<serde_json::Value> {
     match state.backend.list_enabled_models().await {
         Ok(rows) => Json(serde_json::json!(rows)),
-        Err(_) => Json(serde_json::json!([])),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to list enabled models");
+            Json(serde_json::json!([]))
+        }
     }
 }

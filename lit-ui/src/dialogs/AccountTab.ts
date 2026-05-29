@@ -4,6 +4,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import type { Cohort, LoginResponse, MeResponse } from "../core/edu-types.js";
 
 @customElement("account-tab")
@@ -52,8 +53,8 @@ export class AccountTab extends MenuTab {
             this.editDisplayName = this.profile.display_name;
             this.editCohortId = this.profile.cohort_id;
         } catch (err) {
-            console.error("[AccountTab] Failed to load profile:", err);
-            this.error = err instanceof Error ? err.message : "Failed to load profile";
+            const e = handleError(err);
+            this.error = e.message || "Failed to load profile";
         } finally {
             this.requestUpdate();
         }
@@ -138,7 +139,8 @@ export class AccountTab extends MenuTab {
             this.editing = false;
             this.success = "Profile updated successfully";
         } catch (err) {
-            this.error = err instanceof Error ? err.message : "Failed to update profile";
+            const e = handleError(err);
+            this.error = e.message || "Failed to update profile";
         } finally {
             this.loading = false;
             this.requestUpdate();
@@ -203,7 +205,8 @@ export class AccountTab extends MenuTab {
             this.clearRedeemInputs();
             await this.loadProfile();
         } catch (err) {
-            this.redeemError = err instanceof Error ? err.message : 'Redeem failed';
+            const e = handleError(err);
+            this.redeemError = e.message || 'Redeem failed';
         } finally {
             this.redeemLoading = false;
             this.requestUpdate();

@@ -266,13 +266,13 @@ async fn redeem_code_handler(
     let result = state.backend.redeem_code(&code, &claims.sub).await?;
     match result {
         crate::db::RedeemResult::NotFound => {
-            return Err(AppError::BadRequest(
-                "Code not found. Please check and try again.".into(),
+            return Err(AppError::NotFound(
+                "token code not found".into(),
             ));
         }
         crate::db::RedeemResult::AlreadyUsed => {
-            return Err(AppError::BadRequest(
-                "This code has already been used.".into(),
+            return Err(AppError::Conflict(
+                "token code already used".into(),
             ));
         }
         crate::db::RedeemResult::Success {

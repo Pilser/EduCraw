@@ -26,6 +26,7 @@ import {
 	HardDrive
 } from "lucide";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import { i18n } from "../utils/i18n.js";
 
 interface FileNode {
@@ -108,7 +109,7 @@ export class FileDrawer extends LitElement {
 						this.studentToken
 					);
 				} catch (err) {
-					console.warn("[FileDrawer] Failed to load subject files:", err);
+					handleError(err);
 				}
 			}
 
@@ -120,7 +121,7 @@ export class FileDrawer extends LitElement {
 						this.sessionToken
 					);
 				} catch (err) {
-					console.warn("[FileDrawer] Failed to load student files:", err);
+					const e = handleError(err);
 					this.error = `Failed to load workspace files`;
 				}
 				try {
@@ -129,12 +130,12 @@ export class FileDrawer extends LitElement {
 						this.sessionToken
 					);
 				} catch (err) {
-					console.warn("[FileDrawer] Failed to load quota:", err);
+					handleError(err);
 				}
 			}
 		} catch (err) {
-			console.error("[FileDrawer] Failed to load files:", err);
-			this.error = err instanceof Error ? err.message : "Failed to load files";
+			const e = handleError(err);
+			this.error = e.message || "Failed to load files";
 		} finally {
 			this.loading = false;
 			this.requestUpdate();
@@ -354,8 +355,8 @@ export class FileDrawer extends LitElement {
 			await this.loadFiles();
 			input.value = ""; // Reset input
 		} catch (err) {
-			console.error("[FileDrawer] Upload failed:", err);
-			this.uploadError = err instanceof Error ? err.message : "Upload failed";
+			const e = handleError(err);
+			this.uploadError = e.message || "Upload failed";
 		} finally {
 			this.uploading = false;
 			this.requestUpdate();

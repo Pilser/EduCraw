@@ -85,7 +85,7 @@ fn safe_join(base: &Path, rel: &str) -> Result<PathBuf> {
     let final_path = normalize_path(&joined);
     let base_norm  = normalize_path(base);
     if !final_path.starts_with(&base_norm) {
-        return Err(AppError::BadRequest("path traversal detected".into()));
+        return Err(AppError::Forbidden("path traversal detected".into()));
     }
     Ok(final_path)
 }

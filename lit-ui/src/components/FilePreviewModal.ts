@@ -5,6 +5,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { X, Download, Paperclip, ChevronLeft, ChevronRight } from "lucide";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import { i18n } from "../utils/i18n.js";
 import { marked } from "marked";
 import hljs from "highlight.js";
@@ -121,8 +122,8 @@ export class FilePreviewModal extends LitElement {
 				this.content = text;
 			}
 		} catch (err) {
-			console.error("[FilePreviewModal] Failed to load file:", err);
-			this.error = err instanceof Error ? err.message : "Failed to load file";
+			const e = handleError(err);
+			this.error = e.message || "Failed to load file";
 		} finally {
 			this.loading = false;
 			this.requestUpdate();
@@ -179,7 +180,7 @@ export class FilePreviewModal extends LitElement {
 
 			pdf.destroy();
 		} catch (err) {
-			console.error("[FilePreviewModal] PDF render error:", err);
+			handleError(err);
 			this.error = "Failed to render PDF";
 			this.requestUpdate();
 		}
@@ -200,7 +201,7 @@ export class FilePreviewModal extends LitElement {
 				renderFooters: true,
 			});
 		} catch (err) {
-			console.error("[FilePreviewModal] DOCX render error:", err);
+			handleError(err);
 			this.error = "Failed to render DOCX";
 			this.requestUpdate();
 		}
@@ -245,7 +246,7 @@ export class FilePreviewModal extends LitElement {
 				container.appendChild(tableContainer);
 			});
 		} catch (err) {
-			console.error("[FilePreviewModal] XLSX render error:", err);
+			handleError(err);
 			this.error = "Failed to render Excel file";
 			this.requestUpdate();
 		}
@@ -267,8 +268,8 @@ export class FilePreviewModal extends LitElement {
 			a.click();
 			URL.revokeObjectURL(url);
 		}).catch(err => {
-			console.error("Download failed:", err);
-			alert(`Download failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+			const e = handleError(err);
+			alert(`Download failed: ${e.message || "Unknown error"}`);
 		});
 	}
 

@@ -1,3 +1,4 @@
+import { handleError } from "./error-handler.js";
 const AUTH_STORAGE_KEY = "educlaw_auth";
 const SESSION_STORAGE_KEY = "educlaw_session";
 const THREAD_STORAGE_KEY = "educlaw_last_thread";
@@ -142,14 +143,20 @@ export class SessionManager {
                 body: JSON.stringify({ student_id: studentId }),
             });
             if (!res.ok) {
-                console.warn("[SessionManager] Session refresh failed:", res.status);
+                const text = await res.text().catch(() => "Unknown error");
+                let parsed = {};
+                try {
+                    parsed = JSON.parse(text);
+                }
+                catch { /* not JSON */ }
+                handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
                 return null;
             }
             const data = await res.json();
             return { session_id: data.session_id, session_token: data.token };
         }
         catch (err) {
-            console.error("[SessionManager] Session refresh error:", err);
+            handleError(err);
             return null;
         }
     }

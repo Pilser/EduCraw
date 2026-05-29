@@ -323,7 +323,7 @@ async fn set_model(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
     if claims.role == "student" && claims.sub != session.student_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("not your session".into()));
     }
 
     let model = body.model.trim().to_string();
@@ -337,13 +337,17 @@ async fn set_model(
     let dirs =
         crate::session::dirs::SessionDirs::for_existing_session(&state.workspace_root, &session_id);
     let signal_path = dirs.config.join("pending_model.txt");
-    let _ = std::fs::write(&signal_path, &model);
+    if let Err(e) = std::fs::write(&signal_path, &model) {
+        tracing::warn!(session_id = %session_id, error = %e, "Failed to write pending_model.txt");
+    }
 
     if let Some(ref params) = body.thinking_params {
         if !params.is_empty() {
             let thinking_path = dirs.config.join("pending_thinking.json");
             let json_str = serde_json::to_string(params).unwrap_or_default();
-            let _ = std::fs::write(&thinking_path, &json_str);
+            if let Err(e) = std::fs::write(&thinking_path, &json_str) {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to write pending_thinking.json");
+            }
             tracing::info!(session_id = %session_id, has_thinking_override = true, "thinking override written");
         }
     }
@@ -393,7 +397,7 @@ async fn spawn_session(
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
     if claims.role == "student" && claims.sub != session.student_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("not your session".into()));
     }
 
     if session.state != "active" {
@@ -599,7 +603,7 @@ async fn broadcast_message(
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let claims = state.auth.verify(token)?;
     if claims.role != "teacher" && claims.role != "admin" {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("not your session".into()));
     }
 
     // Format the banner: ANSI bold yellow, visible on any dark/light terminal.

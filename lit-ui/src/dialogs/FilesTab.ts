@@ -4,6 +4,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Download, Trash2, FilePlus, FileText, FileCode, FileJson, Image as ImageIcon, FileSpreadsheet, FileVideo, FileAudio, Archive, FileType, HardDrive } from "lucide";
 
 interface FileNode {
@@ -64,8 +65,8 @@ export class FilesTab extends MenuTab {
 					);
 					console.log("[FilesTab] Subject files loaded:", this.subjectFiles.length, this.subjectFiles);
 				} catch (err) {
-					console.warn("[FilesTab] Failed to load subject files:", err);
-					this.error = `Subject files: ${err instanceof Error ? err.message : "Unknown error"}`;
+					const e = handleError(err);
+					this.error = `Subject files: ${e.message || "Unknown error"}`;
 				}
 			} else {
 				console.log("[FilesTab] Skipping subject files - no subject IDs or token");
@@ -81,9 +82,9 @@ export class FilesTab extends MenuTab {
 					);
 					console.log("[FilesTab] Student files loaded:", this.studentFiles.length, this.studentFiles);
 				} catch (err) {
-					console.warn("[FilesTab] Failed to load student files:", err);
+					const e = handleError(err);
 					if (!this.error) {
-						this.error = `Student files: ${err instanceof Error ? err.message : "Unknown error"}`;
+						this.error = `Student files: ${e.message || "Unknown error"}`;
 					}
 				}
 				try {
@@ -92,14 +93,14 @@ export class FilesTab extends MenuTab {
 						this.sessionToken
 					);
 				} catch (err) {
-					console.warn("[FilesTab] Failed to load quota:", err);
+					handleError(err);
 				}
 			} else {
 				console.log("[FilesTab] Skipping student files - no session ID or token");
 			}
 		} catch (err) {
-			console.error("[FilesTab] Failed to load files:", err);
-			this.error = err instanceof Error ? err.message : "Failed to load files";
+			const e = handleError(err);
+			this.error = e.message || "Failed to load files";
 		} finally {
 			this.loading = false;
 			this.requestUpdate();
@@ -160,8 +161,8 @@ export class FilesTab extends MenuTab {
 			// Clean up after a delay
 			setTimeout(() => URL.revokeObjectURL(url), 1000);
 		} catch (err) {
-			console.error("Failed to open file:", err);
-			alert(`Failed to open file: ${err instanceof Error ? err.message : "Unknown error"}`);
+			const e = handleError(err);
+			alert(`Failed to open file: ${e.message || "Unknown error"}`);
 		}
 	}
 
@@ -178,8 +179,8 @@ export class FilesTab extends MenuTab {
 			);
 			await this.loadFiles();
 		} catch (err) {
-			console.error("Failed to delete file:", err);
-			alert(`Failed to delete file: ${err instanceof Error ? err.message : "Unknown error"}`);
+			const e = handleError(err);
+			alert(`Failed to delete file: ${e.message || "Unknown error"}`);
 		}
 	}
 
@@ -202,8 +203,8 @@ export class FilesTab extends MenuTab {
 						this.sessionToken
 					);
 				} catch (err) {
-					console.error(`Failed to upload ${file.name}:`, err);
-					alert(`Failed to upload ${file.name}: ${err instanceof Error ? err.message : "Unknown error"}`);
+					const e = handleError(err);
+					alert(`Failed to upload ${file.name}: ${e.message || "Unknown error"}`);
 				}
 			}
 

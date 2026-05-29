@@ -17,8 +17,8 @@ pub enum AppError {
     #[error("unauthorized")]
     Unauthorized,
 
-    #[error("forbidden")]
-    Forbidden,
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 
     #[error("conflict: {0}")]
     Conflict(String),
@@ -46,7 +46,7 @@ impl AppError {
             Self::NotFound(_) => "NOT_FOUND",
             Self::BadRequest(_) => "BAD_REQUEST",
             Self::Unauthorized => "UNAUTHORIZED",
-            Self::Forbidden => "FORBIDDEN",
+            Self::Forbidden(_) => "FORBIDDEN",
             Self::Conflict(_) => "CONFLICT",
             Self::Session(_) => "SESSION_ERROR",
             Self::Restricted(_) => "RESTRICTED",
@@ -63,7 +63,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
-            AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden".to_string()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Session(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             AppError::Restricted(msg) => (StatusCode::FORBIDDEN, msg.clone()),

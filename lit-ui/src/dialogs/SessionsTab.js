@@ -10,6 +10,7 @@ import { html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import { Download, Upload, GitFork, Plus, Trash2 } from "lucide";
 let SessionsTab = class SessionsTab extends MenuTab {
     constructor() {
@@ -43,8 +44,8 @@ let SessionsTab = class SessionsTab extends MenuTab {
             console.log("[SessionsTab] Sessions loaded via REST", this.sessions.length);
         }
         catch (err) {
-            console.error("[SessionsTab] Failed to load sessions:", err);
-            this.error = err instanceof Error ? err.message : "Failed to load sessions";
+            const e = handleError(err);
+            this.error = e.message || "Failed to load sessions";
         }
         finally {
             this.loading = false;
@@ -63,8 +64,8 @@ let SessionsTab = class SessionsTab extends MenuTab {
             URL.revokeObjectURL(url);
         }
         catch (err) {
-            console.error("Failed to export session:", err);
-            alert(`Failed to export session: ${err instanceof Error ? err.message : "Unknown error"}`);
+            const e = handleError(err);
+            alert(`Failed to export session: ${e.message || "Unknown error"}`);
         }
     }
     async importSession() {
@@ -82,8 +83,8 @@ let SessionsTab = class SessionsTab extends MenuTab {
                 await this.loadSessionList();
             }
             catch (err) {
-                console.error("Failed to import session:", err);
-                alert(`Failed to import session: ${err instanceof Error ? err.message : "Unknown error"}`);
+                const e = handleError(err);
+                alert(`Failed to import session: ${e.message || "Unknown error"}`);
             }
         };
         input.click();
@@ -95,8 +96,8 @@ let SessionsTab = class SessionsTab extends MenuTab {
             await this.loadSessionList();
         }
         catch (err) {
-            console.error("Failed to fork session:", err);
-            alert(`Failed to fork session: ${err instanceof Error ? err.message : "Unknown error"}`);
+            const e = handleError(err);
+            alert(`Failed to fork session: ${e.message || "Unknown error"}`);
         }
     }
     async deleteSession(sessionId) {
@@ -108,8 +109,8 @@ let SessionsTab = class SessionsTab extends MenuTab {
             await this.loadSessionList();
         }
         catch (err) {
-            console.error("Failed to delete session:", err);
-            alert(`Failed to delete session: ${err instanceof Error ? err.message : "Unknown error"}`);
+            const e = handleError(err);
+            alert(`Failed to delete session: ${e.message || "Unknown error"}`);
         }
     }
     handleLoadSession(sessionId) {

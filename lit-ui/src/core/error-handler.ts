@@ -309,15 +309,26 @@ function dispatch(eventName: string, error: AppError) {
  * Returns null for non-error frames.
  */
 export function classifySseFrame(frameType: string, frame: Record<string, unknown>): AppError | null {
+  const code = typeof frame.code === "string" ? frame.code : undefined;
+  const message = (frame.error as string) || (frame.message as string) || (frame.reason as string) || "";
+
   switch (frameType) {
-    case "chat_error":
-      return makeError(ErrorCode.SESSION_ERROR, (frame.error as string) || "Chat error", { retryable: false, raw: frame });
-    case "session_terminated":
+    case "chat_error": {
+      if (code) return classifyByCode(code, message, undefined, frame);
+      return makeError(ErrorCode.SESSION_ERROR, message || "Chat error", { retryable: false, raw: frame });
+    }
+    case "session_terminated": {
+      if (code) return classifyByCode(code, message || `Session terminated: ${frame.reason || "unknown"}`, undefined, frame);
       return makeError(ErrorCode.GOOSE_DEAD, `Session terminated: ${frame.reason || "unknown"}`, { retryable: false, raw: frame });
-    case "restriction":
-      return makeError(ErrorCode.RESTRICTED, (frame.message as string) || "Account restricted", { retryable: false, raw: frame });
-    case "error":
-      return makeError(ErrorCode.SESSION_ERROR, (frame.message as string) || "Stream error", { retryable: false, raw: frame });
+    }
+    case "restriction": {
+      if (code) return classifyByCode(code, message || "Account restricted", undefined, frame);
+      return makeError(ErrorCode.RESTRICTED, message || "Account restricted", { retryable: false, raw: frame });
+    }
+    case "error": {
+      if (code) return classifyByCode(code, message || "Stream error", undefined, frame);
+      return makeError(ErrorCode.SESSION_ERROR, message || "Stream error", { retryable: false, raw: frame });
+    }
     default:
       return null; // not an error frame
   }

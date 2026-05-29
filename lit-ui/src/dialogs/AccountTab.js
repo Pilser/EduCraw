@@ -10,6 +10,7 @@ import { html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 let AccountTab = class AccountTab extends MenuTab {
     constructor() {
         super(...arguments);
@@ -49,8 +50,8 @@ let AccountTab = class AccountTab extends MenuTab {
             this.editCohortId = this.profile.cohort_id;
         }
         catch (err) {
-            console.error("[AccountTab] Failed to load profile:", err);
-            this.error = err instanceof Error ? err.message : "Failed to load profile";
+            const e = handleError(err);
+            this.error = e.message || "Failed to load profile";
         }
         finally {
             this.requestUpdate();
@@ -129,7 +130,8 @@ let AccountTab = class AccountTab extends MenuTab {
             this.success = "Profile updated successfully";
         }
         catch (err) {
-            this.error = err instanceof Error ? err.message : "Failed to update profile";
+            const e = handleError(err);
+            this.error = e.message || "Failed to update profile";
         }
         finally {
             this.loading = false;
@@ -201,7 +203,8 @@ let AccountTab = class AccountTab extends MenuTab {
             await this.loadProfile();
         }
         catch (err) {
-            this.redeemError = err instanceof Error ? err.message : 'Redeem failed';
+            const e = handleError(err);
+            this.redeemError = e.message || 'Redeem failed';
         }
         finally {
             this.redeemLoading = false;

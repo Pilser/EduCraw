@@ -8,6 +8,7 @@ import { customElement, state } from "lit/decorators.js";
 import { AlertCircle, GraduationCap, LogIn, User, UserPlus } from "lucide";
 import { eduApi } from "../core/edu-api";
 import { SessionManager } from "../core/session-manager";
+import { classifyError, ErrorCode } from "../core/error-handler.js";
 import type { Cohort, LoginResponse } from "../core/edu-types";
 
 @customElement("login-page")
@@ -46,20 +47,25 @@ export class LoginPage extends LitElement {
         }),
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Login failed";
-      if (msg.includes("not found") || msg.includes("404")) {
-        this.error = "Account not found. Create an account below.";
-      } else if (msg.includes("401") || msg.includes("invalid")) {
-        this.error = "Invalid username or password.";
-      } else if (msg.includes("403")) {
-        try {
-          const body = JSON.parse(msg.replace(/^\d+:\s*/, ""));
-          this.error = body.error || "Your account has been restricted.";
-        } catch {
+      const e = classifyError(err);
+      switch (e.code) {
+        case ErrorCode.NOT_FOUND:
+        case ErrorCode.SESSION_NOT_FOUND:
+        case ErrorCode.STUDENT_NOT_FOUND:
+          this.error = "Account not found. Create an account below.";
+          break;
+        case ErrorCode.UNAUTHORIZED:
+        case ErrorCode.JWT_EXPIRED:
+        case ErrorCode.WRONG_PASSWORD:
+          this.error = "Invalid username or password.";
+          break;
+        case ErrorCode.FORBIDDEN:
+        case ErrorCode.ACCOUNT_RESTRICTED:
+        case ErrorCode.RESTRICTED:
           this.error = "Your account has been restricted. Please contact your administrator.";
-        }
-      } else {
-        this.error = msg;
+          break;
+        default:
+          this.error = e.message || "Login failed";
       }
     } finally {
       this.loading = false;
@@ -109,11 +115,11 @@ export class LoginPage extends LitElement {
         }),
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Registration failed";
-      if (msg.includes("409") || msg.includes("taken")) {
+      const e = classifyError(err);
+      if (e.code === ErrorCode.USERNAME_TAKEN) {
         this.error = "Username already taken. Choose another.";
       } else {
-        this.error = msg;
+        this.error = e.message || "Registration failed";
       }
     } finally {
       this.loading = false;

@@ -76,15 +76,21 @@ pub async fn init_acp_session(
         return Ok(());
     }
 
-    tokio::fs::create_dir_all(&goose_path_root).await.ok();
-    tokio::fs::create_dir_all(&session_config_dir).await.ok();
+    if let Err(e) = tokio::fs::create_dir_all(&goose_path_root).await {
+        tracing::warn!(session_id = %session_id, error = %e, "Failed to create goose path root");
+    }
+    if let Err(e) = tokio::fs::create_dir_all(&session_config_dir).await {
+        tracing::warn!(session_id = %session_id, error = %e, "Failed to create session config dir");
+    }
 
     if let Some(ref prompt) = system_prompt {
         let prompt_dir = goose_path_root.join("config").join("prompts");
-        tokio::fs::create_dir_all(&prompt_dir).await.ok();
-        tokio::fs::write(prompt_dir.join("system.md"), prompt)
-            .await
-            .ok();
+        if let Err(e) = tokio::fs::create_dir_all(&prompt_dir).await {
+            tracing::warn!(session_id = %session_id, error = %e, "Failed to create prompt dir");
+        }
+        if let Err(e) = tokio::fs::write(prompt_dir.join("system.md"), prompt).await {
+            tracing::warn!(session_id = %session_id, error = %e, "Failed to write system prompt");
+        }
     }
 
     // Resolve IP block from session_id (deterministic, no external state)
@@ -305,6 +311,7 @@ pub async fn handle_input_sse(
                 let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
                 let frame = serde_json::json!({
                     "type": "session_terminated",
+                    "code": "GOOSE_DEAD",
                     "reason": "goose_dead",
                 })
                 .to_string();
@@ -333,7 +340,7 @@ pub async fn handle_input_sse(
                 "Your account has been restricted. Please contact your administrator.".to_string()
             });
         let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
-        let frame = serde_json::json!({"type": "restriction", "message": message}).to_string();
+        let frame = serde_json::json!({"type": "restriction", "code": "RESTRICTED", "message": message}).to_string();
         let _ = sse_tx.send(SseEvent::Text(frame)).await;
         let _ = sse_tx.send(SseEvent::Close).await;
         return Ok(SseEventStream { rx: sse_rx });
@@ -370,11 +377,16 @@ pub async fn handle_input_sse(
 
     // Spawn notification forwarding task
     let sse_tx_notif = sse_tx.clone();
+    let session_id_notif = session_id.to_string();
     tokio::spawn(async move {
         while let Some((json_frame, _binary_frame)) = notif_rx_req.recv().await {
             if let Some(j) = json_frame {
                 if let Ok(text) = serde_json::to_string(&j) {
                     if sse_tx_notif.send(SseEvent::Text(text)).await.is_err() {
+                        tracing::warn!(
+                            session_id = %session_id_notif,
+                            "📤 [SSE] Notification forwarding stopped — frontend disconnected"
+                        );
                         break;
                     }
                 }
@@ -383,9 +395,16 @@ pub async fn handle_input_sse(
     });
 
     // Send chat_start
-    let _ = sse_tx
+    if sse_tx
         .send(SseEvent::Text(r#"{"type":"chat_start"}"#.to_string()))
-        .await;
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            session_id = %session_id,
+            "📤 [SSE] Could not send chat_start — frontend already disconnected"
+        );
+    }
 
     // Build content blocks
     let mut content_blocks = Vec::new();
@@ -467,8 +486,14 @@ pub async fn handle_input_sse(
                         new_sid
                     }
                     Err(e) => {
+                        tracing::error!(
+                            session_id = %session_id_for_prompt,
+                            error = %e,
+                            "❌ [SSE] ACP session creation failed"
+                        );
                         let frame = serde_json::json!({
                             "type": "chat_error",
+                            "code": "ACP_SESSION_CREATE_FAILED",
                             "error": format!("Failed to create session: {}", e),
                         })
                         .to_string();
@@ -513,10 +538,17 @@ pub async fn handle_input_sse(
                                 cache_read_input_tokens: 0,
                             };
                             let _ = backend_clone.record_turn(&student_id_clone, &sid_clone, &tokens).await;
-                            let _ = token_calculator::calculate_and_deduct(
+                            if let Err(e) = token_calculator::calculate_and_deduct(
                                 &*backend_clone, &student_id_clone, &sid_clone,
                                 &model_name_clone, input_tokens, output_tokens,
-                            ).await;
+                            ).await {
+                                tracing::error!(
+                                    student_id = %student_id_clone,
+                                    session_id = %sid_clone,
+                                    error = %e,
+                                    "Failed to calculate and deduct tokens"
+                                );
+                            }
                         });
                     }
                 }
@@ -531,20 +563,32 @@ pub async fn handle_input_sse(
                     }
                     other => serde_json::json!({
                         "type": "chat_error",
+                        "code": "UNEXPECTED_STOP_REASON",
                         "error": format!("stop_reason: {other:?}")
                     })
                     .to_string(),
                 }
             }
             Err(e) => {
+                tracing::error!(
+                    session_id = %session_id_for_prompt,
+                    error = %e,
+                    "❌ [SSE] Prompt failed"
+                );
                 serde_json::json!({
                     "type": "chat_error",
+                    "code": "PROMPT_FAILED",
                     "error": e.to_string()
                 })
                 .to_string()
             }
         };
-        let _ = sse_tx_prompt.send(SseEvent::Text(frame)).await;
+        if sse_tx_prompt.send(SseEvent::Text(frame)).await.is_err() {
+            tracing::warn!(
+                session_id = %session_id_for_prompt,
+                "📤 [SSE] Could not send final frame — frontend already disconnected"
+            );
+        }
         let _ = sse_tx_prompt.send(SseEvent::Close).await;
     });
 
@@ -596,11 +640,16 @@ pub async fn handle_replay_sse(
 
     // Forward notifications to SSE
     let sse_tx_notif = sse_tx.clone();
+    let session_id_replay_notif = session_id.to_string();
     tokio::spawn(async move {
         while let Some((json_frame, _binary_frame)) = notif_rx_req.recv().await {
             if let Some(j) = json_frame {
                 if let Ok(text) = serde_json::to_string(&j) {
                     if sse_tx_notif.send(SseEvent::Text(text)).await.is_err() {
+                        tracing::warn!(
+                            session_id = %session_id_replay_notif,
+                            "📤 [SSE] Replay notification forwarding stopped — frontend disconnected"
+                        );
                         break;
                     }
                 }
@@ -687,9 +736,15 @@ pub async fn handle_replay_sse(
                     }
                     Err(e2) => {
                         loading_flag.store(false, Ordering::Relaxed);
+                        tracing::error!(
+                            thread_id = %tid,
+                            error = %e2,
+                            "❌ [SSE] Replay fallback (new session) failed"
+                        );
                         let frame = serde_json::json!({
-                            "type": "error",
-                            "message": format!("Failed to create new session: {}", e2),
+                            "type": "chat_error",
+                            "code": "REPLAY_FALLBACK_FAILED",
+                            "error": format!("Failed to create new session: {}", e2),
                         })
                         .to_string();
                         let _ = sse_tx_load.send(SseEvent::Text(frame)).await;

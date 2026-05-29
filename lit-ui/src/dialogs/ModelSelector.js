@@ -18,6 +18,7 @@ import { Input } from "../components/Input.js";
 import { formatModelCost } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import { SessionManager } from "../core/session-manager.js";
 function eduModelToDisplay(m) {
     return {
@@ -144,7 +145,7 @@ let ModelSelector = ModelSelector_1 = class ModelSelector extends DialogBase {
                 .map((m) => eduModelToDisplay(m));
         }
         catch (error) {
-            console.error("Failed to load models:", error);
+            handleError(error);
         }
         finally {
             this.modelsLoading = false;

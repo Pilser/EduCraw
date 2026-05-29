@@ -9,6 +9,7 @@ import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Eye, Plus, X, FileText, FileCode, FileJson, Image as ImageIcon, Check, Upload, FileSpreadsheet, FileVideo, FileAudio, Archive, FileType, Loader2, HardDrive } from "lucide";
 import { eduApi } from "../core/edu-api.js";
+import { handleError } from "../core/error-handler.js";
 import { i18n } from "../utils/i18n.js";
 let FileDrawer = class FileDrawer extends LitElement {
     constructor() {
@@ -67,7 +68,7 @@ let FileDrawer = class FileDrawer extends LitElement {
                     this.subjectFiles = await eduApi.listSubjectFiles(this.subjectIds[0], this.studentToken);
                 }
                 catch (err) {
-                    console.warn("[FileDrawer] Failed to load subject files:", err);
+                    handleError(err);
                 }
             }
             // Load student workspace files
@@ -76,20 +77,20 @@ let FileDrawer = class FileDrawer extends LitElement {
                     this.studentFiles = await eduApi.listStudentFiles(this.sessionId, this.sessionToken);
                 }
                 catch (err) {
-                    console.warn("[FileDrawer] Failed to load student files:", err);
+                    const e = handleError(err);
                     this.error = `Failed to load workspace files`;
                 }
                 try {
                     this.quota = await eduApi.getStudentQuota(this.sessionId, this.sessionToken);
                 }
                 catch (err) {
-                    console.warn("[FileDrawer] Failed to load quota:", err);
+                    handleError(err);
                 }
             }
         }
         catch (err) {
-            console.error("[FileDrawer] Failed to load files:", err);
-            this.error = err instanceof Error ? err.message : "Failed to load files";
+            const e = handleError(err);
+            this.error = e.message || "Failed to load files";
         }
         finally {
             this.loading = false;
@@ -306,8 +307,8 @@ let FileDrawer = class FileDrawer extends LitElement {
             input.value = ""; // Reset input
         }
         catch (err) {
-            console.error("[FileDrawer] Upload failed:", err);
-            this.uploadError = err instanceof Error ? err.message : "Upload failed";
+            const e = handleError(err);
+            this.uploadError = e.message || "Upload failed";
         }
         finally {
             this.uploading = false;

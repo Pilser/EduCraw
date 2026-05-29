@@ -125,7 +125,9 @@ pub async fn spawn_sacp_client(
 
                         // Forward all notifications to the SSE writer (non-blocking — never stall the event loop).
                         if let Ok(sender) = tx.try_lock() {
-                            let _ = sender.try_send(frames);
+                            if let Err(_e) = sender.try_send(frames) {
+                                tracing::debug!("SSE notification channel full — frame dropped");
+                            }
                         }
 
                         // Persist statistics to backend based on notification type.

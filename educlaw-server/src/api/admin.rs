@@ -138,7 +138,7 @@ fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
     tracing::debug!("[AUTH-ADMIN] checking role: {} == admin?", c.role);
     if c.role != "admin" {
         tracing::warn!("[AUTH-ADMIN] forbidden: user role is {} not admin", c.role);
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("admin access required".into()));
     }
     tracing::debug!("[AUTH-ADMIN] admin check passed");
     Ok(c)
@@ -155,7 +155,7 @@ fn require_staff(state: &AppState, headers: &HeaderMap) -> Result<Claims> {
             "[AUTH-STAFF] forbidden: user role is {} not admin/teacher",
             c.role
         );
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("staff access required".into()));
     }
     tracing::debug!("[AUTH-STAFF] staff check passed");
     Ok(c)
@@ -693,7 +693,9 @@ async fn update_subject_handler(
             "slug": new_slug,
             "title": body.title,
         });
-        let _ = tokio::fs::write(subject_dir.join("subject.json"), meta.to_string()).await;
+        if let Err(e) = tokio::fs::write(subject_dir.join("subject.json"), meta.to_string()).await {
+            tracing::warn!(subject_id = %id, error = %e, "Failed to write subject.json");
+        }
     }
 
     state.backend.update_subject(&id, new_slug, &body.title).await?;

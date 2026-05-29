@@ -12,30 +12,11 @@ import type {
   UpdateMeRequest,
   UpdateMeResponse,
 } from "./edu-types";
+import { handleError, classifyError, type AppError } from "./error-handler.js";
+
+export { type AppError };
 
 const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
-
-// ── Centralised session-death detection ────────────────────────────────────
-
-const SESSION_DEATH_RE = /session \S+ not found|is not active/;
-let _lastDeathSessionId = "";
-
-function detectSessionDeath(text: string, sessionIdHint?: string): boolean {
-  if (!SESSION_DEATH_RE.test(text)) return false;
-  if (sessionIdHint && _lastDeathSessionId === sessionIdHint) return false; // dedup
-  _lastDeathSessionId = sessionIdHint || "";
-  return true;
-}
-
-function dispatchSessionDead(errorText: string) {
-  window.dispatchEvent(
-    new CustomEvent("session-dead", {
-      detail: { error: errorText },
-      bubbles: true,
-      composed: true,
-    }),
-  );
-}
 
 // ── SSE Stream parser ─────────────────────────────────────────────────────
 
@@ -78,10 +59,9 @@ function sseStream(
             if (!response.ok) {
               const text = await response.text().catch(() => "Unknown error");
               console.error(`[sse] Request failed: ${response.status}`, text);
-              const sid = typeof input === "string" ? extractSessionId(input) : undefined;
-              if (detectSessionDeath(text, sid)) {
-                dispatchSessionDead(text);
-              }
+              let parsed: { error?: string; code?: string } = {};
+              try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+              handleError({ status: response.status, message: parsed.error || text, code: parsed.code });
               done = true;
               return { value: undefined, done: true };
             }
@@ -129,7 +109,19 @@ function sseStream(
 
             // Need more data — read next chunk
             if (reader) {
-              const result = await reader.read();
+              let result: ReadableStreamReadResult<Uint8Array>;
+              try {
+                result = await reader.read();
+              } catch (readErr: any) {
+                const readErrName = readErr?.name || "ReadError";
+                const readErrMsg = readErr?.message || String(readErr);
+                console.error(
+                  `[sse-stream] reader.read() failed: ${readErrName}: ${readErrMsg}`,
+                  "\n  buffer.length:", buffer.length,
+                  "\n  full error:", readErr,
+                );
+                throw readErr;
+              }
               if (result.done) {
                 done = true;
                 return { value: undefined, done: true };
@@ -156,10 +148,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
     console.error(`[edu-api] Request failed: ${res.status} ${url}`, text);
-    if (detectSessionDeath(text, extractSessionId(url))) {
-      dispatchSessionDead(text);
-    }
-    throw new Error(`${res.status}: ${text || res.statusText}`);
+    // Parse backend JSON error if available
+    let parsed: { error?: string; code?: string } = {};
+    try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+    handleError({ status: res.status, message: parsed.error || text || res.statusText, code: parsed.code });
+    throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
   }
   const contentType = res.headers.get("content-type");
   if (contentType && contentType.includes("application/json")) {
@@ -251,10 +244,17 @@ export const eduApi = {
 
   /** End/terminate a session */
   async endSession(sessionId: string, token: string): Promise<void> {
-    await fetch(`${BASE}/sessions/${sessionId}`, {
+    const res = await fetch(`${BASE}/sessions/${sessionId}`, {
       method: "DELETE",
       headers: authHeader(token),
     });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
+    }
   },
 
   /** Get available models for a session */
@@ -274,11 +274,18 @@ export const eduApi = {
     model: string,
     thinkingParams?: Record<string, unknown>,
   ): Promise<void> {
-    await fetch(`${BASE}/sessions/${sessionId}/model`, {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/model`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeader(token) },
       body: JSON.stringify({ model, thinking_params: thinkingParams }),
     });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
+    }
   },
 
   /** Get token usage for a session */
@@ -356,7 +363,10 @@ export const eduApi = {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "Unknown error");
-      throw new Error(`${res.status}: ${text || res.statusText}`);
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
   },
 
@@ -394,7 +404,11 @@ export const eduApi = {
       { headers: authHeader(token) },
     );
     if (!res.ok) {
-      throw new Error(`Failed to read file: ${res.status}`);
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
     return res.blob();
   },
@@ -417,7 +431,11 @@ export const eduApi = {
       { headers: authHeader(token) },
     );
     if (!res.ok) {
-      throw new Error(`Failed to read file: ${res.status}`);
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
     return res.blob();
   },
@@ -444,7 +462,11 @@ export const eduApi = {
       },
     );
     if (!res.ok) {
-      throw new Error(`Failed to write file: ${res.status}`);
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
   },
 
@@ -462,7 +484,11 @@ export const eduApi = {
       },
     );
     if (!res.ok) {
-      throw new Error(`Failed to delete file: ${res.status}`);
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
   },
 
@@ -520,7 +546,10 @@ export const eduApi = {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "Unknown error");
-      throw new Error(`${res.status}: ${text || res.statusText}`);
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
   },
 

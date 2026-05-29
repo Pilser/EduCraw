@@ -238,7 +238,14 @@ fn sse_response(stream: SseEventStream) -> Response {
                         rx,
                     ));
                 }
-                Some(SseEvent::Close) | None => return None,
+                Some(SseEvent::Close) => {
+                    tracing::debug!("📤 [SSE] Stream closed by backend (Close event)");
+                    return None;
+                }
+                None => {
+                    tracing::info!("📤 [SSE] Stream ended (channel dropped — frontend likely disconnected)");
+                    return None;
+                }
             }
         }
     }));

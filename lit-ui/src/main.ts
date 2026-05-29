@@ -4,6 +4,7 @@ import "./pages/chat-page.js";
 import { html, render } from "lit";
 import { SessionManager } from "./core/session-manager";
 import { eduApi } from "./core/edu-api";
+import { handleError } from "./core/error-handler.js";
 import type { LoginResponse } from "./core/edu-types";
 import type { ChatPage } from "./pages/chat-page.js";
 
@@ -60,7 +61,7 @@ function renderApp() {
               };
               renderApp();
             } catch (err) {
-              console.error("Failed to create session:", err);
+              handleError(err);
               currentView = {
                 kind: "login",
               };
@@ -103,7 +104,7 @@ function renderApp() {
                   (document.querySelector("chat-page") as ChatPage | null)?.tryResumeRecentThread();
                 })
                 .catch((err) => {
-                  console.error("Failed to refresh session:", err);
+                  handleError(err);
                   // JWT may also be expired, force re-login
                   SessionManager.clearAuth();
                   currentView = { kind: "login" };
@@ -176,7 +177,7 @@ async function init() {
           currentView = await startNewSession(auth);
           isNewSession = true;
         } catch (createErr) {
-          console.error("Failed to create session:", createErr);
+          handleError(createErr);
           SessionManager.clearAuth();
           currentView = { kind: "login" };
         }
@@ -188,7 +189,7 @@ async function init() {
         currentView = await startNewSession(auth);
         isNewSession = true;
       } catch (err) {
-        console.error("Failed to create session:", err);
+        handleError(err);
         SessionManager.clearAuth();
         currentView = { kind: "login" };
       }

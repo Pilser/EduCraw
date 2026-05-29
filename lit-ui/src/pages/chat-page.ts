@@ -2,6 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { eduApi, type SseEvent } from "../core/edu-api.js";
 import { SessionManager } from "../core/session-manager.js";
+import { handleError, classifyError, isSessionFatal, classifySseFrame, ErrorCode } from "../core/error-handler.js";
 import type {
   LoginResponse,
   EduModel,
@@ -59,23 +60,6 @@ export class ChatPage extends LitElement {
   private activeModelDisplayName = "grok-4-1-fast-reasoning";
   private _isRefreshing = false;
 
-  private isAuthError(err: any): boolean {
-    if (err?.status === 401 || err?.status === 403) return true;
-    if (err?.message?.includes("Unauthorized") || err?.message?.includes("unauthorized")) return true;
-    if (err?.response?.status === 401 || err?.response?.status === 403) return true;
-    return false;
-  }
-
-  private dispatchSessionExpired() {
-    console.log("Session expired - dispatching session-expired event");
-    this.dispatchEvent(
-      new CustomEvent("session-expired", {
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
   createRenderRoot() {
     return this;
   }
@@ -112,16 +96,9 @@ export class ChatPage extends LitElement {
       }
 
     } catch (err) {
-      if (this.isAuthError(err)) {
-        console.warn(
-          "Authentication error detected during initialization",
-          err,
-        );
-        this.dispatchSessionExpired();
-        return;
-      }
-      this._error =
-        err instanceof Error ? err.message : "Failed to initialize chat";
+      const e = handleError(err);
+      if (isSessionFatal(err)) return;
+      this._error = e.message || "Failed to initialize chat";
     }
   }
 
@@ -142,18 +119,14 @@ export class ChatPage extends LitElement {
     }
   }
 
-  private isSessionDead(msg: string): boolean {
-    return msg.includes("404") || msg.includes("not found") || msg.includes("not active") || msg.includes("ended");
-  }
-
   private async ensureValidSession() {
     if (this._isRefreshing) return;
     try {
       await eduApi.getSessionModels(this.sessionId, this.auth.token);
     } catch (err) {
-      if (this.isAuthError(err)) throw err;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (this.isSessionDead(msg)) {
+      const e = classifyError(err);
+      if (isSessionFatal(err)) throw err;
+      if (e.code === ErrorCode.SESSION_NOT_FOUND || e.code === ErrorCode.SESSION_NOT_ACTIVE || e.code === ErrorCode.GOOSE_DEAD) {
         if (this._isRefreshing) return;
         console.warn("[chat-page] Session dead during validation, refreshing...");
         const refreshed = await this.handleSessionRefresh();
@@ -162,7 +135,7 @@ export class ChatPage extends LitElement {
         }
         return;
       }
-      console.warn("[chat-page] Session validation warning:", msg);
+      console.warn("[chat-page] Session validation warning:", e.message);
     }
   }
 
@@ -179,7 +152,7 @@ export class ChatPage extends LitElement {
       const activeModel = sessionModels.models.find((m) => m.name === activeId);
       this.activeModelDisplayName = activeModel?.display_name || activeId;
     } catch (err) {
-      if (this.isAuthError(err)) throw err;
+      if (isSessionFatal(err)) throw err;
       console.error("Failed to fetch session models:", err);
     }
 
@@ -208,11 +181,8 @@ export class ChatPage extends LitElement {
               newModelId,
             );
           } catch (err) {
-            if (this.isAuthError(err)) {
-              console.warn("Session expired while switching model", err);
-              this.dispatchSessionExpired();
-              return;
-            }
+            handleError(err);
+            if (isSessionFatal(err)) return;
             console.error("Failed to switch model on server:", err);
           }
         });
@@ -289,7 +259,7 @@ export class ChatPage extends LitElement {
     } catch (err) {
       console.error("[chat-page] Session refresh failed:", err);
       // If refresh fails, JWT may also be expired - force re-login
-      this.dispatchSessionExpired();
+      handleError(err);
       return null;
     }
   }
@@ -383,6 +353,8 @@ export class ChatPage extends LitElement {
           break;
 
         case "session_terminated": {
+          const e = classifySseFrame("session_terminated", frame);
+          if (e) handleError(e);
           streamEnded = true;
           needsRetry = true;
           console.log("[sse-stream] Session terminated — will retry after stream ends");
@@ -546,6 +518,8 @@ export class ChatPage extends LitElement {
         }
 
         case "chat_error": {
+          const e = classifySseFrame("chat_error", frame);
+          if (e) handleError(e);
           console.error("[sse-stream] Chat error:", frame.error);
           assistantMsg.stopReason = "error";
           assistantMsg.errorMessage = frame.error;
@@ -558,6 +532,8 @@ export class ChatPage extends LitElement {
         }
 
         case "restriction": {
+          const e = classifySseFrame("restriction", frame);
+          if (e) handleError(e);
           assistantMsg.stopReason = "restriction";
           assistantMsg.errorMessage = (frame.message as string) || "Access restricted";
           this.isStreaming = false;
@@ -596,14 +572,13 @@ export class ChatPage extends LitElement {
       }
     } catch (err) {
       console.error("[sse-stream] Stream error:", err);
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!receivedAnyFrame && this.isSessionDead(msg)) {
+      const e = classifyError(err);
+      if (!receivedAnyFrame && (e.code === ErrorCode.SESSION_NOT_FOUND || e.code === ErrorCode.SESSION_NOT_ACTIVE || e.code === ErrorCode.GOOSE_DEAD)) {
         needsRetry = true;
         streamEnded = true;
       } else if (!streamEnded) {
         assistantMsg.stopReason = "error";
-        assistantMsg.errorMessage =
-          err instanceof Error ? err.message : "Stream error";
+        assistantMsg.errorMessage = e.message || "Stream error";
         this.isStreaming = false;
         this.streamingMessage = null;
         this.messages = [...this.messages, assistantMsg];
@@ -639,7 +614,7 @@ export class ChatPage extends LitElement {
     }
     // Also notify backend to cancel the prompt
     eduApi.cancelInput(this.sessionId, this.sessionToken).catch((err) => {
-      console.warn("[chat-page] Cancel request failed:", err);
+      handleError(err);
     });
     this.isStreaming = false;
     this.streamingMessage = null;
@@ -861,19 +836,14 @@ export class ChatPage extends LitElement {
           }
 
           case "error": {
-            const errorMsg = (frame as any).message || "Unknown error";
-            console.error("[replay] Session replay error:", errorMsg);
-            if (
-              errorMsg.includes("Unauthorized") ||
-              errorMsg.includes("unauthorized") ||
-              errorMsg.includes("401") ||
-              errorMsg.includes("403")
-            ) {
+            const e = classifySseFrame("error", frame as Record<string, unknown>);
+            console.error("[replay] Session replay error:", e?.message || (frame as any).message || "Unknown error");
+            if (e && isSessionFatal(e)) {
               const auth = SessionManager.loadAuth();
               if (auth && SessionManager.isTokenValid(auth.token)) {
                 this.handleSessionRefresh();
               } else {
-                this.dispatchSessionExpired();
+                handleError(e);
               }
             }
             break;
@@ -915,8 +885,8 @@ export class ChatPage extends LitElement {
         );
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (this.isSessionDead(msg)) {
+      const e = classifyError(err);
+      if (e.code === ErrorCode.SESSION_NOT_FOUND || e.code === ErrorCode.SESSION_NOT_ACTIVE || e.code === ErrorCode.GOOSE_DEAD) {
         console.warn("[replay] Session dead, refreshing before retry...");
         const refreshed = await this.handleSessionRefresh();
         if (refreshed) return this.loadMostRecentSession();
@@ -1021,8 +991,10 @@ export class ChatPage extends LitElement {
       this.updateUI();
       this.requestUpdate();
     } catch (err) {
-      console.error("[chat-page] Failed to create new session:", err);
-      alert("Failed to create new session. Please try again.");
+      const e = handleError(err);
+      alert(e.code === ErrorCode.NOT_FOUND
+        ? "Session not found. Please log in again."
+        : e.message || "Failed to create new session. Please try again.");
     }
   }
 
@@ -1036,8 +1008,8 @@ export class ChatPage extends LitElement {
         alert("No recent session found. Start a new chat!");
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (this.isSessionDead(msg)) {
+      const e = classifyError(err);
+      if (isSessionFatal(err)) {
         console.warn("[chat-page] Session dead on Continue Recent — refreshing session...");
         const refreshed = await this.handleSessionRefresh();
         if (!refreshed) {
@@ -1046,7 +1018,7 @@ export class ChatPage extends LitElement {
         // handleSessionRefresh already calls spawn("recent") + loadSessionById internally
       } else {
         console.error("[chat-page] Failed to resume recent session:", err);
-        alert("Failed to load recent session. Please try again.");
+        alert(e.message || "Failed to load recent session. Please try again.");
       }
     }
   }

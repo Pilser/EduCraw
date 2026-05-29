@@ -1,22 +1,5 @@
+import { handleError } from "./error-handler.js";
 const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
-// ── Centralised session-death detection ────────────────────────────────────
-const SESSION_DEATH_RE = /session \S+ not found|is not active/;
-let _lastDeathSessionId = "";
-function detectSessionDeath(text, sessionIdHint) {
-    if (!SESSION_DEATH_RE.test(text))
-        return false;
-    if (sessionIdHint && _lastDeathSessionId === sessionIdHint)
-        return false; // dedup
-    _lastDeathSessionId = sessionIdHint || "";
-    return true;
-}
-function dispatchSessionDead(errorText) {
-    window.dispatchEvent(new CustomEvent("session-dead", {
-        detail: { error: errorText },
-        bubbles: true,
-        composed: true,
-    }));
-}
 /**
  * Parse a fetch response body as an SSE stream.
  * Returns an async iterable of parsed SSE events plus an abort function.
@@ -45,10 +28,12 @@ function sseStream(input, init) {
                         if (!response.ok) {
                             const text = await response.text().catch(() => "Unknown error");
                             console.error(`[sse] Request failed: ${response.status}`, text);
-                            const sid = typeof input === "string" ? extractSessionId(input) : undefined;
-                            if (detectSessionDeath(text, sid)) {
-                                dispatchSessionDead(text);
+                            let parsed = {};
+                            try {
+                                parsed = JSON.parse(text);
                             }
+                            catch { /* not JSON */ }
+                            handleError({ status: response.status, message: parsed.error || text, code: parsed.code });
                             done = true;
                             return { value: undefined, done: true };
                         }
@@ -114,10 +99,14 @@ async function request(url, options) {
     if (!res.ok) {
         const text = await res.text().catch(() => "Unknown error");
         console.error(`[edu-api] Request failed: ${res.status} ${url}`, text);
-        if (detectSessionDeath(text, extractSessionId(url))) {
-            dispatchSessionDead(text);
+        // Parse backend JSON error if available
+        let parsed = {};
+        try {
+            parsed = JSON.parse(text);
         }
-        throw new Error(`${res.status}: ${text || res.statusText}`);
+        catch { /* not JSON */ }
+        handleError({ status: res.status, message: parsed.error || text || res.statusText, code: parsed.code });
+        throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
     }
     const contentType = res.headers.get("content-type");
     if (contentType && contentType.includes("application/json")) {
@@ -186,10 +175,20 @@ export const eduApi = {
     },
     /** End/terminate a session */
     async endSession(sessionId, token) {
-        await fetch(`${BASE}/sessions/${sessionId}`, {
+        const res = await fetch(`${BASE}/sessions/${sessionId}`, {
             method: "DELETE",
             headers: authHeader(token),
         });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
+        }
     },
     /** Get available models for a session */
     async getSessionModels(sessionId, token) {
@@ -199,11 +198,21 @@ export const eduApi = {
     },
     /** Switch the active model for a session */
     async setSessionModel(sessionId, token, model, thinkingParams) {
-        await fetch(`${BASE}/sessions/${sessionId}/model`, {
+        const res = await fetch(`${BASE}/sessions/${sessionId}/model`, {
             method: "PUT",
             headers: { "Content-Type": "application/json", ...authHeader(token) },
             body: JSON.stringify({ model, thinking_params: thinkingParams }),
         });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
+        }
     },
     /** Get token usage for a session */
     async getSessionTokenUsage(sessionId, token) {
@@ -245,7 +254,13 @@ export const eduApi = {
         });
         if (!res.ok) {
             const text = await res.text().catch(() => "Unknown error");
-            throw new Error(`${res.status}: ${text || res.statusText}`);
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
     },
     /** Import a thread from JSON string */
@@ -266,7 +281,14 @@ export const eduApi = {
     async readSubjectFile(subjectId, path, token) {
         const res = await fetch(`${BASE}/files/subject/${subjectId}/read?path=${encodeURIComponent(path)}`, { headers: authHeader(token) });
         if (!res.ok) {
-            throw new Error(`Failed to read file: ${res.status}`);
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
         return res.blob();
     },
@@ -280,7 +302,14 @@ export const eduApi = {
     async readStudentFile(sessionId, path, token) {
         const res = await fetch(`${BASE}/files/student/${sessionId}/read?path=${encodeURIComponent(path)}`, { headers: authHeader(token) });
         if (!res.ok) {
-            throw new Error(`Failed to read file: ${res.status}`);
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
         return res.blob();
     },
@@ -297,7 +326,14 @@ export const eduApi = {
             body: content,
         });
         if (!res.ok) {
-            throw new Error(`Failed to write file: ${res.status}`);
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
     },
     /** Delete student file */
@@ -307,7 +343,14 @@ export const eduApi = {
             headers: authHeader(token),
         });
         if (!res.ok) {
-            throw new Error(`Failed to delete file: ${res.status}`);
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
     },
     /** Get student workspace disk usage and quota */
@@ -347,7 +390,13 @@ export const eduApi = {
         });
         if (!res.ok) {
             const text = await res.text().catch(() => "Unknown error");
-            throw new Error(`${res.status}: ${text || res.statusText}`);
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
     },
     /** Load thread replay as an SSE event stream */
