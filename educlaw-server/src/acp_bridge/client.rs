@@ -6,9 +6,10 @@
 // initialization + session-creation handshake, and returns the ready
 // `(ConnectionTo<SacpAgent>, SessionId)` pair for use by the session loop.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use sacp::schema::{
     ClientCapabilities, InitializeRequest, LoadSessionRequest, NewSessionRequest, ProtocolVersion,
@@ -42,6 +43,8 @@ pub async fn spawn_sacp_client(
     loading_flag: Arc<AtomicBool>,
     model_arc: Arc<tokio::sync::Mutex<Option<String>>>,
     recent_thread_id: Option<String>,
+    message_buffer: Arc<Mutex<VecDeque<String>>>,
+    buffer_bytes: Arc<AtomicU64>,
 ) -> Result<(ConnectionTo<SacpAgent>, Arc<tokio::sync::Mutex<Option<SessionId>>>, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
@@ -74,6 +77,8 @@ pub async fn spawn_sacp_client(
     let educlaw_session_id = session_id.clone();
     let loading_flag_clone = loading_flag.clone();
     let model_arc_clone = model_arc.clone();
+    let message_buffer_clone = message_buffer.clone();
+    let buffer_bytes_clone = buffer_bytes.clone();
 
     // Clone values needed inside connect_with
     let backend_init = backend.clone();
@@ -90,11 +95,35 @@ pub async fn spawn_sacp_client(
                     let tx = notif_tx;
                     let educlaw_session_id = educlaw_session_id.clone();
                     let loading_flag = loading_flag_clone.clone();
+                    let msg_buf = message_buffer_clone.clone();
+                    let buf_bytes = buffer_bytes_clone.clone();
                     async move |notif: SessionNotification, _cx| {
                         let _session_id = notif.session_id.0.to_string(); // ACP session ID (not used for DB)
 
-                        // Forward all notifications to the WS writer (non-blocking — never stall the event loop).
+                        // Convert notification to frames
                         let frames = notification_to_frames(&notif);
+
+                        // Always buffer JSON frame for reconnect replay (non-blocking)
+                        if let Some(ref json_val) = frames.0 {
+                            if let Ok(text) = serde_json::to_string(json_val) {
+                                if let Ok(mut buf) = msg_buf.try_lock() {
+                                    buf_bytes.fetch_add(text.len() as u64, Ordering::Relaxed);
+                                    buf.push_back(text);
+                                    // Evict oldest when count > 10 000 or size > 5 MB
+                                    while buf.len() > 10_000
+                                        || buf_bytes.load(Ordering::Relaxed) > 5 * 1024 * 1024
+                                    {
+                                        if let Some(oldest) = buf.pop_front() {
+                                            buf_bytes.fetch_sub(oldest.len() as u64, Ordering::Relaxed);
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Forward all notifications to the SSE writer (non-blocking — never stall the event loop).
                         if let Ok(sender) = tx.try_lock() {
                             let _ = sender.try_send(frames);
                         }

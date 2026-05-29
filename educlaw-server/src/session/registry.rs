@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -37,6 +37,7 @@ pub struct ManagedSession {
 
     // Message buffer for in-flight text frames at the moment of disconnect
     pub message_buffer: Arc<Mutex<VecDeque<String>>>,
+    pub total_buffer_bytes: Arc<AtomicU64>,
 
     // Grace period tracking
     pub disconnected_at: Arc<Mutex<Option<Instant>>>,
@@ -67,6 +68,8 @@ impl ManagedSession {
         backend: Arc<dyn DbBackend>,
         disconnect_timeout: Duration,
         session_config_dir: PathBuf,
+        message_buffer: Arc<Mutex<VecDeque<String>>>,
+        total_buffer_bytes: Arc<AtomicU64>,
     ) -> Self {
         Self {
             cx,
@@ -77,7 +80,8 @@ impl ManagedSession {
             model_arc,
             available_models_arc,
             loading_flag,
-            message_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            message_buffer,
+            total_buffer_bytes,
             disconnected_at: Arc::new(Mutex::new(None)),
             disconnect_timeout,
             student_id,
@@ -106,17 +110,26 @@ impl ManagedSession {
     }
 
     /// Buffer a text message for delivery on reconnect.
+    /// Enforces both count (10 000) and size (5 MB) caps.
     pub async fn buffer_message(&self, msg: String) {
         let mut buf = self.message_buffer.lock().await;
+        self.total_buffer_bytes.fetch_add(msg.len() as u64, Ordering::Relaxed);
         buf.push_back(msg);
-        if buf.len() > 1000 {
-            buf.pop_front(); // cap memory usage
+        // Evict oldest frames when either cap is exceeded
+        while buf.len() > 10_000 || self.total_buffer_bytes.load(Ordering::Relaxed) > 5 * 1024 * 1024 {
+            if let Some(oldest) = buf.pop_front() {
+                self.total_buffer_bytes.fetch_sub(oldest.len() as u64, Ordering::Relaxed);
+            } else {
+                break;
+            }
         }
     }
 
     /// Drain and return all buffered messages.
     pub async fn take_buffered_messages(&self) -> Vec<String> {
-        self.message_buffer.lock().await.drain(..).collect()
+        let msgs = self.message_buffer.lock().await.drain(..).collect::<Vec<_>>();
+        self.total_buffer_bytes.store(0, Ordering::Relaxed);
+        msgs
     }
 
     /// True when the grace period has elapsed (session should be killed).

@@ -98,26 +98,33 @@ function sseStream(
           const decoder = new TextDecoder();
 
           while (true) {
-            // Try to parse an event from existing buffer
-            const match = buffer.match(
-              /^event:\s*([^\n]*)\ndata:\s*([^\n]*)\n\n/,
-            );
-            if (match) {
-              const eventType = match[1].trim();
-              const rawData = match[2].trim();
-              buffer = buffer.substring(match[0].length);
+            // Look for double newline (SSE event delimiter)
+            const doubleNewlineIdx = buffer.indexOf("\n\n");
+            if (doubleNewlineIdx !== -1) {
+              const eventBlock = buffer.substring(0, doubleNewlineIdx);
+              buffer = buffer.substring(doubleNewlineIdx + 2);
 
-              let parsedData: any;
-              try {
-                parsedData = JSON.parse(rawData);
-              } catch {
-                parsedData = rawData;
+              const eventMatch = eventBlock.match(/^event:\s*([^\n]*)/);
+              const dataMatch = eventBlock.match(/^data:\s*([\s\S]*?)$/m);
+
+              if (eventMatch && dataMatch) {
+                const eventType = eventMatch[1].trim();
+                const rawData = dataMatch[1].trim();
+
+                let parsedData: any;
+                try {
+                  parsedData = JSON.parse(rawData);
+                } catch {
+                  parsedData = rawData;
+                }
+
+                return {
+                  value: { event: eventType, data: parsedData },
+                  done: false,
+                };
               }
-
-              return {
-                value: { event: eventType, data: parsedData },
-                done: false,
-              };
+              // Malformed event block — skip and try next
+              continue;
             }
 
             // Need more data — read next chunk

@@ -7,6 +7,7 @@
 //   handle_cancel      — send CancelNotification to goose
 //   handle_replay_sse  — load historical thread, replay as SSE
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -199,6 +200,11 @@ pub async fn init_acp_session(
         mpsc::channel::<(Option<serde_json::Value>, Option<Vec<u8>>)>(128);
     let notif_tx_shared = Arc::new(Mutex::new(notif_tx_new));
 
+    // Persistent notification buffer for reconnect replay (capped at 10 000 frames / 5 MB)
+    let message_buffer: Arc<Mutex<VecDeque<String>>> =
+        Arc::new(Mutex::new(VecDeque::new()));
+    let buffer_bytes: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
     // Resolve provider
     let provider = match &model {
         Some(model_name) => {
@@ -223,6 +229,8 @@ pub async fn init_acp_session(
         loading_flag.clone(),
         model_arc.clone(),
         recent_thread_id,
+        message_buffer.clone(),
+        buffer_bytes.clone(),
     )
     .await?;
 
@@ -257,6 +265,8 @@ pub async fn init_acp_session(
         backend.clone(),
         registry.disconnect_timeout,
         session_config_dir.clone(),
+        message_buffer,
+        buffer_bytes,
     );
     registry.register(session_id.clone(), managed).await;
 
@@ -339,6 +349,19 @@ pub async fn handle_input_sse(
 
     // Create the SSE channel for this request
     let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(256);
+
+    // Drain buffered notifications from prior disconnect (replay missed frames)
+    let buffered = managed.take_buffered_messages().await;
+    if !buffered.is_empty() {
+        tracing::info!(
+            session_id = %session_id,
+            buffered_count = buffered.len(),
+            "📥 [SSE] Replaying buffered notifications from prior disconnect"
+        );
+        for frame_text in buffered {
+            let _ = sse_tx.send(SseEvent::Text(frame_text)).await;
+        }
+    }
 
     // Create notification channel and redirect sacp callback
     let (notif_tx_req, mut notif_rx_req) =
