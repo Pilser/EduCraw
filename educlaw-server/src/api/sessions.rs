@@ -22,6 +22,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use sacp::schema::NewSessionRequest;
+
 use crate::acp_bridge::init_acp_session;
 use crate::auth::bearer_token;
 use crate::db::{DbBackend, Session, Student};
@@ -409,8 +411,39 @@ async fn spawn_session(
 
     let student_id = session.student_id.clone();
 
-    // Goose already running — return thread_id immediately
+    // Goose already running
     if let Some(managed) = state.registry.get(&session_id).await {
+        // action: "new" → create a fresh ACP thread, replacing the old one
+        if matches!(body.action, SpawnAction::New) {
+            let resp = managed
+                .cx
+                .send_request(NewSessionRequest::new("/"))
+                .block_task()
+                .await
+                .map_err(|e| AppError::Session(format!("NewSession ACP error: {e}")))?;
+
+            *managed.acp_session_id.lock().await = Some(resp.session_id.clone());
+
+            let new_tid = resp.session_id.0.to_string();
+
+            let _ = state
+                .backend
+                .set_recent_thread_id(&student_id, &new_tid)
+                .await;
+
+            tracing::info!(
+                session_id = %session_id,
+                thread_id = %new_tid,
+                "new thread created via spawn (action=new)"
+            );
+
+            return Ok(Json(SpawnSessionResponse {
+                status: "ready".to_string(),
+                thread_id: Some(new_tid),
+            }));
+        }
+
+        // action: "recent" → return the current thread
         let thread_id = {
             let guard = managed.acp_session_id.lock().await;
             guard.as_ref().map(|sid| sid.0.to_string())

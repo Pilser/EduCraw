@@ -170,20 +170,6 @@ List all threads (conversations) for this session.
 
 ---
 
-### POST /sessions/:id/threads/new
-Create a new empty thread for this session (no history).
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Response (201):**
-```json
-{
-  "thread_id": "string"
-}
-```
-
----
-
 ### POST /sessions/:id/threads/:thread_id/fork
 Fork an existing thread into a new session with copied message history.
 

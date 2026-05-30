@@ -1053,7 +1053,7 @@ export class ChatPage extends LitElement {
     }
   }
 
-  private async newSession() {
+  private async newSession(): Promise<void> {
     try {
       const resp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "new");
 
@@ -1064,13 +1064,31 @@ export class ChatPage extends LitElement {
       this.isStreaming = false;
       this.streamingMessage = null;
 
+      // Clear stale thread reference from localStorage
+      SessionManager.clearSession();
+      SessionManager.saveSession(this.sessionId, this.sessionToken);
+
       this.updateUI();
       this.requestUpdate();
     } catch (err) {
-      const e = handleError(err);
-      alert(e.code === ErrorCode.NOT_FOUND
-        ? "Session not found. Please log in again."
-        : e.message || "Failed to create new session. Please try again.");
+      const e = classifyError(err);
+      // Session ended/expired — create new backend session and retry
+      if (
+        e.code === ErrorCode.SESSION_NOT_FOUND ||
+        e.code === ErrorCode.SESSION_NOT_ACTIVE ||
+        e.code === ErrorCode.GOOSE_DEAD ||
+        e.code === ErrorCode.NOT_FOUND
+      ) {
+        console.warn("[chat-page] Session dead on newSession, refreshing...");
+        const refreshed = await this.handleSessionRefresh();
+        if (refreshed) {
+          return this.newSession();
+        }
+        alert("Session expired. Please log in again.");
+        return;
+      }
+      handleError(err);
+      alert(e.message || "Failed to create new session. Please try again.");
     }
   }
 

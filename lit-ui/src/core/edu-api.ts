@@ -327,20 +327,6 @@ export const eduApi = {
     );
   },
 
-  /** Create a new empty thread (no history) */
-  async createThread(
-    sessionId: string,
-    token: string,
-  ): Promise<{ thread_id: string }> {
-    return request<{ thread_id: string }>(
-      `/sessions/${sessionId}/threads/new`,
-      {
-        method: "POST",
-        headers: authHeader(token),
-      },
-    );
-  },
-
   /** Export a thread as JSON string */
   async exportThread(
     sessionId: string,

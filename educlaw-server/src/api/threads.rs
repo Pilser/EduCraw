@@ -1,14 +1,12 @@
 // educlaw-server/src/api/threads.rs
 //
 // REST endpoints for thread (session/thread) management.
-// These replace the WebSocket-based list_sessions, fork_session,
-// export_session, import_session, and get_models operations.
+// New threads are created via POST /sessions/:id/spawn with action: "new".
 //
 // GET  /sessions/:id/threads                   — list threads
-// POST /sessions/:id/threads/new              — create new thread
+// POST /sessions/:id/threads/import             — import thread from JSON
 // POST /sessions/:id/threads/:thread_id/fork    — fork a thread
 // GET  /sessions/:id/threads/:thread_id/export  — export thread as JSON
-// POST /sessions/:id/threads/import             — import thread from JSON
 
 use std::sync::Arc;
 
@@ -19,7 +17,6 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use sacp::schema::NewSessionRequest;
 use serde::Deserialize;
 
 use crate::acp_bridge::{
@@ -36,7 +33,6 @@ use super::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/sessions/:id/threads", get(list_threads))
-        .route("/sessions/:id/threads/new", axum::routing::post(create_thread))
         .route("/sessions/:id/threads/import", axum::routing::post(import_thread))
         .route(
             "/sessions/:id/threads/:thread_id/fork",
@@ -152,35 +148,6 @@ async fn list_threads(
     let managed = get_managed_session(&state, &session_id).await?;
     let items: Vec<SessionListItem> = handle_list_sessions(&managed.cx).await?;
     Ok(Json(items))
-}
-
-// ── POST /sessions/:id/threads/new ──────────────────────────────────────────
-
-async fn create_thread(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> Result<impl IntoResponse> {
-    let managed = get_managed_session(&state, &session_id).await?;
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-
-    let resp = managed
-        .cx
-        .send_request(NewSessionRequest::new("/"))
-        .block_task()
-        .await
-        .map_err(|e| AppError::Session(format!("NewSession ACP error: {e}")))?;
-
-    *managed.acp_session_id.lock().await = Some(resp.session_id.clone());
-
-    tracing::info!(
-        session_id = %session_id,
-        thread_id = %resp.session_id.0,
-        "new thread created"
-    );
-
-    Ok((StatusCode::CREATED, Json(serde_json::json!({
-        "thread_id": resp.session_id.0,
-    }))))
 }
 
 // ── POST /sessions/:id/threads/:thread_id/fork ────────────────────────────

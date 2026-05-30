@@ -16,7 +16,7 @@ This error can arrive from **any** endpoint at **any** time — not just at star
 | User opens Sessions tab | `GET /sessions/:id/threads` | `loadSessionList()` in SessionsTab |
 | User sends a message | `POST /sessions/:id/input` | `handleSend()` in chat-page |
 | User forks a thread | `POST /sessions/:id/threads/:tid/fork` | SessionsTab |
-| User creates new thread | `POST /sessions/:id/threads/new` | `newSession()` in chat-page |
+| User creates new thread | `POST /sessions/:id/spawn` (action: "new") | `newSession()` in chat-page |
 | User reads files | `GET /files/student/:id/...` | FileDrawer |
 
 Scattering `isSessionDead()` checks in every caller is fragile and unmaintainable.
