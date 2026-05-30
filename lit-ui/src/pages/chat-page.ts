@@ -59,6 +59,7 @@ export class ChatPage extends LitElement {
   private activeModelId = "grok-4-1-fast-reasoning";
   private activeModelDisplayName = "grok-4-1-fast-reasoning";
   private _isRefreshing = false;
+  private _currentRequestId: string | null = null;
 
   createRenderRoot() {
     return this;
@@ -291,8 +292,14 @@ export class ChatPage extends LitElement {
     }
   }
 
-  private async handleSend(text: string) {
+  private async handleSend(text: string, reuseRequestId?: string) {
     if (this.isStreaming) return;
+
+    // Generate request_id once per user send, reuse on retry
+    const requestId = reuseRequestId || crypto.randomUUID();
+    this._currentRequestId = requestId;
+    const MAX_IN_FLIGHT_RETRIES = 15;
+    let inFlightRetries = 0;
 
     const userMsg: BackendUserMessage = {
       role: "user",
@@ -328,6 +335,9 @@ export class ChatPage extends LitElement {
       this.sessionId,
       this.sessionToken,
       text,
+      undefined,       // image
+      undefined,       // mimeType
+      requestId,       // NEW: per-request idempotency key
     );
     this.currentAbort = abort;
 
@@ -599,6 +609,27 @@ export class ChatPage extends LitElement {
     } catch (err) {
       console.error("[sse-stream] Stream error:", err);
       const e = classifyError(err);
+      if (e.code === ErrorCode.REQUEST_IN_FLIGHT && inFlightRetries < MAX_IN_FLIGHT_RETRIES) {
+        // Backend is still processing — retry with backoff
+        inFlightRetries++;
+        console.log(`[sse-stream] Request in-flight, retrying in 2s... (${inFlightRetries}/${MAX_IN_FLIGHT_RETRIES})`);
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.updateUI();
+        await new Promise(r => setTimeout(r, 2000));
+        this.handleSend(text, requestId);
+        return;
+      }
+      if (e.code === ErrorCode.REQUEST_IN_FLIGHT || e.code === ErrorCode.REQUEST_FAILED) {
+        // Max retries exhausted or hard failure — generate new requestId
+        console.log("[sse-stream] Request idempotency exhausted/failed, retrying with new requestId");
+        this._currentRequestId = null;
+        this.isStreaming = false;
+        this.streamingMessage = null;
+        this.updateUI();
+        this.handleSend(text); // generates new requestId
+        return;
+      }
       if (!receivedAnyFrame && (e.code === ErrorCode.SESSION_NOT_FOUND || e.code === ErrorCode.SESSION_NOT_ACTIVE || e.code === ErrorCode.GOOSE_DEAD)) {
         needsRetry = true;
         streamEnded = true;
@@ -631,14 +662,14 @@ export class ChatPage extends LitElement {
       this.streamingMessage = null;
       if (retrySameRequest) {
         console.log("[sse-stream] Retrying same request in same session");
-        this.handleSend(text);
+        this.handleSend(text, requestId);
         return;
       }
       console.log("[sse-stream] Refreshing session for retry...");
       const refreshed = await this.handleSessionRefresh();
       if (refreshed) {
         console.log("[sse-stream] Retrying message with new session:", refreshed.sessionId);
-        this.handleSend(text);
+        this.handleSend(text); // new requestId for new session
       }
       return;
     }
@@ -660,6 +691,7 @@ export class ChatPage extends LitElement {
     eduApi.cancelInput(this.sessionId, this.sessionToken).catch((err) => {
       handleError(err);
     });
+    this._currentRequestId = null;  // Never retry a cancelled request
     this.isStreaming = false;
     this.streamingMessage = null;
     this.updateUI();

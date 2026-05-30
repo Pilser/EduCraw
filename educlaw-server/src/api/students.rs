@@ -72,6 +72,9 @@ async fn create_student(
         restriction_message: None,
         restriction_status: None,
         last_model: None,
+        last_request_id: None,
+        last_request_state: None,
+        last_request_started_at: None,
     };
 
     state.backend.insert_student(&student).await?;

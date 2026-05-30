@@ -6,7 +6,7 @@
 // initialization + session-creation handshake, and returns the ready
 // `(ConnectionTo<SacpAgent>, SessionId)` pair for use by the session loop.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,9 +24,11 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::db::DbBackend;
 use crate::error::{AppError, Result};
+use crate::session::registry::{RequestDedupeEntry, RequestState};
 
 use super::notifications::notification_to_frames;
 use super::permissions::auto_approve;
+use chrono::Utc;
 
 /// Spawns the sacp Client task, performs the ACP handshake (Initialize only).
 /// Returns connection, session_id holder (None initially - set by LoadSession or first Prompt),
@@ -49,6 +51,7 @@ pub async fn spawn_sacp_client(
     frame_counter: Arc<AtomicU64>,
     buffer_last_written: Arc<Mutex<Instant>>,
     buffer_on_disconnect_only: Arc<AtomicBool>,
+    request_dedupe: Arc<Mutex<HashMap<String, RequestDedupeEntry>>>,
 ) -> Result<(ConnectionTo<SacpAgent>, Arc<tokio::sync::Mutex<Option<SessionId>>>, Vec<String>)> {
     let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
@@ -86,6 +89,9 @@ pub async fn spawn_sacp_client(
     let frame_counter_clone = frame_counter.clone();
     let buffer_last_written_clone = buffer_last_written.clone();
     let buffer_on_disconnect_only_clone = buffer_on_disconnect_only.clone();
+    let request_dedupe_clone = request_dedupe.clone();
+    let student_id_notif = student_id.clone();
+    let backend_notif = backend.clone();
 
     // Clone values needed inside connect_with
     let backend_init = backend.clone();
@@ -107,6 +113,9 @@ pub async fn spawn_sacp_client(
                     let frame_counter = frame_counter_clone.clone();
                     let buffer_last_written = buffer_last_written_clone.clone();
                     let buffer_on_disconnect_only = buffer_on_disconnect_only_clone.clone();
+                    let request_dedupe_inner = request_dedupe_clone.clone();
+                    let student_id_inner = student_id_notif.clone();
+                    let backend_inner = backend_notif.clone();
                     async move |notif: SessionNotification, _cx| {
                         let _session_id = notif.session_id.0.to_string(); // ACP session ID (not used for DB)
 
@@ -162,6 +171,26 @@ pub async fn spawn_sacp_client(
                         if let Ok(sender) = tx.try_lock() {
                             if let Err(_e) = sender.try_send(frames) {
                                 tracing::debug!("SSE notification channel full — frame dropped");
+                            }
+                        }
+
+                        // Transition in_flight → streaming on first Goose notification
+                        {
+                            let mut dedupe = request_dedupe_inner.lock().await;
+                            for (request_id, entry) in dedupe.iter_mut() {
+                                if matches!(entry.state, RequestState::InFlight) {
+                                    entry.state = RequestState::Streaming;
+                                    entry.cancel_token.cancel();
+                                    let now = Utc::now().to_rfc3339();
+                                    let _ = backend_inner.set_last_request(
+                                        &student_id_inner, request_id, "streaming", &now,
+                                    ).await;
+                                    tracing::info!(
+                                        request_id = %request_id,
+                                        "✓ [IDEMPOTENCY] Goose started producing — timeout cancelled, state → streaming"
+                                    );
+                                    break;
+                                }
                             }
                         }
 

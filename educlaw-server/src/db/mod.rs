@@ -70,6 +70,9 @@ pub trait DbBackend: Send + Sync {
     async fn set_last_model(&self, id: &str, model: &str) -> BackendResult<()>;
     async fn set_recent_thread_id(&self, id: &str, thread_id: &str) -> BackendResult<()>;
     async fn get_recent_thread_id(&self, id: &str) -> BackendResult<Option<String>>;
+    async fn set_last_request(&self, student_id: &str, request_id: &str, state: &str, started_at: &str) -> BackendResult<()>;
+    async fn get_last_request(&self, student_id: &str) -> BackendResult<Option<(String, String, String)>>;
+    async fn clear_last_request(&self, student_id: &str) -> BackendResult<()>;
     async fn get_token_balance(&self, id: &str) -> BackendResult<i64>;
     async fn deduct_tokens(&self, id: &str, amount: i64) -> BackendResult<i64>;
     async fn topup_tokens(&self, id: &str, amount: i64) -> BackendResult<i64>;
@@ -150,6 +153,9 @@ impl DbBackend for HelixBackend {
     async fn set_last_model(&self, id: &str, model: &str) -> BackendResult<()> { self._set_last_model(id, model).await }
     async fn set_recent_thread_id(&self, id: &str, thread_id: &str) -> BackendResult<()> { self._set_recent_thread_id(id, thread_id).await }
     async fn get_recent_thread_id(&self, id: &str) -> BackendResult<Option<String>> { self._get_recent_thread_id(id).await }
+    async fn set_last_request(&self, student_id: &str, request_id: &str, state: &str, started_at: &str) -> BackendResult<()> { self._set_last_request(student_id, request_id, state, started_at).await }
+    async fn get_last_request(&self, student_id: &str) -> BackendResult<Option<(String, String, String)>> { self._get_last_request(student_id).await }
+    async fn clear_last_request(&self, student_id: &str) -> BackendResult<()> { self._clear_last_request(student_id).await }
     async fn get_token_balance(&self, id: &str) -> BackendResult<i64> { self._get_token_balance(id).await }
     async fn deduct_tokens(&self, id: &str, amount: i64) -> BackendResult<i64> { self._deduct_tokens(id, amount).await }
     async fn topup_tokens(&self, id: &str, amount: i64) -> BackendResult<i64> { self._topup_tokens(id, amount).await }

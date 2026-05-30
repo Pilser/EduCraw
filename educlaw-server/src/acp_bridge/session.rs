@@ -7,7 +7,7 @@
 //   handle_cancel      — send CancelNotification to goose
 //   handle_replay_sse  — load historical thread, replay as SSE
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -19,13 +19,15 @@ use sacp::schema::{
     StopReason, TextContent,
 };
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
+use chrono::Utc;
 
 use crate::db::DbBackend;
 use crate::db::TurnTokens;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
 use crate::session::namespace::{build_pivot_root_script, session_ip_block, setup_veth_pair};
-use crate::session::registry::{ManagedSession, SessionRegistry};
+use crate::session::registry::{ManagedSession, RequestDedupeEntry, RequestState, SessionRegistry};
 
 use super::client::spawn_sacp_client;
 use super::commands::handle_load_session as acp_handle_load_session;
@@ -225,6 +227,16 @@ pub async fn init_acp_session(
     let buffer_last_written = Arc::new(Mutex::new(Instant::now()));
     let buffer_on_disconnect_only = Arc::new(AtomicBool::new(false));
 
+    // Per-request idempotency dedupe table (shared with on_receive_notification callback)
+    let request_dedupe: Arc<Mutex<HashMap<String, RequestDedupeEntry>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let request_timeout = Duration::from_secs(
+        std::env::var("EDUCLAW_REQUEST_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60),
+    );
+
     // Resolve provider
     let provider = match &model {
         Some(model_name) => {
@@ -254,6 +266,7 @@ pub async fn init_acp_session(
         frame_counter.clone(),
         buffer_last_written.clone(),
         buffer_on_disconnect_only.clone(),
+        request_dedupe.clone(),
     )
     .await?;
 
@@ -293,6 +306,8 @@ pub async fn init_acp_session(
         frame_counter,
         buffer_last_written,
         buffer_on_disconnect_only,
+        request_dedupe,
+        request_timeout,
     );
     registry.register(session_id.clone(), managed).await;
 
@@ -307,6 +322,7 @@ pub async fn handle_input_sse(
     data: String,
     image: Option<String>,
     mime_type: Option<String>,
+    request_id: Option<String>,
     backend: Arc<dyn DbBackend>,
     student_id: &str,
     workspace: &PathBuf,
@@ -373,6 +389,150 @@ pub async fn handle_input_sse(
         let _ = sse_tx.send(SseEvent::Text(frame)).await;
         let _ = sse_tx.send(SseEvent::Close).await;
         return Ok(SseEventStream { rx: sse_rx });
+    }
+
+    // ── Request Idempotency Dedupe Gate ─────────────────────
+    if let Some(ref rid) = request_id {
+        let mut dedupe = managed.request_dedupe.lock().await;
+
+        // Check in-memory dedupe table
+        if let Some(entry) = dedupe.get(rid) {
+            match entry.state {
+                RequestState::InFlight | RequestState::Streaming => {
+                    if managed.buffered_len().await > 0 {
+                        // Resume path — drop lock, fall through to buffer replay below
+                        drop(dedupe);
+                    } else {
+                        return Err(AppError::RequestInFlight(
+                            format!("request {rid} is still in-flight; retry later")
+                        ));
+                    }
+                }
+                RequestState::Completed => {
+                    let frames = entry.final_frames.clone();
+                    drop(dedupe);
+                    let (sse_tx, sse_rx) = mpsc::channel::<SseEvent>(4);
+                    for frame_text in &frames {
+                        let _ = sse_tx.send(SseEvent::Text(frame_text.clone())).await;
+                    }
+                    let _ = sse_tx.send(SseEvent::Close).await;
+                    return Ok(SseEventStream { rx: sse_rx });
+                }
+                RequestState::Failed => {
+                    return Err(AppError::RequestFailed(
+                        format!("request {rid} previously failed; use a new request_id")
+                    ));
+                }
+            }
+        } else {
+            // Cold-recovery: check HelixDB (after restart, in-memory is empty)
+            if let Ok(Some((db_rid, db_state, _db_started_at))) = managed.backend.get_last_request(&managed.student_id).await {
+                if db_rid == *rid {
+                    match db_state.as_str() {
+                        "in_flight" | "streaming" => {
+                            // Goose process is gone after restart — treat as failed
+                            dedupe.insert(rid.clone(), RequestDedupeEntry {
+                                state: RequestState::Failed,
+                                started_at: Instant::now(),
+                                final_frames: vec![],
+                                buffer_start_index: None,
+                                cancel_token: CancellationToken::new(),
+                            });
+                            let _ = managed.backend.clear_last_request(&managed.student_id).await;
+                            drop(dedupe);
+                            return Err(AppError::RequestFailed(
+                                "request lost after backend restart; use a new request_id".into()
+                            ));
+                        }
+                        "completed" => {
+                            drop(dedupe);
+                            return Err(AppError::RequestInFlight(
+                                "request completed — re-query from thread replay".into()
+                            ));
+                        }
+                        "failed" => {
+                            drop(dedupe);
+                            return Err(AppError::RequestFailed(
+                                "request previously failed; use a new request_id".into()
+                            ));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // Different request_id in DB — stale, clear it
+                    let _ = managed.backend.clear_last_request(&managed.student_id).await;
+                }
+            }
+
+            // Guard: reject new request if another is in-flight
+            let has_in_flight = dedupe.values().any(|e| matches!(
+                e.state, RequestState::InFlight | RequestState::Streaming
+            ));
+            if has_in_flight {
+                return Err(AppError::Conflict(
+                    "a request is already in progress; wait for it to complete".into()
+                ));
+            }
+
+            // Prune old completed entries (keep last 5 min)
+            dedupe.retain(|_, e| {
+                if matches!(e.state, RequestState::Completed) {
+                    e.started_at.elapsed() < Duration::from_secs(300)
+                } else {
+                    true
+                }
+            });
+
+            // First time seeing this request_id — create entry
+            let cancel_token = CancellationToken::new();
+            dedupe.insert(rid.clone(), RequestDedupeEntry {
+                state: RequestState::InFlight,
+                started_at: Instant::now(),
+                final_frames: vec![],
+                buffer_start_index: Some(managed.buffered_len().await),
+                cancel_token: cancel_token.clone(),
+            });
+
+            // Persist to HelixDB
+            let now_iso = Utc::now().to_rfc3339();
+            let _ = managed.backend.set_last_request(
+                &managed.student_id, rid, "in_flight", &now_iso
+            ).await;
+
+            // Spawn timeout task with cancellation token
+            let managed_timeout = managed.clone();
+            let rid_timeout = rid.clone();
+            let timeout_dur = managed.request_timeout;
+            let backend_timeout = managed.backend.clone();
+            let student_id_timeout = managed.student_id.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => {}
+                    _ = tokio::time::sleep(timeout_dur) => {
+                        let mut dedupe = managed_timeout.request_dedupe.lock().await;
+                        if let Some(entry) = dedupe.get_mut(&rid_timeout) {
+                            if matches!(entry.state, RequestState::InFlight) {
+                                entry.state = RequestState::Failed;
+                                let now = Utc::now().to_rfc3339();
+                                let _ = backend_timeout.set_last_request(
+                                    &student_id_timeout, &rid_timeout, "failed", &now,
+                                ).await;
+                                tracing::warn!(
+                                    request_id = %rid_timeout,
+                                    "⏰ [IDEMPOTENCY] Request timed out — marked as failed"
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+
+            drop(dedupe);
+        }
+
+        // If we're here via the InFlight resume path, set current_request_id
+        // so the prompt task can update state on completion
+        // (handled below in the PromptResponse section)
     }
 
     last_input_at.store(now_secs(), Ordering::Relaxed);
@@ -497,6 +657,7 @@ pub async fn handle_input_sse(
     let backend_for_prompt = backend.clone();
     let student_id_for_prompt = student_id.to_string();
     let managed_prompt = managed.clone();
+    let request_id_prompt = request_id.clone();
 
     tokio::spawn(async move {
         let sid_prompt = {
@@ -624,6 +785,9 @@ pub async fn handle_input_sse(
             }
         }
 
+        // Determine result type before moving resp into the frame match
+        let is_end_turn = matches!(&resp, Ok(r) if matches!(r.stop_reason, StopReason::EndTurn | StopReason::Cancelled));
+
         let frame = match resp {
             Ok(r) => {
                 match r.stop_reason {
@@ -652,6 +816,44 @@ pub async fn handle_input_sse(
                 .await
             }
         };
+
+        // ── Update dedupe state (completed / failed) ──────────
+        if let Some(ref rid) = request_id_prompt {
+            let mut dedupe = managed_prompt.request_dedupe.lock().await;
+            if let Some(entry) = dedupe.get_mut(rid) {
+                // Don't overwrite a cancel-set Failed state
+                if matches!(entry.state, RequestState::Failed) {
+                    tracing::info!(
+                        request_id = %rid,
+                        "🛑 [IDEMPOTENCY] PromptResponse received but request was already failed (cancel)"
+                    );
+                } else {
+                    if is_end_turn {
+                        entry.state = RequestState::Completed;
+                        let frame_text = frame.clone();
+                        entry.final_frames.push(frame_text);
+                        let now = Utc::now().to_rfc3339();
+                        let _ = backend_for_prompt.set_last_request(
+                            &student_id_for_prompt, rid, "completed", &now,
+                        ).await;
+                        tracing::info!(
+                            request_id = %rid,
+                            "✓ [IDEMPOTENCY] Request completed"
+                        );
+                    } else {
+                        entry.state = RequestState::Failed;
+                        let now = Utc::now().to_rfc3339();
+                        let _ = backend_for_prompt.set_last_request(
+                            &student_id_for_prompt, rid, "failed", &now,
+                        ).await;
+                        tracing::info!(
+                            request_id = %rid,
+                            "✗ [IDEMPOTENCY] Request failed"
+                        );
+                    }
+                }
+            }
+        }
         if sse_tx_prompt.send(SseEvent::Text(frame)).await.is_err() {
             tracing::warn!(
                 session_id = %session_id_for_prompt,
@@ -673,6 +875,24 @@ pub async fn handle_cancel(
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(format!("session {session_id} not found")))?;
+
+    // ── Clear dedupe state for any in-flight request ──────────
+    {
+        let mut dedupe = managed.request_dedupe.lock().await;
+        let now = Utc::now().to_rfc3339();
+        for (request_id, entry) in dedupe.iter_mut() {
+            if matches!(entry.state, RequestState::InFlight | RequestState::Streaming) {
+                entry.state = RequestState::Failed;
+                let _ = managed.backend.set_last_request(
+                    &managed.student_id, request_id, "failed", &now,
+                ).await;
+                tracing::info!(
+                    request_id = %request_id,
+                    "🛑 [IDEMPOTENCY] Request marked failed by cancel"
+                );
+            }
+        }
+    }
 
     let Some(sid) = managed.acp_session_id.lock().await.clone() else {
         return Ok(()); // No active session to cancel — no-op

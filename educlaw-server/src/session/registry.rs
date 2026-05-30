@@ -12,6 +12,26 @@ use std::time::{Duration, Instant};
 use crate::db::DbBackend;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+/// State machine for a single request_id in the dedupe table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestState {
+    InFlight,
+    Streaming,
+    Completed,
+    Failed,
+}
+
+/// Per-request entry in the in-memory dedupe table.
+#[derive(Debug, Clone)]
+pub struct RequestDedupeEntry {
+    pub state: RequestState,
+    pub started_at: Instant,
+    pub final_frames: Vec<String>,
+    pub buffer_start_index: Option<usize>,
+    pub cancel_token: CancellationToken,
+}
 
 /// A session that can survive multiple WebSocket connections.
 /// Stored in the registry and accessed when WebSocket connects/disconnects.
@@ -52,6 +72,10 @@ pub struct ManagedSession {
 
     // Path needed to restart the model-switch poller on reconnect
     pub session_config_dir: PathBuf,
+
+    // ── Request idempotency ───────────────────────────────────
+    pub request_dedupe: Arc<Mutex<HashMap<String, RequestDedupeEntry>>>,
+    pub request_timeout: Duration,
 }
 
 impl ManagedSession {
@@ -76,6 +100,8 @@ impl ManagedSession {
         frame_counter: Arc<AtomicU64>,
         buffer_last_written: Arc<Mutex<Instant>>,
         buffer_on_disconnect_only: Arc<AtomicBool>,
+        request_dedupe: Arc<Mutex<HashMap<String, RequestDedupeEntry>>>,
+        request_timeout: Duration,
     ) -> Self {
         Self {
             cx,
@@ -96,6 +122,8 @@ impl ManagedSession {
             student_id,
             backend,
             session_config_dir,
+            request_dedupe,
+            request_timeout,
         }
     }
 

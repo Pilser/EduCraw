@@ -534,11 +534,12 @@ export const eduApi = {
     data: string,
     image?: string,
     mimeType?: string,
+    requestId?: string,
   ): { events: AsyncIterable<SseEvent>; abort: () => void } {
     return sseStream(`${BASE}/sessions/${sessionId}/input`, {
       method: "POST",
       headers: authHeader(token),
-      body: JSON.stringify({ data, image, mime_type: mimeType }),
+      body: JSON.stringify({ data, image, mime_type: mimeType, request_id: requestId }),
     });
   },
 

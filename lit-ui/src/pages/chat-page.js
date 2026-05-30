@@ -44,6 +44,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
         this._isRefreshing = false;
+        this._currentRequestId = null;
         this._onSessionDeadBound = (e) => this.onSessionDead(e);
     }
     createRenderRoot() {
@@ -236,9 +237,14 @@ let ChatPage = class ChatPage extends LitElement {
             console.warn("[chat-page] Failed to auto-resume recent thread (non-fatal):", err);
         }
     }
-    async handleSend(text) {
+    async handleSend(text, reuseRequestId) {
         if (this.isStreaming)
             return;
+        // Generate request_id once per user send, reuse on retry
+        const requestId = reuseRequestId || crypto.randomUUID();
+        this._currentRequestId = requestId;
+        const MAX_IN_FLIGHT_RETRIES = 15;
+        let inFlightRetries = 0;
         const userMsg = {
             role: "user",
             content: text,
@@ -262,13 +268,27 @@ let ChatPage = class ChatPage extends LitElement {
         let streamEnded = false;
         let needsRetry = false;
         let receivedAnyFrame = false;
-        const { events, abort } = eduApi.sendInput(this.sessionId, this.sessionToken, text);
+        let retrySameRequest = false;
+        let bufferDrained = false;
+        const receivedFrameIds = new Set();
+        const { events, abort } = eduApi.sendInput(this.sessionId, this.sessionToken, text, undefined, // image
+        undefined, // mimeType
+        requestId);
         this.currentAbort = abort;
         const processEvent = (ev) => {
             if (streamEnded)
                 return;
             const frame = ev.data;
             const frameType = ev.event;
+            receivedAnyFrame = true;
+            const frameId = typeof frame?.id === "number" ? frame.id : undefined;
+            if (frameId !== undefined) {
+                if (receivedFrameIds.has(frameId)) {
+                    console.log(`[sse-stream] Skipping duplicate frame id=${frameId}`);
+                    return;
+                }
+                receivedFrameIds.add(frameId);
+            }
             if (frameType !== "token_usage") {
                 console.log("[sse-stream] frame:", frameType, frameType === "assistant_text"
                     ? `"${frame.text.slice(0, 40)}..."`
@@ -276,7 +296,6 @@ let ChatPage = class ChatPage extends LitElement {
             }
             switch (frameType) {
                 case "chat_start":
-                    receivedAnyFrame = true;
                     if (this.showLanding) {
                         this.showLanding = false;
                         this.requestUpdate();
@@ -292,6 +311,8 @@ let ChatPage = class ChatPage extends LitElement {
                     break;
                 }
                 case "chat_end": {
+                    if (streamEnded)
+                        break;
                     currentThinkingBlock = null;
                     if (currentTextBlock) {
                         // Flush current text block if needed
@@ -435,6 +456,8 @@ let ChatPage = class ChatPage extends LitElement {
                     break;
                 }
                 case "chat_error": {
+                    if (streamEnded)
+                        break;
                     const e = classifySseFrame("chat_error", frame);
                     if (e)
                         handleError(e);
@@ -449,6 +472,8 @@ let ChatPage = class ChatPage extends LitElement {
                     break;
                 }
                 case "restriction": {
+                    if (streamEnded)
+                        break;
                     const e = classifySseFrame("restriction", frame);
                     if (e)
                         handleError(e);
@@ -458,6 +483,17 @@ let ChatPage = class ChatPage extends LitElement {
                     this.streamingMessage = null;
                     this.messages = [...this.messages, assistantMsg];
                     this.updateUI();
+                    streamEnded = true;
+                    break;
+                }
+                case "buffer_drained": {
+                    const e = classifySseFrame("buffer_drained", frame);
+                    if (e)
+                        handleError(e);
+                    console.log("[sse-stream] Buffer timed out on backend; reloading thread state");
+                    bufferDrained = true;
+                    this.isStreaming = false;
+                    this.streamingMessage = null;
                     streamEnded = true;
                     break;
                 }
@@ -491,8 +527,35 @@ let ChatPage = class ChatPage extends LitElement {
         catch (err) {
             console.error("[sse-stream] Stream error:", err);
             const e = classifyError(err);
+            if (e.code === ErrorCode.REQUEST_IN_FLIGHT && inFlightRetries < MAX_IN_FLIGHT_RETRIES) {
+                // Backend is still processing — retry with backoff
+                inFlightRetries++;
+                console.log(`[sse-stream] Request in-flight, retrying in 2s... (${inFlightRetries}/${MAX_IN_FLIGHT_RETRIES})`);
+                this.isStreaming = false;
+                this.streamingMessage = null;
+                this.updateUI();
+                await new Promise(r => setTimeout(r, 2000));
+                this.handleSend(text, requestId);
+                return;
+            }
+            if (e.code === ErrorCode.REQUEST_IN_FLIGHT || e.code === ErrorCode.REQUEST_FAILED) {
+                // Max retries exhausted or hard failure — generate new requestId
+                console.log("[sse-stream] Request idempotency exhausted/failed, retrying with new requestId");
+                this._currentRequestId = null;
+                this.isStreaming = false;
+                this.streamingMessage = null;
+                this.updateUI();
+                this.handleSend(text); // generates new requestId
+                return;
+            }
             if (!receivedAnyFrame && (e.code === ErrorCode.SESSION_NOT_FOUND || e.code === ErrorCode.SESSION_NOT_ACTIVE || e.code === ErrorCode.GOOSE_DEAD)) {
                 needsRetry = true;
+                streamEnded = true;
+            }
+            else if (receivedAnyFrame && e.retryable) {
+                console.log("[sse-stream] Retryable mid-stream error; retrying same request");
+                needsRetry = true;
+                retrySameRequest = true;
                 streamEnded = true;
             }
             else if (!streamEnded) {
@@ -517,11 +580,23 @@ let ChatPage = class ChatPage extends LitElement {
             this.messages = this.messages.filter((m) => m.role !== "assistant" || m.content?.length);
             this.isStreaming = false;
             this.streamingMessage = null;
+            if (retrySameRequest) {
+                console.log("[sse-stream] Retrying same request in same session");
+                this.handleSend(text, requestId);
+                return;
+            }
             console.log("[sse-stream] Refreshing session for retry...");
             const refreshed = await this.handleSessionRefresh();
             if (refreshed) {
                 console.log("[sse-stream] Retrying message with new session:", refreshed.sessionId);
-                this.handleSend(text);
+                this.handleSend(text); // new requestId for new session
+            }
+            return;
+        }
+        if (bufferDrained) {
+            const recentThreadId = this.lastLoadedThreadId || SessionManager.loadLastThreadId(this.sessionId);
+            if (recentThreadId) {
+                await this.loadSessionById(recentThreadId);
             }
         }
     }
@@ -534,6 +609,7 @@ let ChatPage = class ChatPage extends LitElement {
         eduApi.cancelInput(this.sessionId, this.sessionToken).catch((err) => {
             handleError(err);
         });
+        this._currentRequestId = null; // Never retry a cancelled request
         this.isStreaming = false;
         this.streamingMessage = null;
         this.updateUI();

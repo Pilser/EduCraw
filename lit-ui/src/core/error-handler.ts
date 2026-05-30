@@ -61,6 +61,10 @@ export const ErrorCode = {
   SERVER_ERROR: "SERVER_ERROR",
   IO_ERROR: "IO_ERROR",
 
+  // Request Idempotency (7xx)
+  REQUEST_IN_FLIGHT: "REQUEST_IN_FLIGHT",
+  REQUEST_FAILED: "REQUEST_FAILED",
+
   // Unknown
   UNKNOWN: "UNKNOWN",
 } as const;
@@ -157,6 +161,8 @@ function classifyByCode(code: string, message: string, status: number | undefine
     case "BAD_REQUEST": return makeError(ErrorCode.BAD_REQUEST, message || "Bad request", { status, retryable: false, raw });
     case "CONFLICT": return makeError(ErrorCode.USERNAME_TAKEN, message || "Conflict", { status, retryable: false, raw });
     case "RESTRICTED": return makeError(ErrorCode.RESTRICTED, message || "Account restricted", { status, retryable: false, raw });
+    case "REQUEST_IN_FLIGHT": return makeError(ErrorCode.REQUEST_IN_FLIGHT, message || "Request still in-flight", { status, retryable: true, raw });
+    case "REQUEST_FAILED": return makeError(ErrorCode.REQUEST_FAILED, message || "Request previously failed", { status, retryable: false, raw });
     default: return makeError(ErrorCode.UNKNOWN, message || `Unknown code: ${code}`, { status, retryable: false, raw });
   }
 }
@@ -186,7 +192,15 @@ function classifyByStatus(status: number, message: string, raw: unknown): AppErr
     }
     return makeError(ErrorCode.BAD_REQUEST, message || "Bad request", { status, retryable: false, raw });
   }
-  if (status === 409) return makeError(ErrorCode.USERNAME_TAKEN, message || "Conflict", { status, retryable: false, raw });
+  if (status === 409) {
+    if (message.toLowerCase().includes("in-flight") || message.toLowerCase().includes("in_flight")) {
+      return makeError(ErrorCode.REQUEST_IN_FLIGHT, message || "Request in-flight", { status, retryable: true, raw });
+    }
+    if (message.toLowerCase().includes("request") && message.toLowerCase().includes("fail")) {
+      return makeError(ErrorCode.REQUEST_FAILED, message || "Request failed", { status, retryable: false, raw });
+    }
+    return makeError(ErrorCode.USERNAME_TAKEN, message || "Conflict", { status, retryable: false, raw });
+  }
   if (status >= 500) return makeError(ErrorCode.SERVER_ERROR, message || "Server error", { status, retryable: true, raw });
   return makeError(ErrorCode.UNKNOWN, message || `HTTP ${status}`, { status, retryable: false, raw });
 }
@@ -268,6 +282,12 @@ export function handleError(err: unknown): AppError {
     case ErrorCode.CONNECTION_RESET:
     case ErrorCode.TIMEOUT:
       dispatch("network-error", e);
+      break;
+
+    // Request idempotency errors → dispatched for chat-page retry logic
+    case ErrorCode.REQUEST_IN_FLIGHT:
+    case ErrorCode.REQUEST_FAILED:
+      dispatch("request-idempotency", e);
       break;
 
     // Server errors → server-error (optional listener)

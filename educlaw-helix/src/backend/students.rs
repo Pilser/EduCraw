@@ -148,6 +148,123 @@ impl crate::client::HelixClient {
         Ok(thread_id)
     }
 
+    pub async fn _set_last_request(&self, student_id: &str, request_id: &str, state: &str, started_at: &str) -> Result<()> {
+        let body = serde_json::json!({
+            "request_type": "write",
+            "query": {
+                "queries": [{
+                    "Query": {
+                        "name": "student",
+                        "steps": [
+                            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+                            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+                            {"SetProperty": ["last_request_id", {"Expr": {"Param": "request_id"}}]},
+                            {"SetProperty": ["last_request_state", {"Expr": {"Param": "state"}}]},
+                            {"SetProperty": ["last_request_started_at", {"Expr": {"Param": "started_at"}}]}
+                        ],
+                        "condition": null
+                    }
+                }],
+                "returns": ["student"]
+            },
+            "parameters": {
+                "student_id": student_id,
+                "request_id": request_id,
+                "state": state,
+                "started_at": started_at
+            },
+            "parameter_types": {
+                "student_id": "String",
+                "request_id": "String",
+                "state": "String",
+                "started_at": "String"
+            }
+        });
+        self.raw_query(body).await?;
+        Ok(())
+    }
+
+    pub async fn _get_last_request(&self, student_id: &str) -> Result<Option<(String, String, String)>> {
+        let body = serde_json::json!({
+            "request_type": "read",
+            "query": {
+                "queries": [{
+                    "Query": {
+                        "name": "student",
+                        "steps": [
+                            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+                            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+                            {"ValueMap": ["last_request_id", "last_request_state", "last_request_started_at"]}
+                        ],
+                        "condition": null
+                    }
+                }],
+                "returns": ["student"]
+            },
+            "parameters": {
+                "student_id": student_id
+            },
+            "parameter_types": {
+                "student_id": "String"
+            }
+        });
+        let resp = self.raw_query(body).await?;
+        let props = resp
+            .get("student")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first());
+        let request_id = props
+            .and_then(|v| v.get("last_request_id"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        let state = props
+            .and_then(|v| v.get("last_request_state"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        let started_at = props
+            .and_then(|v| v.get("last_request_started_at"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        match (request_id, state, started_at) {
+            (Some(id), Some(st), Some(at)) => Ok(Some((id, st, at))),
+            _ => Ok(None),
+        }
+    }
+
+    pub async fn _clear_last_request(&self, student_id: &str) -> Result<()> {
+        let body = serde_json::json!({
+            "request_type": "write",
+            "query": {
+                "queries": [{
+                    "Query": {
+                        "name": "student",
+                        "steps": [
+                            {"NWhere": {"Eq": ["$label", {"String": "Student"}]}},
+                            {"Where": {"Compare": {"left": {"Property": "id"}, "op": "Eq", "right": {"Param": "student_id"}}}},
+                            {"SetProperty": ["last_request_id", {"Expr": {"String": ""}}]},
+                            {"SetProperty": ["last_request_state", {"Expr": {"String": ""}}]},
+                            {"SetProperty": ["last_request_started_at", {"Expr": {"String": ""}}]}
+                        ],
+                        "condition": null
+                    }
+                }],
+                "returns": ["student"]
+            },
+            "parameters": {
+                "student_id": student_id
+            },
+            "parameter_types": {
+                "student_id": "String"
+            }
+        });
+        self.raw_query(body).await?;
+        Ok(())
+    }
+
     pub async fn _get_token_balance(&self, id: &str) -> Result<i64> {
         let resp = self.read("get_token_balance", QueryParams::new().add("student_id", id)).await?;
         resp.get("student").and_then(|v| v.get("properties")).and_then(|v| v.as_array()).and_then(|arr| arr.first()).and_then(|v| v.get("token_balance")).and_then(|v| v.as_i64())

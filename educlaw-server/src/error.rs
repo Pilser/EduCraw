@@ -44,6 +44,12 @@ pub enum AppError {
     #[error("restricted: {0}")]
     Restricted(String),
 
+    #[error("request in-flight: {0}")]
+    RequestInFlight(String),
+
+    #[error("request failed: {0}")]
+    RequestFailed(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -70,6 +76,8 @@ impl AppError {
             Self::BufferTimedOut(_) => "BUFFER_TIMED_OUT",
             Self::BufferDrained(_) => "BUFFER_DRAINED",
             Self::Restricted(_) => "RESTRICTED",
+            Self::RequestInFlight(_) => "REQUEST_IN_FLIGHT",
+            Self::RequestFailed(_) => "REQUEST_FAILED",
             Self::Io(_) => "IO_ERROR",
             Self::Helix(_) => "HELIX_ERROR",
             Self::Internal(_) => "INTERNAL_ERROR",
@@ -92,6 +100,8 @@ impl IntoResponse for AppError {
             AppError::BufferTimedOut(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::BufferDrained(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Restricted(msg) => (StatusCode::FORBIDDEN, msg.clone()),
+            AppError::RequestInFlight(msg) => (StatusCode::CONFLICT, msg.clone()),
+            AppError::RequestFailed(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Io(e) => {
                 tracing::error!("io error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "IO error".to_string())

@@ -45,6 +45,8 @@ struct InputRequest {
     image: Option<String>,
     #[serde(default)]
     mime_type: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 // ── POST /sessions/:id/input ──────────────────────────────────────────────
@@ -162,6 +164,7 @@ async fn session_input(
         body.data,
         body.image,
         body.mime_type,
+        body.request_id,
         state.backend.clone(),
         &student_id,
         &dirs.merged,

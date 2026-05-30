@@ -73,6 +73,15 @@ pub struct Student {
     pub created_at: String,
     #[serde(default, deserialize_with = "deserialize_string_or_int_opt")]
     pub last_seen: Option<String>,
+
+    #[serde(default)]
+    pub last_request_id: Option<String>,
+
+    #[serde(default)]
+    pub last_request_state: Option<String>,
+
+    #[serde(default)]
+    pub last_request_started_at: Option<String>,
 }
 
 fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<String, D::Error>

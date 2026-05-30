@@ -47,6 +47,15 @@ impl HelixBackend {
     pub async fn _get_recent_thread_id(&self, id: &str) -> BackendResult<Option<String>> {
         Ok(HelixDb::get_recent_thread_id(&self.client, id).await?)
     }
+    pub async fn _set_last_request(&self, student_id: &str, request_id: &str, state: &str, started_at: &str) -> BackendResult<()> {
+        Ok(HelixDb::set_last_request(&self.client, student_id, request_id, state, started_at).await?)
+    }
+    pub async fn _get_last_request(&self, student_id: &str) -> BackendResult<Option<(String, String, String)>> {
+        Ok(HelixDb::get_last_request(&self.client, student_id).await?)
+    }
+    pub async fn _clear_last_request(&self, student_id: &str) -> BackendResult<()> {
+        Ok(HelixDb::clear_last_request(&self.client, student_id).await?)
+    }
     pub async fn _get_token_balance(&self, id: &str) -> BackendResult<i64> {
         Ok(HelixDb::get_token_balance(&self.client, id).await?)
     }

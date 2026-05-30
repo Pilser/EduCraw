@@ -1,4 +1,4 @@
-import { handleError } from "./error-handler.js";
+import { handleError, classifyError } from "./error-handler.js";
 const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
 /**
  * Parse a fetch response body as an SSE stream.
@@ -33,9 +33,13 @@ function sseStream(input, init) {
                                 parsed = JSON.parse(text);
                             }
                             catch { /* not JSON */ }
-                            handleError({ status: response.status, message: parsed.error || text, code: parsed.code });
-                            done = true;
-                            return { value: undefined, done: true };
+                            const classified = classifyError({
+                                status: response.status,
+                                message: parsed.error || text,
+                                code: parsed.code,
+                            });
+                            handleError(classified);
+                            throw classified;
                         }
                         if (!response.body) {
                             console.error("[sse] Response has no body");
@@ -384,11 +388,11 @@ export const eduApi = {
     },
     // ── SSE methods (new transport replacing WebSocket) ──────────────────
     /** Send user input and get back an SSE event stream */
-    sendInput(sessionId, token, data, image, mimeType) {
+    sendInput(sessionId, token, data, image, mimeType, requestId) {
         return sseStream(`${BASE}/sessions/${sessionId}/input`, {
             method: "POST",
             headers: authHeader(token),
-            body: JSON.stringify({ data, image, mime_type: mimeType }),
+            body: JSON.stringify({ data, image, mime_type: mimeType, request_id: requestId }),
         });
     },
     /** Cancel the current in-flight prompt */
