@@ -1,5 +1,6 @@
 import type { LoginResponse } from "./admin-types";
 
+const API_PREFIX = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_PREFIX) || "/api/v1";
 const AUTH_STORAGE_KEY = "educlaw_auth";
 
 interface StoredAuth extends LoginResponse {}
@@ -37,7 +38,7 @@ export class SessionManager {
 
   static async validateToken(token: string): Promise<boolean> {
     try {
-      const res = await fetch("/me", {
+      const res = await fetch(`${API_PREFIX}/me`, {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,

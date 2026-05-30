@@ -72,7 +72,8 @@ impl AppState {
 // ── Router assembly ───────────────────────────────────────────────
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
+    let prefix = std::env::var("API_PREFIX").unwrap_or_else(|_| "/api/v1".to_string());
+    Router::new().nest(&prefix, Router::new()
         .merge(auth_routes::routes())
         .merge(admin::routes())
         .merge(students::routes())
@@ -83,6 +84,7 @@ pub fn routes() -> Router<AppState> {
         .route("/health", get(health))
         // Public model list (enabled only) — used by frontend model picker.
         .route("/models", get(list_enabled_models))
+    )
 }
 
 async fn health() -> Json<serde_json::Value> {

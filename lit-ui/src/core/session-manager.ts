@@ -1,6 +1,7 @@
 import type { LoginResponse } from "./edu-types";
 import { handleError } from "./error-handler.js";
 
+const API_PREFIX = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_PREFIX) || "/api/v1";
 const AUTH_STORAGE_KEY = "educlaw_auth";
 const SESSION_STORAGE_KEY = "educlaw_session";
 const THREAD_STORAGE_KEY = "educlaw_last_thread";
@@ -159,7 +160,7 @@ export class SessionManager {
     token: string,
   ): Promise<{ session_id: string; session_token: string } | null> {
     try {
-      const res = await fetch("/sessions", {
+      const res = await fetch(`${API_PREFIX}/sessions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

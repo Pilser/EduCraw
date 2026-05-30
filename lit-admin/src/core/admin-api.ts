@@ -13,7 +13,7 @@ import type {
   UpdateStudentBody,
 } from "./admin-types";
 
-const BASE = "";
+const BASE = import.meta.env.VITE_API_PREFIX || "/api/v1";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${url}`, {

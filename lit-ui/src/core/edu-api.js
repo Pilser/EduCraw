@@ -1,5 +1,5 @@
 import { handleError, classifyError } from "./error-handler.js";
-const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
+const BASE = import.meta.env.VITE_API_PREFIX || "/api/v1";
 /**
  * Parse a fetch response body as an SSE stream.
  * Returns an async iterable of parsed SSE events plus an abort function.

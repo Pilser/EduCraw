@@ -16,7 +16,7 @@ import { handleError, classifyError, type AppError } from "./error-handler.js";
 
 export { type AppError };
 
-const BASE = ""; // Same origin, Vite proxy handles /auth and /sessions
+const BASE = import.meta.env.VITE_API_PREFIX || "/api/v1";
 
 // ── SSE Stream parser ─────────────────────────────────────────────────────
 

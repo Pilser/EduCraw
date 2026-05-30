@@ -16,26 +16,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       proxy: {
-        "/auth": {
-          target: backendTarget,
-          changeOrigin: true,
-        },
-        "/sessions": {
+        "/api/v1": {
           target: backendTarget,
           changeOrigin: true,
           ws: true,
-        },
-        "/files": {
-          target: backendTarget,
-          changeOrigin: true,
-        },
-        "/me": {
-          target: backendTarget,
-          changeOrigin: true,
-        },
-        "/cohorts": {
-          target: backendTarget,
-          changeOrigin: true,
         },
       },
     },
