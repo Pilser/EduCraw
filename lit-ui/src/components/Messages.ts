@@ -4,7 +4,7 @@ import type {
   BackendToolCallBlock,
   BackendUserMessage,
   BackendUserMessageWithAttachments,
-  WsToolEndFrame,
+  SseToolEndFrame,
 } from "../core/edu-types.js";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
@@ -80,7 +80,7 @@ export class AssistantMessage extends LitElement {
   @property({ type: Object }) message!: BackendAssistantMessage;
   @property({ type: Object }) pendingToolCalls?: ReadonlySet<string>;
   @property({ type: Boolean }) hideToolCalls = false;
-  @property({ type: Object }) toolResultsById?: Map<string, WsToolEndFrame>;
+  @property({ type: Object }) toolResultsById?: Map<string, SseToolEndFrame>;
   @property({ type: Boolean }) isStreaming: boolean = false;
   @property({ type: Boolean }) hidePendingToolCalls = false;
   @property({ attribute: false }) onCostClick?: () => void;
@@ -191,7 +191,7 @@ export class AssistantMessage extends LitElement {
 @customElement("tool-message")
 export class ToolMessage extends LitElement {
   @property({ type: Object }) toolCall!: BackendToolCallBlock;
-  @property({ type: Object }) result?: WsToolEndFrame;
+  @property({ type: Object }) result?: SseToolEndFrame;
   @property({ type: Boolean }) pending: boolean = false;
   @property({ type: Boolean }) aborted: boolean = false;
   @property({ type: Boolean }) isStreaming: boolean = false;

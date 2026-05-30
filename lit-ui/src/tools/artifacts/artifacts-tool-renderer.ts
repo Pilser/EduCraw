@@ -1,5 +1,5 @@
 import "@mariozechner/mini-lit/dist/CodeBlock.js";
-import type { WsToolEndFrame } from "../../core/edu-types.js";
+import type { SseToolEndFrame } from "../../core/edu-types.js";
 import { createRef, ref } from "lit/directives/ref.js";
 import { FileCode2 } from "lucide";
 import "../../components/ConsoleBlock.js";
@@ -18,7 +18,7 @@ export interface ArtifactsParams {
 	new_str?: string;
 }
 
-function getTextOutput(result: WsToolEndFrame | undefined): string {
+function getTextOutput(result: SseToolEndFrame | undefined): string {
 	if (!result) return "";
 	return result.stdout || "";
 }
@@ -62,7 +62,7 @@ function getLanguageFromFilename(filename?: string): string {
 export class ArtifactsToolRenderer implements ToolRenderer<ArtifactsParams> {
 	render(
 		params: ArtifactsParams | undefined,
-		result: WsToolEndFrame | undefined,
+		result: SseToolEndFrame | undefined,
 		isStreaming?: boolean,
 	): ToolRenderResult {
 		const state = result ? (result.status === "failed" ? "error" : "complete") : isStreaming ? "inprogress" : "complete";

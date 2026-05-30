@@ -71,7 +71,6 @@ struct CreateSessionRequest {
 #[derive(Serialize)]
 struct CreateSessionResponse {
     session_id: String,
-    ws_url: String,
     token: String,
 }
 
@@ -279,7 +278,6 @@ async fn create_session(
         StatusCode::CREATED,
         Json(CreateSessionResponse {
             session_id: session_id.clone(),
-            ws_url: format!("/sessions/{session_id}/ws"),
             token,
         }),
     ))

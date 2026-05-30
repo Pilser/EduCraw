@@ -1,4 +1,4 @@
-import type { WsToolEndFrame } from "../../core/edu-types.js";
+import type { SseToolEndFrame } from "../../core/edu-types.js";
 import { html } from "lit";
 import { Calculator } from "lucide";
 import { i18n } from "../../utils/i18n.js";
@@ -10,7 +10,7 @@ interface CalculateParams {
 }
 
 export class CalculateRenderer implements ToolRenderer<CalculateParams> {
-	render(params: CalculateParams | undefined, result: WsToolEndFrame | undefined): ToolRenderResult {
+	render(params: CalculateParams | undefined, result: SseToolEndFrame | undefined): ToolRenderResult {
 		const state = result ? (result.status === "failed" ? "error" : "complete") : "inprogress";
 
 		if (result && params?.expression) {

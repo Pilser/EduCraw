@@ -1,4 +1,4 @@
-import type { WsToolEndFrame } from "../../core/edu-types.js";
+import type { SseToolEndFrame } from "../../core/edu-types.js";
 import { html } from "lit";
 import { Check, ListTodo } from "lucide";
 import { icon } from "@mariozechner/mini-lit";
@@ -33,7 +33,7 @@ function parseTodoItems(content: string): TodoItem[] {
 export class TodoRenderer implements ToolRenderer {
   render(
     params: any | undefined,
-    result: WsToolEndFrame | undefined,
+    result: SseToolEndFrame | undefined,
     isStreaming?: boolean,
   ): ToolRenderResult {
     const state = result

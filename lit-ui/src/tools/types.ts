@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { WsToolEndFrame } from "../core/edu-types.js";
+import type { SseToolEndFrame } from "../core/edu-types.js";
 
 export interface ToolRenderResult {
 	content: TemplateResult;
@@ -9,7 +9,7 @@ export interface ToolRenderResult {
 export interface ToolRenderer<TParams = any> {
 	render(
 		params: TParams | undefined,
-		result: WsToolEndFrame | undefined,
+		result: SseToolEndFrame | undefined,
 		isStreaming?: boolean,
 	): ToolRenderResult;
 }

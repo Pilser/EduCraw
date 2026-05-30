@@ -1,7 +1,7 @@
 import type {
   BackendAssistantMessage,
   BackendMessage,
-  WsToolEndFrame,
+  SseToolEndFrame,
 } from "../core/edu-types.js";
 import { html, LitElement } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
@@ -167,7 +167,7 @@ export class AgentInterface extends LitElement {
   }
 
   private renderMessages() {
-    const toolResultsById = new Map<string, WsToolEndFrame>();
+    const toolResultsById = new Map<string, SseToolEndFrame>();
     for (const message of this.messages) {
       if ((message as any).role === "toolResult") {
         const tr = message as any;

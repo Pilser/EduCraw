@@ -1,4 +1,4 @@
-import type { WsToolEndFrame } from "../../core/edu-types.js";
+import type { SseToolEndFrame } from "../../core/edu-types.js";
 import { html } from "lit";
 import { SquareTerminal } from "lucide";
 import { i18n } from "../../utils/i18n.js";
@@ -10,7 +10,7 @@ interface BashParams {
 }
 
 export class BashRenderer implements ToolRenderer<BashParams> {
-	render(params: BashParams | undefined, result: WsToolEndFrame | undefined): ToolRenderResult {
+	render(params: BashParams | undefined, result: SseToolEndFrame | undefined): ToolRenderResult {
 		const state = result ? (result.status === "failed" ? "error" : "complete") : "inprogress";
 
 		if (result && params?.command) {

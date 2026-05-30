@@ -1,4 +1,4 @@
-import type { WsToolEndFrame } from "../core/edu-types.js";
+import type { SseToolEndFrame } from "../core/edu-types.js";
 import { getToolRenderer, registerToolRenderer } from "./renderer-registry.js";
 import { BashRenderer } from "./renderers/BashRenderer.js";
 import { DefaultRenderer } from "./renderers/DefaultRenderer.js";
@@ -19,7 +19,7 @@ export function setShowJsonMode(enabled: boolean): void {
 export function renderTool(
 	toolName: string,
 	params: any | undefined,
-	result: WsToolEndFrame | undefined,
+	result: SseToolEndFrame | undefined,
 	isStreaming?: boolean,
 ): ToolRenderResult {
 	if (showJsonMode) {

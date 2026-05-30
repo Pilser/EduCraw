@@ -11,7 +11,6 @@ export interface LoginResponse {
 
 export interface Session {
   session_id: string;
-  ws_url: string;
   token: string;
 }
 
@@ -42,9 +41,8 @@ export interface TokenUsage {
   turn_count: number;
 }
 
-// WebSocket frame types (from server → client)
-// Only streaming types stay on WS (others moved to REST)
-export type WsFrameType =
+// SSE frame types (from server → client)
+export type SseFrameType =
   | "user_text"
   | "assistant_text"
   | "thinking"
@@ -57,8 +55,8 @@ export type WsFrameType =
   | "config_update"
   | "available_commands";
 
-export interface WsFrame {
-  type: WsFrameType;
+export interface SseFrame {
+  type: SseFrameType;
   [key: string]: unknown;
 }
 
@@ -81,13 +79,13 @@ export interface ImportThreadResult {
   message_count: number;
 }
 
-export interface WsToolStartFrame extends WsFrame {
+export interface SseToolStartFrame extends SseFrame {
   type: "tool_start";
   name: string;
   input: string;
 }
 
-export interface WsToolEndFrame extends WsFrame {
+export interface SseToolEndFrame extends SseFrame {
   type: "tool_end";
   status: "completed" | "failed";
   exit_code: number;
@@ -95,7 +93,7 @@ export interface WsToolEndFrame extends WsFrame {
   stderr: string;
 }
 
-export interface WsTokenUsageFrame extends WsFrame {
+export interface SseTokenUsageFrame extends SseFrame {
   type: "token_usage";
   used: number;
   size?: number;
@@ -104,7 +102,7 @@ export interface WsTokenUsageFrame extends WsFrame {
   cost?: { amount: number; currency: string } | null;
 }
 
-export interface WsTextFrame extends WsFrame {
+export interface SseTextFrame extends SseFrame {
   type: "assistant_text" | "user_text";
   text: string;
 }

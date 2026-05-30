@@ -1,4 +1,4 @@
-import type { WsToolEndFrame } from "../../core/edu-types.js";
+import type { SseToolEndFrame } from "../../core/edu-types.js";
 import { html } from "lit";
 import { Clock } from "lucide";
 import { i18n } from "../../utils/i18n.js";
@@ -12,7 +12,7 @@ interface GetCurrentTimeParams {
 export class GetCurrentTimeRenderer implements ToolRenderer<GetCurrentTimeParams> {
 	render(
 		params: GetCurrentTimeParams | undefined,
-		result: WsToolEndFrame | undefined,
+		result: SseToolEndFrame | undefined,
 	): ToolRenderResult {
 		const state = result ? (result.status === "failed" ? "error" : "complete") : "inprogress";
 

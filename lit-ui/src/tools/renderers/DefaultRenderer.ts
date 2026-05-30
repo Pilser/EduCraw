@@ -1,4 +1,4 @@
-import type { WsToolEndFrame } from "../../core/edu-types.js";
+import type { SseToolEndFrame } from "../../core/edu-types.js";
 import { html } from "lit";
 import { Code } from "lucide";
 import { i18n } from "../../utils/i18n.js";
@@ -6,7 +6,7 @@ import { renderHeader } from "../renderer-registry.js";
 import type { ToolRenderer, ToolRenderResult } from "../types.js";
 
 export class DefaultRenderer implements ToolRenderer {
-	render(params: any | undefined, result: WsToolEndFrame | undefined, isStreaming?: boolean): ToolRenderResult {
+	render(params: any | undefined, result: SseToolEndFrame | undefined, isStreaming?: boolean): ToolRenderResult {
 		const state = result ? (result.status === "failed" ? "error" : "complete") : isStreaming ? "inprogress" : "complete";
 
 		let paramsJson = "";

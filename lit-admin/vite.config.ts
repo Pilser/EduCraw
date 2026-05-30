@@ -13,7 +13,6 @@ export default defineConfig(({ mode }) => {
         "/api/v1": {
           target: backendTarget,
           changeOrigin: true,
-          ws: true,
         },
       },
     },

@@ -1,7 +1,7 @@
 import type {
   BackendAssistantMessage,
   BackendMessage,
-  WsToolEndFrame,
+  SseToolEndFrame,
 } from "../core/edu-types.js";
 import { html, LitElement } from "lit";
 import { property, state } from "lit/decorators.js";
@@ -9,7 +9,7 @@ import { property, state } from "lit/decorators.js";
 export class StreamingMessageContainer extends LitElement {
   @property({ type: Boolean }) isStreaming = false;
   @property({ type: Object }) pendingToolCalls?: ReadonlySet<string>;
-  @property({ type: Object }) toolResultsById?: Map<string, WsToolEndFrame>;
+  @property({ type: Object }) toolResultsById?: Map<string, SseToolEndFrame>;
   @property({ attribute: false }) onCostClick?: () => void;
 
   @state() private _message: BackendAssistantMessage | null = null;
