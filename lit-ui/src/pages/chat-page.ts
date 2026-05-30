@@ -311,6 +311,17 @@ export class ChatPage extends LitElement {
     this.showLanding = false;
     this.streamingMessage = null;
 
+    // Sync agent-interface immediately — pi-chat-panel is manually appended
+    // (not in Lit template), so property changes on chat-page don't propagate.
+    if (this.chatPanel?.agentInterface) {
+      const ai = this.chatPanel.agentInterface;
+      ai.messages = this.messages;
+      ai.isStreaming = true;
+      ai.setStreamingMessage(null);
+      ai.requestUpdate();
+    }
+    this.requestUpdate();
+
     if (!this.currentTitle) {
       this.currentTitle = this.generateTitleFromText(text);
     }
