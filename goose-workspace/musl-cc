@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Wrapper around the musl linker that strips glibc library paths.
+set -uo pipefail
+
+BANNED_PATHS=(
+    "/usr/lib/x86_64-linux-gnu"
+    "/usr/lib/gcc/x86_64-linux-gnu"
+    "/usr/lib/x86_64-linux-musl"
+)
+
+REAL_CC="x86_64-linux-musl-gcc"
+if ! command -v "$REAL_CC" &>/dev/null; then
+    REAL_CC="cc"
+fi
+
+ARGS=()
+skip_next=0
+
+for arg in "$@"; do
+    if [ "$skip_next" -eq 1 ]; then
+        skip_next=0
+        banned=0
+        for bp in "${BANNED_PATHS[@]}"; do
+            if [ "$arg" = "$bp" ]; then
+                banned=1
+                break
+            fi
+        done
+        if [ "$banned" -eq 0 ]; then
+            ARGS+=("-L" "$arg")
+        fi
+        continue
+    fi
+
+    case "$arg" in
+        -L/usr/lib/x86_64-linux-gnu|-L/usr/lib/gcc/x86_64-linux-gnu|-L/usr/lib/x86_64-linux-musl)
+            continue
+            ;;
+        -L)
+            skip_next=1
+            continue
+            ;;
+    esac
+    ARGS+=("$arg")
+done
+
+exec "$REAL_CC" "${ARGS[@]}"

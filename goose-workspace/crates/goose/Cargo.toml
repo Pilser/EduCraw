@@ -127,6 +127,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "macros",
     "migrate",
 ] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 
 # For Bedrock provider (optional, behind "aws-providers" feature)
 aws-config = { version = "=1.8.12", features = ["behavior-version-latest"], optional = true }

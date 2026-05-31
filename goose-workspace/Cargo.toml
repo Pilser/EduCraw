@@ -98,6 +98,14 @@ tree-sitter-rust = "0.24"
 tree-sitter-swift = "0.7"
 tree-sitter-typescript = "0.23"
 
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "none"
+debug = 0
+
 [patch.crates-io]
 # TODO: switch to crates.io release once it includes the unstable feature and updates org from symposium-dev to agentclientprotocol
 sacp = { git = "https://github.com/agentclientprotocol/symposium-acp", rev = "14086c9" }
