@@ -295,7 +295,7 @@ echo "[pivot] step 1: mount jail tools (custom static busybox) - NO host system 
 mkdir -p "$M/tools" "/tmp/educraw_tools_$SID"
 mount --bind "$JTH" "/tmp/educraw_tools_$SID"
 mount --move "/tmp/educraw_tools_$SID" "$M/tools"
-mount -o remount,bind,exec "$M/tools"
+mount -o remount,bind,exec,ro "$M/tools"
 
 echo "[pivot] step 2: mount goose binary (existing mechanism preserved)" >&2
 mkdir -p "$M"
@@ -305,7 +305,7 @@ touch "/tmp/educraw_goose_$SID"
 mount --bind "$GB" "/tmp/educraw_goose_$SID"
 mount -o remount,bind,exec "/tmp/educraw_goose_$SID" >/dev/null 2>&1 || true
 mount --move "/tmp/educraw_goose_$SID" "$M/goose"
-mount -o remount,bind,exec "$M/goose" >/dev/null 2>&1 || true
+mount -o remount,bind,exec,ro "$M/goose" >/dev/null 2>&1 || true
 
 echo "[pivot] step 3: bind student data dirs into jail" >&2
 mkdir -p "$GPRH" "$CFGH"
