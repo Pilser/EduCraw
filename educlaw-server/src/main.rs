@@ -66,6 +66,9 @@ async fn main() -> anyhow::Result<()> {
 
     let goose_bin = std::env::var("GOOSE_BIN").unwrap_or_else(|_| "goose".to_string());
 
+    let jail_tools_host = std::env::var("JAIL_TOOLS_HOST")
+        .unwrap_or_else(|_| "/srv/educraw/jail-tools".to_string());
+
     // Root dir for subject content: {subjects_root}/{cohort_id}/{slug}/
     let subjects_root = std::env::var("EDUCLAW_SUBJECTS_ROOT")
         .unwrap_or_else(|_| "/srv/educlaw/data/subjects".to_string());
@@ -158,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes);
+    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, jail_tools_host, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes);
 
     let app = Router::new()
         .merge(api::routes())

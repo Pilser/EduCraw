@@ -74,6 +74,7 @@ pub async fn init_acp_session(
     workspace: PathBuf,
     goose_path_root: PathBuf,
     session_config_dir: PathBuf,
+    jail_tools_host: PathBuf,
     env_vars: Vec<(String, String)>,
     model: Option<String>,
     backend: Arc<dyn DbBackend>,
@@ -116,10 +117,12 @@ pub async fn init_acp_session(
     let claw_config_home_host = session_config_dir.display().to_string();
     let goose_path_root_in_jail = "/goose_home";
     let claw_config_home_in_jail = "/claw_config";
+    let jail_tools_host_str = jail_tools_host.display().to_string();
     let inner_script = build_pivot_root_script(
         &merged,
         &session_id,
         &goose_bin_path,
+        &jail_tools_host_str,
         &goose_path_root_host,
         &claw_config_home_host,
         b1,

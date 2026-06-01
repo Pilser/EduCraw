@@ -262,6 +262,7 @@ pub fn build_pivot_root_script(
     merged: &str,
     session_id: &str,
     goose_bin: &str,
+    jail_tools_host: &str,
     goose_path_root_host: &str,
     claw_config_home_host: &str,
     b1: u16,
@@ -273,34 +274,30 @@ pub fn build_pivot_root_script(
 
     format!(
         r#"set -e
-# env_clear() removes PATH; set it so mount/ip etc. are found on the host
-# filesystem before pivot_root, and in bind-mounted /usr after.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 M="{merged}"
 SID="{session_id}"
 GB="{goose_bin}"
+JTH="{jail_tools_host}"
 GPRH="{goose_path_root_host}"
 CFGH="{claw_config_home_host}"
 VC="{veth_child}"
 CIP="{child_ip}"
 CGW="{child_gw}"
 
-echo "[pivot] step 0: bind merged root onto itself (required by pivot_root)" >&2
+echo "[pivot] step 0: bind merged root onto itself" >&2
 mkdir -p "$M"
 mount --bind "$M" "$M"
 mount -o remount,bind,exec "$M" "$M"
 
-echo "[pivot] step 1: create mount-point dirs + bind-mount system dirs" >&2
-mkdir -p "$M/usr" "$M/lib" "$M/lib64" "$M/etc" "$M/bin" "$M/sbin"
-for d in /usr /lib /lib64 /etc /bin /sbin; do
-    [ -d "$d" ] && mount --bind "$d" "$M$d" && mount -o remount,ro,bind "$M$d"
-done
+echo "[pivot] step 1: mount jail tools (custom static busybox) - NO host system dirs" >&2
+mkdir -p "$M/tools" "/tmp/educraw_tools_$SID"
+mount --bind "$JTH" "/tmp/educraw_tools_$SID"
+mount --move "/tmp/educraw_tools_$SID" "$M/tools"
+mount -o remount,bind,exec "$M/tools"
 
-echo "[pivot] step 2: bind goose on host ext4, then move into jail" >&2
-# Create a bind mount on /tmp (host ext4 filesystem — exec works reliably)
-# then move it into the FUSE tree.  This avoids the EACCES that happens when
-# mount --bind targets a path directly inside a FUSE mount.
+echo "[pivot] step 2: mount goose binary (existing mechanism preserved)" >&2
 mkdir -p "$M"
 rm -rf "$M/goose"
 touch "$M/goose"
@@ -309,22 +306,26 @@ mount --bind "$GB" "/tmp/educraw_goose_$SID"
 mount -o remount,bind,exec "/tmp/educraw_goose_$SID" >/dev/null 2>&1 || true
 mount --move "/tmp/educraw_goose_$SID" "$M/goose"
 mount -o remount,bind,exec "$M/goose" >/dev/null 2>&1 || true
-ls -l "$M/goose" >&2 || true
 
-echo "[pivot] step 3: bind student Goose root + session config into jail" >&2
+echo "[pivot] step 3: bind student data dirs into jail" >&2
 mkdir -p "$GPRH" "$CFGH"
 mkdir -p "$M/goose_home" "$M/claw_config"
 mount --bind "$GPRH" "$M/goose_home"
 mount --bind "$CFGH" "$M/claw_config"
 
-echo "[pivot] step 4: mount runtime filesystems INTO merged (before pivot_root)" >&2
-mkdir -p "$M/proc" "$M/dev" "$M/tmp" "$M/run"
+
+
+echo "[pivot] step 4: mount runtime filesystems" >&2
+mkdir -p "$M/proc" "$M/dev" "$M/tmp" "$M/run" "$M/etc"
 mount -t proc proc "$M/proc"
 mount -t devtmpfs devtmpfs "$M/dev"
 mount -t tmpfs tmpfs "$M/tmp"
 mount -t tmpfs tmpfs "$M/run"
 
-echo "[pivot] step 5: configure network inside netns (before pivot_root — ip is on host)" >&2
+# Package manager caches -> tmpfs
+mkdir -p "$M/tmp/pip-cache" "$M/tmp/npm-cache" "$M/tmp/cargo-home"
+
+echo "[pivot] step 5: configure network" >&2
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   ip link show "$VC" >/dev/null 2>&1 && break
   sleep 0.05 2>/dev/null || true
@@ -333,43 +334,22 @@ ip link set lo up
 ip addr add "$CIP" dev "$VC" >/dev/null 2>&1
 ip link set "$VC" up >/dev/null 2>&1
 ip route add default via "$CGW" >/dev/null 2>&1
-echo "[pivot] network ready: $VC → $CIP gw $CGW" >&2
 
-echo "[pivot] step 6: override resolv.conf for working DNS (host's 127.0.0.53 is unreachable inside netns)" >&2
-# The host's /etc/resolv.conf is bind-mounted read-only from the host and points
-# to 127.0.0.53 (systemd-resolved stub), unreachable inside the isolated netns.
-# Write to a temp file and bind-mount over it — this shadows the ro-bind without
-# modifying the host file. Each session has its own temp file ($SID), so no
-# cross-session leakage in this multi-tenant setup.
-printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0 trust-ad\nsearch .\n' > "/tmp/educraw_resolv_$SID"
-mount --bind "/tmp/educraw_resolv_$SID" "$M/etc/resolv.conf"
+echo "[pivot] step 6: write resolv.conf to tmpfs /etc" >&2
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0 trust-ad\n' > "$M/etc/resolv.conf"
 
 echo "[pivot] step 7: pivot_root into merged" >&2
 cd "$M"
 mkdir -p .old_root
 pivot_root . .old_root
 cd /
-
-echo "[pivot] step 8: detach old root" >&2
 umount -l /.old_root 2>/dev/null || true
 rmdir /.old_root 2>/dev/null || true
 
-echo "[pivot] step 9: exec /goose acp" >&2
-echo "[pivot] PATH=$PATH" >&2
-if [ -e /goose ]; then
-    if [ -x /goose ]; then
-        echo "[pivot] /goose exists and is executable" >&2
-    else
-        echo "[pivot] /goose exists but is NOT executable" >&2
-    fi
-else
-    echo "[pivot] /goose does not exist" >&2
-fi
-if ! exec /goose acp; then
-    rc=$?
-    echo "[pivot] ERROR: exec /goose failed rc=$rc" >&2
-    exit "$rc"
-fi
+export PATH="/tools/busybox"
+
+echo "[pivot] step 8: exec goose" >&2
+exec /goose acp
 "#
     )
 }

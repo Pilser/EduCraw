@@ -27,6 +27,7 @@ pub struct AppState {
     pub auth: AuthConfig,
     pub workspace_root: String,
     pub goose_bin: String,
+    pub jail_tools_host: String,
     pub broker: Arc<SessionBroker>,
     pub registry: Arc<SessionRegistry>,
     /// Root dir containing subject dirs: `{subjects_root}/{cohort_id}/{slug}/`
@@ -47,6 +48,7 @@ impl AppState {
         auth: AuthConfig,
         workspace_root: String,
         goose_bin: String,
+        jail_tools_host: String,
         broker: Arc<SessionBroker>,
         registry: Arc<SessionRegistry>,
         subjects_root: String,
@@ -59,6 +61,7 @@ impl AppState {
             auth,
             workspace_root,
             goose_bin,
+            jail_tools_host,
             broker,
             registry,
             subjects_root,

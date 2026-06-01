@@ -120,6 +120,7 @@ async fn get_managed_session(
         dirs.merged.clone(),
         goose_path_root,
         dirs.config.clone(),
+        std::path::PathBuf::from(&state.jail_tools_host),
         env_vars,
         model,
         state.backend.clone(),
