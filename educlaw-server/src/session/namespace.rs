@@ -325,6 +325,12 @@ mount -t tmpfs tmpfs "$M/run"
 # Package manager caches -> tmpfs
 mkdir -p "$M/tmp/pip-cache" "$M/tmp/npm-cache" "$M/tmp/cargo-home"
 
+echo "[pivot] step 4.5: mount host CA certificates" >&2
+mkdir -p "/tmp/educraw_certs_$SID" "$M/etc/ssl"
+mount --bind /etc/ssl "/tmp/educraw_certs_$SID"
+mount --move "/tmp/educraw_certs_$SID" "$M/etc/ssl"
+mount -o remount,bind,ro "$M/etc/ssl"
+
 echo "[pivot] step 5: configure network" >&2
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   ip link show "$VC" >/dev/null 2>&1 && break
