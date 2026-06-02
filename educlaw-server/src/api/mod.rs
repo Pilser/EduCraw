@@ -6,6 +6,7 @@ mod admin;
 mod auth_routes;
 mod common;
 mod files;
+mod recipes;
 mod sessions;
 mod students;
 mod sse;
@@ -82,6 +83,7 @@ pub fn routes() -> Router<AppState> {
         .merge(students::routes())
         .merge(sessions::routes())
         .merge(threads::routes())
+        .merge(recipes::routes())
         .merge(sse::routes())
         .merge(files::routes())
         .route("/health", get(health))

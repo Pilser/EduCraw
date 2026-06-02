@@ -1,13 +1,13 @@
 // educlaw-server/src/acp_bridge/custom_requests.rs
 //
-// Re-exports of goose-sdk custom ACP request/response types.
-// Previously these were duplicated locally; now they come from the canonical
-// source so import/export session stays in sync with Goose.
+// Re-exports of goose-sdk custom ACP request/response types. Every
+// consumer in educlaw-server imports through this module so swapping
+// the upstream SDK is a one-file change.
 
 pub use goose_sdk::custom_requests::{
-    DeleteSessionRequest, ExportSessionRequest, ExportSessionResponse, ImportSessionRequest,
-    ImportSessionResponse, SetSessionModelConfigRequest, SetSessionModelConfigResponse,
-    // Recipe ACP types
+    // Session management
+    DeleteSessionRequest, ExportSessionRequest, ImportSessionRequest, ImportSessionResponse,
+    // Recipe CRUD + session integration
     ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse, CreateRecipeRequest,
     CreateRecipeResponse, DeleteRecipeRequest, ExportRecipeRequest, ExportRecipeResponse,
     GenerateFromSessionRequest, GenerateFromSessionResponse, ImportRecipeRequest,

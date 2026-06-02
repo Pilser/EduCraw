@@ -149,6 +149,68 @@ export interface UpdateMeResponse {
 }
 
 // ============================================================================
+// Recipe types (mirror `_goose/recipe/*` ACP responses, camelCase from backend)
+// ============================================================================
+
+export interface RecipeParameter {
+  key: string;
+  inputType: string;
+  requirement: string;
+  description: string;
+  default?: string | null;
+  options?: string[] | null;
+}
+
+export interface RecipeEntry {
+  name: string;
+  title: string;
+  description: string;
+  path: string;
+  global: boolean;
+  parameters?: RecipeParameter[];
+}
+
+export interface CreateRecipeResponse {
+  path: string;
+  title: string;
+  description: string;
+}
+
+export interface ReadRecipeResponse {
+  recipe: Record<string, unknown>;
+  content: string;
+  path: string;
+}
+
+export interface ExportRecipeResponse {
+  deeplink?: string | null;
+  recipeJson: string;
+  filename: string;
+}
+
+export interface ImportRecipeResponse {
+  path: string;
+  title: string;
+  description: string;
+  warnings?: string[];
+}
+
+export interface ApplyRecipeResponse {
+  title: string;
+  description: string;
+  instructions?: string | null;
+  prompt?: string | null;
+  resolvedExtensions: string[];
+  parameters: RecipeParameter[];
+}
+
+export interface GenerateRecipeResponse {
+  path: string;
+  title: string;
+  description: string;
+}
+
+// ============================================================================
 // Backend-native message types (no pi-ai dependencies)
 // ============================================================================
 

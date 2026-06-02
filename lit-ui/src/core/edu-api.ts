@@ -11,6 +11,13 @@ import type {
   TokenUsage,
   UpdateMeRequest,
   UpdateMeResponse,
+  RecipeEntry,
+  CreateRecipeResponse,
+  ReadRecipeResponse,
+  ExportRecipeResponse,
+  ImportRecipeResponse,
+  ApplyRecipeResponse,
+  GenerateRecipeResponse,
 } from "./edu-types";
 import { handleError, classifyError, type AppError } from "./error-handler.js";
 
@@ -509,6 +516,145 @@ export const eduApi = {
       headers: authHeader(token),
       body: JSON.stringify(body),
     });
+  },
+
+  // ── Recipe management ─────────────────────────────────────────────
+
+  /** List recipes discoverable by the session's goose process */
+  async listRecipes(
+    sessionId: string,
+    token: string,
+  ): Promise<RecipeEntry[]> {
+    const res = await request<{ recipes: RecipeEntry[] }>(
+      `/sessions/${sessionId}/recipes`,
+      { headers: authHeader(token) },
+    );
+    return res.recipes;
+  },
+
+  /** Create a recipe from YAML/JSON content */
+  async createRecipe(
+    sessionId: string,
+    token: string,
+    content: string,
+    filename?: string,
+  ): Promise<CreateRecipeResponse> {
+    return request<CreateRecipeResponse>(`/sessions/${sessionId}/recipes`, {
+      method: "POST",
+      headers: authHeader(token),
+      body: JSON.stringify({ content, filename }),
+    });
+  },
+
+  /** Read a recipe's raw content by absolute path */
+  async readRecipe(
+    sessionId: string,
+    token: string,
+    path: string,
+  ): Promise<ReadRecipeResponse> {
+    return request<ReadRecipeResponse>(
+      `/sessions/${sessionId}/recipes/read`,
+      {
+        method: "POST",
+        headers: authHeader(token),
+        body: JSON.stringify({ path }),
+      },
+    );
+  },
+
+  /** Delete a recipe by absolute path */
+  async deleteRecipe(
+    sessionId: string,
+    token: string,
+    path: string,
+  ): Promise<void> {
+    const res = await fetch(
+      `${BASE}/sessions/${sessionId}/recipes/delete`,
+      {
+        method: "POST",
+        headers: authHeader(token),
+        body: JSON.stringify({ path }),
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "Unknown error");
+      let parsed: { error?: string; code?: string } = {};
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+      throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
+    }
+  },
+
+  /** Export a recipe as deeplink + standalone JSON */
+  async exportRecipe(
+    sessionId: string,
+    token: string,
+    path: string,
+  ): Promise<ExportRecipeResponse> {
+    return request<ExportRecipeResponse>(
+      `/sessions/${sessionId}/recipes/export`,
+      {
+        method: "POST",
+        headers: authHeader(token),
+        body: JSON.stringify({ path }),
+      },
+    );
+  },
+
+  /** Import a recipe from a goose:// deeplink or standalone JSON blob */
+  async importRecipe(
+    sessionId: string,
+    token: string,
+    opts: {
+      deeplink?: string;
+      recipeJson?: string;
+      filename?: string;
+    },
+  ): Promise<ImportRecipeResponse> {
+    return request<ImportRecipeResponse>(
+      `/sessions/${sessionId}/recipes/import`,
+      {
+        method: "POST",
+        headers: authHeader(token),
+        body: JSON.stringify(opts),
+      },
+    );
+  },
+
+  /**
+   * Apply a recipe to the session's current goose thread.
+   * Backend resolves the active thread automatically.
+   */
+  async applyRecipe(
+    sessionId: string,
+    token: string,
+    recipePath: string,
+    parameterValues?: Record<string, string>,
+  ): Promise<ApplyRecipeResponse> {
+    return request<ApplyRecipeResponse>(
+      `/sessions/${sessionId}/recipes/apply`,
+      {
+        method: "POST",
+        headers: authHeader(token),
+        body: JSON.stringify({ recipe_path: recipePath, parameter_values: parameterValues }),
+      },
+    );
+  },
+
+  /** Generate a new recipe from the session's current conversation */
+  async generateRecipe(
+    sessionId: string,
+    token: string,
+    instructions?: string,
+  ): Promise<GenerateRecipeResponse> {
+    return request<GenerateRecipeResponse>(
+      `/sessions/${sessionId}/recipes/generate`,
+      {
+        method: "POST",
+        headers: authHeader(token),
+        body: JSON.stringify({ instructions }),
+      },
+    );
   },
 
   // ── SSE methods (new transport replacing WebSocket) ──────────────────

@@ -379,6 +379,81 @@ export const eduApi = {
             body: JSON.stringify(body),
         });
     },
+    // ── Recipe management ─────────────────────────────────────────────
+    /** List recipes discoverable by the session's goose process */
+    async listRecipes(sessionId, token) {
+        const res = await request(`/sessions/${sessionId}/recipes`, { headers: authHeader(token) });
+        return res.recipes;
+    },
+    /** Create a recipe from YAML/JSON content */
+    async createRecipe(sessionId, token, content, filename) {
+        return request(`/sessions/${sessionId}/recipes`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ content, filename }),
+        });
+    },
+    /** Read a recipe's raw content by absolute path */
+    async readRecipe(sessionId, token, path) {
+        return request(`/sessions/${sessionId}/recipes/read`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ path }),
+        });
+    },
+    /** Delete a recipe by absolute path */
+    async deleteRecipe(sessionId, token, path) {
+        const res = await fetch(`${BASE}/sessions/${sessionId}/recipes/delete`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ path }),
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "Unknown error");
+            let parsed = {};
+            try {
+                parsed = JSON.parse(text);
+            }
+            catch { /* not JSON */ }
+            handleError({ status: res.status, message: parsed.error || text, code: parsed.code });
+            throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
+        }
+    },
+    /** Export a recipe as deeplink + standalone JSON */
+    async exportRecipe(sessionId, token, path) {
+        return request(`/sessions/${sessionId}/recipes/export`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ path }),
+        });
+    },
+    /** Import a recipe from a goose:// deeplink or standalone JSON blob */
+    async importRecipe(sessionId, token, opts) {
+        return request(`/sessions/${sessionId}/recipes/import`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify(opts),
+        });
+    },
+    /**
+     * Apply a recipe to the session's current goose thread.
+     * Backend resolves the active thread automatically.
+     */
+    async applyRecipe(sessionId, token, recipePath, parameterValues) {
+        return request(`/sessions/${sessionId}/recipes/apply`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ recipe_path: recipePath, parameter_values: parameterValues }),
+        });
+    },
+    /** Generate a new recipe from the session's current conversation */
+    async generateRecipe(sessionId, token, instructions) {
+        return request(`/sessions/${sessionId}/recipes/generate`, {
+            method: "POST",
+            headers: authHeader(token),
+            body: JSON.stringify({ instructions }),
+        });
+    },
     // ── SSE methods (new transport replacing WebSocket) ──────────────────
     /** Send user input and get back an SSE event stream */
     sendInput(sessionId, token, data, image, mimeType, requestId) {

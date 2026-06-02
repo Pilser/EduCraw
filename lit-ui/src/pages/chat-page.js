@@ -24,6 +24,7 @@ import "../dialogs/LandingBanner.js";
 import "../components/FileDrawer.js";
 import "../components/FileDrawerToggle.js";
 import "../components/FilePreviewModal.js";
+import { RecipesTab } from "../dialogs/RecipesTab.js";
 let ChatPage = class ChatPage extends LitElement {
     constructor() {
         super(...arguments);
@@ -36,6 +37,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.tokenBalance = 0;
         this.fileDrawerOpen = false;
         this.previewModalOpen = false;
+        this.recipeBanner = null;
         this.messages = [];
         this.isStreaming = false;
         this.streamingMessage = null;
@@ -889,6 +891,10 @@ let ChatPage = class ChatPage extends LitElement {
         sessionsTab.sessionToken = this.sessionToken;
         sessionsTab.onLoadSession = (sessionId) => this.loadSessionById(sessionId);
         sessionsTab.onNewSession = () => this.newSession();
+        const recipesTab = new RecipesTab();
+        recipesTab.sessionId = this.sessionId;
+        recipesTab.sessionToken = this.sessionToken;
+        recipesTab.onRecipeApplied = (resp) => this.handleRecipeApplied(resp);
         const accountTab = new AccountTab();
         accountTab.sessionId = this.sessionId;
         accountTab.sessionToken = this.sessionToken;
@@ -899,7 +905,7 @@ let ChatPage = class ChatPage extends LitElement {
             this.auth = updatedAuth;
             SessionManager.saveAuth(updatedAuth);
         };
-        MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 0, this.tokenBalance);
+        MenuDialog.open([filesTab, sessionsTab, recipesTab, accountTab], undefined, 0, this.tokenBalance);
     }
     openMenuWithAccount() {
         const filesTab = new FilesTab();
@@ -915,6 +921,10 @@ let ChatPage = class ChatPage extends LitElement {
         sessionsTab.sessionToken = this.sessionToken;
         sessionsTab.onLoadSession = (sessionId) => this.loadSessionById(sessionId);
         sessionsTab.onNewSession = () => this.newSession();
+        const recipesTab = new RecipesTab();
+        recipesTab.sessionId = this.sessionId;
+        recipesTab.sessionToken = this.sessionToken;
+        recipesTab.onRecipeApplied = (resp) => this.handleRecipeApplied(resp);
         const accountTab = new AccountTab();
         accountTab.sessionId = this.sessionId;
         accountTab.sessionToken = this.sessionToken;
@@ -925,7 +935,27 @@ let ChatPage = class ChatPage extends LitElement {
             this.auth = updatedAuth;
             SessionManager.saveAuth(updatedAuth);
         };
-        MenuDialog.open([filesTab, sessionsTab, accountTab], undefined, 2, this.tokenBalance);
+        MenuDialog.open([filesTab, sessionsTab, recipesTab, accountTab], undefined, 3, this.tokenBalance);
+    }
+    handleRecipeApplied(resp) {
+        console.log("[chat-page] Recipe applied:", resp.title, resp.description);
+        this.recipeBanner = { title: resp.title, description: resp.description };
+        this.requestUpdate();
+        if (resp.prompt) {
+            const editor = this.chatPanel?.agentInterface?._messageEditor;
+            if (editor) {
+                editor.value = resp.prompt;
+                requestAnimationFrame(() => {
+                    const ta = editor.shadowRoot?.querySelector("textarea") || editor.querySelector("textarea");
+                    if (ta)
+                        ta.focus();
+                });
+            }
+        }
+        setTimeout(() => {
+            this.recipeBanner = null;
+            this.requestUpdate();
+        }, 8000);
     }
     async loadBalance() {
         try {
@@ -1131,6 +1161,31 @@ let ChatPage = class ChatPage extends LitElement {
 
         <!-- Chat Area -->
         <div class="flex-1 flex flex-col min-h-0 relative">
+          ${this.recipeBanner
+            ? html `
+                <div
+                  class="absolute top-2 left-1/2 -translate-x-1/2 z-30 max-w-2xl w-[calc(100%-2rem)] px-4 py-3 rounded-lg border border-primary/30 bg-primary/10 backdrop-blur-sm shadow-lg flex items-start gap-3"
+                >
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-semibold text-foreground">
+                      Recipe applied: ${this.recipeBanner.title}
+                    </div>
+                    <div class="text-xs text-muted-foreground line-clamp-2">
+                      ${this.recipeBanner.description}
+                    </div>
+                  </div>
+                  ${Button({
+                variant: "ghost",
+                size: "sm",
+                children: "Dismiss",
+                onClick: () => {
+                    this.recipeBanner = null;
+                    this.requestUpdate();
+                },
+            })}
+                </div>
+              `
+            : ""}
           ${this.showLanding && this._ready
             ? html `<landing-banner
                 .onNewChat=${() => this.newSession()}
@@ -1225,6 +1280,9 @@ __decorate([
 __decorate([
     state()
 ], ChatPage.prototype, "previewModalOpen", void 0);
+__decorate([
+    state()
+], ChatPage.prototype, "recipeBanner", void 0);
 __decorate([
     state()
 ], ChatPage.prototype, "messages", void 0);

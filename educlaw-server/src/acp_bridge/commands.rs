@@ -133,7 +133,7 @@ pub async fn handle_import_session(
 // Recipe ACP handlers
 // ═══════════════════════════════════════════════════════════════════════
 
-use goose_sdk::custom_requests::{
+use super::custom_requests::{
     ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse, CreateRecipeRequest,
     CreateRecipeResponse, DeleteRecipeRequest, ExportRecipeRequest, ExportRecipeResponse,
     GenerateFromSessionRequest, GenerateFromSessionResponse, ImportRecipeRequest,
