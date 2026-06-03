@@ -9,7 +9,7 @@ use crate::agents::{AgentConfig, GoosePlatform};
 use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::{Config, GooseMode};
-use crate::conversation::message::MessageContent;
+use crate::conversation::message::{Message, MessageContent};
 use crate::model::ModelConfig;
 use crate::prompt_template;
 use crate::providers;
@@ -28,6 +28,7 @@ use goose_sdk::custom_requests::{
     ReadRecipeResponse, RecipeEntry,
 };
 use rmcp::model::Role;
+use tracing::info;
 use sacp::Error;
 
 fn recipe_dir(project_dir: &str) -> PathBuf {
@@ -225,6 +226,22 @@ pub async fn handle_apply_to_session(
         .apply()
         .await
         .map_err(|e| Error::internal_error().data(e.to_string()))?;
+
+    info!(
+        session_id = %req.session_id,
+        recipe_title = %recipe.title,
+        recipe_description = %recipe.description,
+        instructions_len = recipe.instructions.as_ref().map_or(0, |s| s.len()),
+        has_prompt = recipe.prompt.is_some(),
+        "Recipe applied to session"
+    );
+
+    // Inject a signal into the conversation so the agent knows a recipe was applied.
+    // Agent-only visibility: full instructions live in the system prompt via session.recipe.
+    let apply_record = Message::assistant()
+        .with_text(format!("Recipe applied: {}", recipe.title))
+        .agent_only();
+    let _ = session_manager.add_message(&req.session_id, &apply_record).await;
 
     let resolved_extensions: Vec<String> = recipe
         .extensions

@@ -400,6 +400,15 @@ impl GooseAcpAgent {
         &self,
         req: ApplyRecipeToSessionRequest,
     ) -> Result<ApplyRecipeToSessionResponse, sacp::Error> {
+        // Resolve the ACP thread ID to the internal session ID so recipe
+        // metadata is written to the correct sessions row.  Every other
+        // handler (on_prompt, on_set_model, …) does this same resolution
+        // via self.internal_session_id().
+        let internal_id = self.internal_session_id(&req.session_id).await?;
+        let req = ApplyRecipeToSessionRequest {
+            session_id: internal_id,
+            ..req
+        };
         crate::recipe::acp_handlers::handle_apply_to_session(req, &self.session_manager).await
     }
 

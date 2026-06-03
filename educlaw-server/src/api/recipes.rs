@@ -224,12 +224,15 @@ async fn apply_recipe(
             .0
             .to_string()
     };
+    let project_dir = body
+        .project_dir
+        .unwrap_or_else(|| resolve_recipe_project_dir(&state, &session_id));
     let resp = handle_apply_recipe_to_session(
         &managed.cx,
         thread_id,
         body.recipe_path,
         body.parameter_values,
-        body.project_dir,
+        Some(project_dir),
     )
     .await?;
     Ok(Json(serde_json::json!(resp)))

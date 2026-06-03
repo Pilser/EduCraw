@@ -381,6 +381,35 @@ impl Agent {
             );
         }
 
+        // Inject active recipe into system prompt so the agent is aware of it
+        match self.config.session_manager.get_session(session_id, false).await {
+            Ok(session) => {
+                if let Some(recipe) = &session.recipe {
+                    let mut recipe_block = format!(
+                        "\n\n# Active Recipe: {}\n\n{}",
+                        recipe.title, recipe.description,
+                    );
+                    if let Some(instructions) = &recipe.instructions {
+                        recipe_block = format!(
+                            "{}\n\n## Instructions\n\n{}",
+                            recipe_block, instructions
+                        );
+                    }
+                    system_prompt = format!("{}{}", system_prompt, recipe_block);
+                    tracing::info!(
+                        recipe_title = %recipe.title,
+                        system_prompt_len = system_prompt.len(),
+                        "Recipe injected into system prompt"
+                    );
+                } else {
+                    tracing::info!("No recipe found on session {}", session_id);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get session for recipe injection: {}", e);
+            }
+        }
+
         let goose_mode = *self.current_goose_mode.lock().await;
 
         if goose_mode == GooseMode::SmartApprove {
