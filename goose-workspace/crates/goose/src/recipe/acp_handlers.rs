@@ -6,7 +6,6 @@ use crate::agents::extension::ExtensionConfig;
 use crate::agents::subagent_handler::{run_subagent_task, SubagentRunParams};
 use crate::agents::subagent_task_config::TaskConfig;
 use crate::agents::{AgentConfig, GoosePlatform};
-use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{Message, MessageContent};
@@ -67,34 +66,57 @@ pub fn handle_create(req: CreateRecipeRequest) -> Result<CreateRecipeResponse, E
 
 // ── List ───────────────────────────────────────────────────────────────
 // Discovers recipes from standard search paths.
+// If session_manager and session_id are provided, sets applied_to_current_session
+// and is_user_recipe on each entry. The session_id must be the internal session ID
+// (not the ACP thread ID) — dispatch resolves it before calling this handler.
 
-pub fn handle_list(req: ListRecipesRequest) -> Result<ListRecipesResponse, Error> {
+pub async fn handle_list(
+    req: ListRecipesRequest,
+    session_manager: Option<&SessionManager>,
+    session_id: Option<&str>,
+) -> Result<ListRecipesResponse, Error> {
     let all = local_recipes::list_local_recipes()
         .map_err(|e| Error::internal_error().data(e.to_string()))?;
 
+    // Resolve applied recipe path and project dir from session once (avoid N+1)
+    let applied_path: Option<String> = match (session_manager, session_id) {
+        (Some(sm), Some(sid)) => {
+            sm.get_session(sid, false).await
+                .ok()
+                .and_then(|s| s.applied_recipe_path)
+        }
+        _ => None,
+    };
+    // Use env::current_dir() because list_local_recipes() paths are
+    // canonicalized from CWD, not from session.working_dir (which may be
+    // an OverlayFS path). The session_id guard ensures we only compute
+    // this when we have a valid session context.
+    let user_recipes_dir: Option<PathBuf> = if session_id.is_some() {
+        std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join(".agents").join("recipes"))
+            .map(|p| p.canonicalize().unwrap_or(p))
+    } else {
+        None
+    };
+
     let recipes: Vec<RecipeEntry> = all
         .into_iter()
-        .filter(|(path, _)| {
-            let is_global = path.starts_with(Paths::config_dir());
-            match req.global {
-                Some(true) => is_global,
-                Some(false) => !is_global,
-                None => true,
-            }
-        })
         .map(|(path, r)| {
             let name = path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            let is_global = path.starts_with(Paths::config_dir());
+            let path_str = path.to_string_lossy().to_string();
+            let is_applied = applied_path.as_deref() == Some(&path_str);
+            let is_user = user_recipes_dir.as_ref().map_or(false, |d| path.parent() == Some(d.as_path()));
             RecipeEntry {
                 name,
                 title: r.title,
                 description: r.description,
-                path: path.to_string_lossy().to_string(),
-                global: is_global,
+                path: path_str,
+                global: false,
                 parameters: r.parameters.unwrap_or_default().into_iter().map(|p| cr::RecipeParameterDto {
                     key: p.key,
                     input_type: format!("{:?}", p.input_type),
@@ -103,6 +125,8 @@ pub fn handle_list(req: ListRecipesRequest) -> Result<ListRecipesResponse, Error
                     default: p.default,
                     options: p.options,
                 }).collect(),
+                applied_to_current_session: is_applied,
+                is_user_recipe: is_user,
             }
         })
         .collect();
@@ -129,11 +153,20 @@ pub fn handle_read(req: ReadRecipeRequest) -> Result<ReadRecipeResponse, Error> 
 // ── Delete ─────────────────────────────────────────────────────────────
 
 pub fn handle_delete(req: DeleteRecipeRequest) -> Result<(), Error> {
-    let path = Path::new(&req.path);
+    let path = resolve_recipe_path(&req.path, req.project_dir.as_deref())?;
+
+    // Scope guard: only allow deleting from {projectDir}/.agents/recipes/
+    let project_dir = req.project_dir.as_deref().unwrap_or("");
+    let user_recipes_dir = Path::new(project_dir).join(".agents").join("recipes");
+    if !path.starts_with(&user_recipes_dir) {
+        return Err(Error::invalid_params()
+            .data("Recipe is not in your workspace and cannot be deleted"));
+    }
+
     if !path.exists() {
         return Err(Error::invalid_params().data("Recipe not found"));
     }
-    std::fs::remove_file(path).map_err(|e| Error::internal_error().data(e.to_string()))?;
+    std::fs::remove_file(&path).map_err(|e| Error::internal_error().data(e.to_string()))?;
     Ok(())
 }
 
@@ -217,11 +250,13 @@ pub async fn handle_apply_to_session(
     )
     .map_err(|e| Error::invalid_params().data(e.to_string()))?;
 
+    let resolved_path = path.to_string_lossy().to_string();
     let user_values: HashMap<String, String> = param_values.into_iter().collect();
 
     session_manager
         .update(&req.session_id)
         .recipe(Some(recipe.clone()))
+        .applied_recipe_path(Some(resolved_path.clone()))
         .user_recipe_values(Some(user_values))
         .apply()
         .await
@@ -270,6 +305,7 @@ pub async fn handle_apply_to_session(
         prompt: recipe.prompt,
         resolved_extensions,
         parameters,
+        recipe_path: Some(resolved_path),
     })
 }
 
@@ -506,17 +542,6 @@ fn resolve_recipe_path(path_or_name: &str, project_dir: Option<&str>) -> Result<
     let mut search_dirs: Vec<PathBuf> = Vec::new();
     if let Some(project) = project_dir {
         search_dirs.push(Path::new(project).join(".agents").join("recipes"));
-        search_dirs.push(Path::new(project).join(".goose").join("recipes"));
-    }
-    search_dirs.push(Paths::config_dir().join("recipes"));
-    if let Some(home) = dirs::home_dir() {
-        search_dirs.push(home.join(".goose").join("recipes"));
-        search_dirs.push(home.join(".agents").join("recipes"));
-    }
-    if let Ok(env_path) = std::env::var("CROW_RECIPE_PATH") {
-        for p in env_path.split(':') {
-            search_dirs.push(PathBuf::from(p));
-        }
     }
 
     for dir in &search_dirs {

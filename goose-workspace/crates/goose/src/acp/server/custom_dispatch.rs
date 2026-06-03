@@ -359,7 +359,20 @@ impl GooseAcpAgent {
         &self,
         req: ListRecipesRequest,
     ) -> Result<ListRecipesResponse, sacp::Error> {
-        crate::recipe::acp_handlers::handle_list(req)
+        // Resolve ACP thread ID → internal session ID so handle_list can
+        // query the correct sessions row for applied_recipe_path.
+        // Uses .ok() for graceful degradation: if the session isn't in the
+        // map (e.g. no active thread), all entries get applied_to_current_session = false.
+        let internal_id = match &req.session_id {
+            Some(sid) => self.internal_session_id(sid).await.ok(),
+            None => None,
+        };
+        crate::recipe::acp_handlers::handle_list(
+            req,
+            Some(&self.session_manager),
+            internal_id.as_deref(),
+        )
+        .await
     }
 
     #[custom_method(ReadRecipeRequest)]

@@ -42,6 +42,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.isStreaming = false;
         this.streamingMessage = null;
         this.lastLoadedThreadId = null;
+        this.lastAppliedRecipePath = null;
         this.currentAbort = null;
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
@@ -940,6 +941,7 @@ let ChatPage = class ChatPage extends LitElement {
     handleRecipeApplied(resp) {
         console.log("[chat-page] Recipe applied:", resp.title, resp.description);
         this.recipeBanner = { title: resp.title, description: resp.description };
+        this.lastAppliedRecipePath = resp.recipePath || null;
         this.requestUpdate();
         if (resp.prompt) {
             const editor = this.chatPanel?.agentInterface?._messageEditor;

@@ -1059,6 +1059,10 @@ pub struct RecipeEntry {
     pub global: bool,
     #[serde(default)]
     pub parameters: Vec<RecipeParameterDto>,
+    #[serde(default)]
+    pub applied_to_current_session: bool,
+    #[serde(default)]
+    pub is_user_recipe: bool,
 }
 
 /// Serializable recipe parameter for ACP responses.
@@ -1109,6 +1113,9 @@ pub struct ListRecipesRequest {
     /// Project root for scoping the search.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_dir: Option<String>,
+    /// ACP thread ID; dispatch resolves to internal session ID for applied-state query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -1146,6 +1153,9 @@ pub struct ReadRecipeResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DeleteRecipeRequest {
     pub path: String,
+    /// Project root for scope guard — only paths under {projectDir}/.agents/recipes/ can be deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
 }
 
 /// Export a recipe as a shareable deeplink or standalone JSON.
@@ -1230,6 +1240,8 @@ pub struct ApplyRecipeToSessionResponse {
     pub resolved_extensions: Vec<String>,
     #[serde(default)]
     pub parameters: Vec<RecipeParameterDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_path: Option<String>,
 }
 
 /// Generate a recipe from a session's conversation history using a sub-agent.

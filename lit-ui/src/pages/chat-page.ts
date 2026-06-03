@@ -55,6 +55,7 @@ export class ChatPage extends LitElement {
 
   private chatPanel?: ChatPanel;
   private lastLoadedThreadId: string | null = null;
+  private lastAppliedRecipePath: string | null = null;
   private fileDrawer?: FileDrawer;
   private previewModal?: FilePreviewModal;
   private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
@@ -1071,6 +1072,7 @@ export class ChatPage extends LitElement {
   private handleRecipeApplied(resp: ApplyRecipeResponse) {
     console.log("[chat-page] Recipe applied:", resp.title, resp.description);
     this.recipeBanner = { title: resp.title, description: resp.description };
+    this.lastAppliedRecipePath = resp.recipePath || null;
     this.requestUpdate();
 
     if (resp.prompt) {

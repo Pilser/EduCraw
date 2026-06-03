@@ -158,10 +158,15 @@ pub async fn handle_create_recipe(
 /// List discoverable recipes
 pub async fn handle_list_recipes(
     cx: &ConnectionTo<SacpAgent>,
+    session_id: Option<String>,
     global: Option<bool>,
     project_dir: Option<String>,
 ) -> Result<ListRecipesResponse> {
-    let req = ListRecipesRequest { global, project_dir };
+    let req = ListRecipesRequest {
+        global,
+        project_dir,
+        session_id,
+    };
     cx.send_request(req)
         .block_task()
         .await
@@ -185,8 +190,9 @@ pub async fn handle_read_recipe(
 pub async fn handle_delete_recipe(
     cx: &ConnectionTo<SacpAgent>,
     path: String,
+    project_dir: Option<String>,
 ) -> Result<()> {
-    let req = DeleteRecipeRequest { path };
+    let req = DeleteRecipeRequest { path, project_dir };
     cx.send_request(req)
         .block_task()
         .await

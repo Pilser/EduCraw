@@ -168,6 +168,8 @@ export interface RecipeEntry {
   path: string;
   global: boolean;
   parameters?: RecipeParameter[];
+  appliedToCurrentSession?: boolean;
+  isUserRecipe?: boolean;
 }
 
 export interface CreateRecipeResponse {
@@ -202,6 +204,7 @@ export interface ApplyRecipeResponse {
   prompt?: string | null;
   resolvedExtensions: string[];
   parameters: RecipeParameter[];
+  recipePath?: string | null;
 }
 
 export interface GenerateRecipeResponse {

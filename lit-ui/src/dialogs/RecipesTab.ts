@@ -107,6 +107,7 @@ export class RecipesTab extends MenuTab {
 			if (this.onRecipeApplied) {
 				this.onRecipeApplied(result);
 			}
+			await this.loadRecipes();
 		} catch (err) {
 			handleError(err);
 		}
@@ -366,6 +367,9 @@ export class RecipesTab extends MenuTab {
 											>
 												<div class="font-medium text-foreground flex items-center gap-2">
 													${recipe.title}
+													${recipe.appliedToCurrentSession
+														? html`<span class="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-800">✓ Applied</span>`
+														: ""}
 													${recipe.global
 														? html`<span class="text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground flex items-center gap-1">${icon(Globe, "xs")} global</span>`
 														: ""}
@@ -392,14 +396,16 @@ export class RecipesTab extends MenuTab {
 													onClick: () => this.exportRecipe(recipe),
 													title: "Export",
 												})}
-												${Button({
-													variant: "ghost",
-													size: "sm",
-													children: icon(Trash2, "xs"),
-													onClick: () => this.deleteRecipe(recipe),
-													title: "Delete",
-													className: "text-destructive hover:text-destructive",
-												})}
+												${recipe.isUserRecipe !== false
+													? Button({
+															variant: "ghost",
+															size: "sm",
+															children: icon(Trash2, "xs"),
+															onClick: () => this.deleteRecipe(recipe),
+															title: "Delete",
+															className: "text-destructive hover:text-destructive",
+														})
+													: ""}
 											</div>
 										</div>
 									`,

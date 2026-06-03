@@ -19,7 +19,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 12;
+pub const CURRENT_SCHEMA_VERSION: i32 = 13;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 
@@ -79,6 +79,7 @@ pub struct Session {
     pub schedule_id: Option<String>,
     pub recipe: Option<Recipe>,
     pub user_recipe_values: Option<HashMap<String, String>>,
+    pub applied_recipe_path: Option<String>,
     pub conversation: Option<Conversation>,
     pub message_count: usize,
     pub provider_name: Option<String>,
@@ -110,6 +111,7 @@ pub struct SessionUpdateBuilder<'a> {
     schedule_id: Option<Option<String>>,
     recipe: Option<Option<Recipe>>,
     user_recipe_values: Option<Option<HashMap<String, String>>>,
+    applied_recipe_path: Option<Option<String>>,
     provider_name: Option<Option<String>>,
     model_config: Option<Option<ModelConfig>>,
     goose_mode: Option<GooseMode>,
@@ -146,6 +148,7 @@ impl<'a> SessionUpdateBuilder<'a> {
             schedule_id: None,
             recipe: None,
             user_recipe_values: None,
+            applied_recipe_path: None,
             provider_name: None,
             model_config: None,
             goose_mode: None,
@@ -255,6 +258,11 @@ impl<'a> SessionUpdateBuilder<'a> {
         user_recipe_values: Option<HashMap<String, String>>,
     ) -> Self {
         self.user_recipe_values = Some(user_recipe_values);
+        self
+    }
+
+    pub fn applied_recipe_path(mut self, path: Option<String>) -> Self {
+        self.applied_recipe_path = Some(path);
         self
     }
 
@@ -494,6 +502,7 @@ impl Default for Session {
             schedule_id: None,
             recipe: None,
             user_recipe_values: None,
+            applied_recipe_path: None,
             conversation: None,
             message_count: 0,
             provider_name: None,
@@ -521,6 +530,8 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
         let user_recipe_values_json: Option<String> = row.try_get("user_recipe_values_json")?;
         let user_recipe_values =
             user_recipe_values_json.and_then(|json| serde_json::from_str(&json).ok());
+
+        let recipe_path: Option<String> = row.try_get("recipe_path").ok().flatten();
 
         let model_config_json: Option<String> = row.try_get("model_config_json").ok().flatten();
         let model_config = model_config_json.and_then(|json| serde_json::from_str(&json).ok());
@@ -570,6 +581,7 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
             schedule_id: row.try_get("schedule_id")?,
             recipe,
             user_recipe_values,
+            applied_recipe_path: recipe_path,
             conversation: None,
             message_count: row.try_get::<i64, _>("message_count").unwrap_or(0) as usize,
             provider_name: row.try_get("provider_name").ok().flatten(),
@@ -681,6 +693,7 @@ impl SessionStorage {
                 schedule_id TEXT,
                 recipe_json TEXT,
                 user_recipe_values_json TEXT,
+                recipe_path TEXT,
                 provider_name TEXT,
                 model_config_json TEXT,
                 goose_mode TEXT NOT NULL DEFAULT 'auto',
@@ -1146,6 +1159,16 @@ impl SessionStorage {
                 .execute(&mut **tx)
                 .await?;
             }
+            13 => {
+                // Add recipe_path column for applied recipe state tracking
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN recipe_path TEXT
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1208,7 +1231,7 @@ impl SessionStorage {
                cache_read_input_tokens, cache_write_input_tokens,
                accumulated_total_tokens, accumulated_input_tokens, accumulated_output_tokens,
                accumulated_cache_read_tokens, accumulated_cache_write_tokens,
-               schedule_id, recipe_json, user_recipe_values_json,
+               schedule_id, recipe_json, user_recipe_values_json, recipe_path,
                provider_name, model_config_json, goose_mode, thread_id
         FROM sessions
         WHERE id = ?
@@ -1280,6 +1303,7 @@ impl SessionStorage {
         add_update!(builder.schedule_id, "schedule_id");
         add_update!(builder.recipe, "recipe_json");
         add_update!(builder.user_recipe_values, "user_recipe_values_json");
+        add_update!(builder.applied_recipe_path, "recipe_path");
         add_update!(builder.provider_name, "provider_name");
         add_update!(builder.model_config, "model_config_json");
         add_update!(builder.goose_mode, "goose_mode");
@@ -1351,6 +1375,9 @@ impl SessionStorage {
                 .map(|urv| serde_json::to_string(&urv))
                 .transpose()?;
             q = q.bind(user_recipe_values_json);
+        }
+        if let Some(recipe_path) = builder.applied_recipe_path {
+            q = q.bind(recipe_path);
         }
         if let Some(provider_name) = builder.provider_name {
             q = q.bind(provider_name);
@@ -1519,7 +1546,7 @@ impl SessionStorage {
                    s.cache_read_input_tokens, s.cache_write_input_tokens,
                    s.accumulated_total_tokens, s.accumulated_input_tokens, s.accumulated_output_tokens,
                    s.accumulated_cache_read_tokens, s.accumulated_cache_write_tokens,
-                   s.schedule_id, s.recipe_json, s.user_recipe_values_json,
+                   s.schedule_id, s.recipe_json, s.user_recipe_values_json, s.recipe_path,
                    s.provider_name, s.model_config_json, s.goose_mode, s.thread_id,
                    COUNT(m.id) as message_count
             FROM sessions s

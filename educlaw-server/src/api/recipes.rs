@@ -68,7 +68,13 @@ async fn list_recipes(
 ) -> Result<impl IntoResponse> {
     require_session_claims(&state, &headers, &session_id)?;
     let managed = get_managed_session(&state, &session_id).await?;
-    let resp = handle_list_recipes(&managed.cx, None, None).await?;
+    let project_dir = resolve_recipe_project_dir(&state, &session_id);
+    // Graceful: no active thread → appliedToCurrentSession/isUserRecipe default to false
+    let thread_id = {
+        let guard = managed.acp_session_id.lock().await;
+        guard.as_ref().map(|g| g.0.to_string())
+    };
+    let resp = handle_list_recipes(&managed.cx, thread_id, None, Some(project_dir)).await?;
     Ok(Json(serde_json::json!({ "recipes": resp.recipes })))
 }
 
@@ -105,6 +111,8 @@ async fn create_recipe(
 #[derive(Deserialize)]
 struct ReadRecipeBody {
     path: String,
+    #[serde(default)]
+    project_dir: Option<String>,
 }
 
 async fn read_recipe(
@@ -115,7 +123,10 @@ async fn read_recipe(
 ) -> Result<impl IntoResponse> {
     require_session_claims(&state, &headers, &session_id)?;
     let managed = get_managed_session(&state, &session_id).await?;
-    let resp = handle_read_recipe(&managed.cx, body.path, None).await?;
+    let project_dir = body
+        .project_dir
+        .unwrap_or_else(|| resolve_recipe_project_dir(&state, &session_id));
+    let resp = handle_read_recipe(&managed.cx, body.path, Some(project_dir)).await?;
     Ok(Json(serde_json::json!(resp)))
 }
 
@@ -124,6 +135,8 @@ async fn read_recipe(
 #[derive(Deserialize)]
 struct DeleteRecipeBody {
     path: String,
+    #[serde(default)]
+    project_dir: Option<String>,
 }
 
 async fn delete_recipe(
@@ -134,7 +147,10 @@ async fn delete_recipe(
 ) -> Result<impl IntoResponse> {
     require_session_claims(&state, &headers, &session_id)?;
     let managed = get_managed_session(&state, &session_id).await?;
-    handle_delete_recipe(&managed.cx, body.path).await?;
+    let project_dir = body
+        .project_dir
+        .unwrap_or_else(|| resolve_recipe_project_dir(&state, &session_id));
+    handle_delete_recipe(&managed.cx, body.path, Some(project_dir)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -143,6 +159,8 @@ async fn delete_recipe(
 #[derive(Deserialize)]
 struct ExportRecipeBody {
     path: String,
+    #[serde(default)]
+    project_dir: Option<String>,
 }
 
 async fn export_recipe(
@@ -153,17 +171,17 @@ async fn export_recipe(
 ) -> Result<impl IntoResponse> {
     require_session_claims(&state, &headers, &session_id)?;
     let managed = get_managed_session(&state, &session_id).await?;
-    let resp = handle_export_recipe(&managed.cx, body.path, None).await?;
-    Ok(Json(serde_json::json!({
-        "deeplink": resp.deeplink,
-        "recipe_json": resp.recipe_json,
-        "filename": resp.filename,
-    })))
+    let project_dir = body
+        .project_dir
+        .unwrap_or_else(|| resolve_recipe_project_dir(&state, &session_id));
+    let resp = handle_export_recipe(&managed.cx, body.path, Some(project_dir)).await?;
+    Ok(Json(serde_json::json!(resp)))
 }
 
 // ── POST /sessions/:id/recipes/import ─────────────────────────────────────
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportRecipeBody {
     #[serde(default)]
     deeplink: Option<String>,
