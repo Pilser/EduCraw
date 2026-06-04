@@ -1063,6 +1063,9 @@ pub struct RecipeEntry {
     pub applied_to_current_session: bool,
     #[serde(default)]
     pub is_user_recipe: bool,
+    /// Activity items (plain text or structured discover activities)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activities: Option<Vec<ActivityItemDto>>,
 }
 
 /// Serializable recipe parameter for ACP responses.
@@ -1253,6 +1256,35 @@ pub struct DiscoverErrorDto {
     pub message: String,
 }
 
+/// A recipe activity item — either a plain text string or a structured discover activity.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ActivityItemDto {
+    Plain(String),
+    Discover(DiscoverActivityDto),
+}
+
+/// A structured discover activity with label, icon, hint, and discover trigger.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverActivityDto {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discover: Option<ActivityDiscoverDto>,
+}
+
+/// Discover trigger payload for a structured activity.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityDiscoverDto {
+    pub group: String,
+    pub params: HashMap<String, String>,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyRecipeToSessionResponse {
@@ -1272,6 +1304,12 @@ pub struct ApplyRecipeToSessionResponse {
     /// Structured errors from failed required discover steps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_errors: Option<Vec<DiscoverErrorDto>>,
+    /// Activity items (plain text or structured discover activities)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activities: Option<Vec<ActivityItemDto>>,
+    /// The discover activity group that was triggered (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_activity_group: Option<String>,
 }
 
 /// Generate a recipe from a session's conversation history using a sub-agent.

@@ -24,6 +24,7 @@ pub struct RetryConfig {
     /// Maximum number of retry attempts before giving up
     pub max_retries: u32,
     /// List of success checks to validate recipe completion
+    #[serde(default)]
     pub checks: Vec<SuccessCheck>,
     /// Optional shell command to run on failure for cleanup
     #[serde(skip_serializing_if = "Option::is_none")]

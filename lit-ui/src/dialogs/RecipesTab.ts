@@ -6,7 +6,9 @@ import { MenuTab } from "./MenuDialog.js";
 import { eduApi } from "../core/edu-api.js";
 import { handleError } from "../core/error-handler.js";
 import type {
+	ActivityItem,
 	ApplyRecipeResponse,
+	DiscoverError,
 	RecipeEntry,
 	RecipeParameter,
 } from "../core/edu-types.js";
@@ -18,6 +20,18 @@ export class RecipesTab extends MenuTab {
 	@property({ type: String }) sessionToken = "";
 	/** Called after a recipe is successfully applied to the current session. */
 	@property({ attribute: false }) onRecipeApplied?: (resp: ApplyRecipeResponse) => void;
+	/** The currently-applied recipe context for context-switch detection. Null on first load. */
+	@property({ attribute: false }) currentRecipeContext?: {
+		recipePath: string | null;
+		activityGroup: string | null;
+	} | null;
+	/** Called when user picks "New Thread" in the context-switch dialog. Must spawn a fresh goose thread and clear the UI. */
+	@property({ attribute: false }) onNewSessionRequested?: () => Promise<void>;
+	/**
+	 * Called after a recipe is applied, for tracking what was applied.
+	 * `activityGroup` is null for parameter-dialog applies, the discover group for activity clicks.
+	 */
+	@property({ attribute: false }) onActivityApplied?: (recipePath: string, activityGroup: string | null) => void;
 
 	@state() private recipes: RecipeEntry[] = [];
 	@state() private loading = false;
@@ -29,6 +43,14 @@ export class RecipesTab extends MenuTab {
 	@state() private paramDrafts: Record<string, string> = {};
 	@state() private importMode: false | "deeplink" | "file" = false;
 	@state() private deeplinkInput = "";
+	@state() private discoverErrors: Record<string, DiscoverError[]> = {};
+	@state() private applyingActivityKey: string | null = null;
+	@state() private showContextSwitch = false;
+	@state() private pendingSwitchActivity: {
+		recipe: RecipeEntry;
+		activity: ActivityItem;
+		label: string;
+	} | null = null;
 
 	async updated(changedProperties: Map<string, any>) {
 		super.updated(changedProperties);
@@ -106,6 +128,9 @@ export class RecipesTab extends MenuTab {
 			this.closeApplyDialog();
 			if (this.onRecipeApplied) {
 				this.onRecipeApplied(result);
+			}
+			if (this.onActivityApplied) {
+				this.onActivityApplied(path, null);
 			}
 			await this.loadRecipes();
 		} catch (err) {
@@ -194,6 +219,154 @@ export class RecipesTab extends MenuTab {
 			const e = handleError(err);
 			alert(`Failed to delete recipe: ${e.message || "Unknown error"}`);
 		}
+	}
+
+	private getActivityKey(recipePath: string, label: string): string {
+		return `${recipePath}::${label}`;
+	}
+
+	private isActivityLoading(recipePath: string, label: string): boolean {
+		return this.applyingActivityKey === this.getActivityKey(recipePath, label);
+	}
+
+	private async handleActivityClick(recipe: RecipeEntry, activity: ActivityItem) {
+		if (this.applyingActivityKey || this.showContextSwitch) return;
+
+		const label = typeof activity === "string" ? activity : activity.label;
+		const discover = typeof activity === "object" && activity.discover;
+		if (!discover) return;
+
+		// Context-switch detection
+		const ctx = this.currentRecipeContext;
+		if (ctx) {
+			const sameRecipe = ctx.recipePath === recipe.path;
+			const sameGroup = ctx.activityGroup === discover.group;
+			if (!sameRecipe || !sameGroup) {
+				this.pendingSwitchActivity = { recipe, activity, label };
+				this.showContextSwitch = true;
+				this.requestUpdate();
+				return;
+			}
+		}
+
+		await this.executeActivityApply(recipe, activity, label);
+	}
+
+	private async executeActivityApply(recipe: RecipeEntry, activity: ActivityItem, label: string) {
+		const discover = typeof activity === "object" ? activity.discover : null;
+		if (!discover) return;
+
+		this.applyingActivityKey = this.getActivityKey(recipe.path, label);
+		this.discoverErrors = {};
+		this.requestUpdate();
+
+		try {
+			const result = await eduApi.applyRecipe(
+				this.sessionId,
+				this.sessionToken,
+				recipe.path,
+				undefined,
+				{ group: discover.group, params: discover.params },
+			);
+
+			if (result.discoverErrors && result.discoverErrors.length > 0) {
+				this.discoverErrors = { ...this.discoverErrors, [recipe.path]: result.discoverErrors };
+			}
+
+			if (this.onRecipeApplied) {
+				this.onRecipeApplied(result);
+			}
+			if (this.onActivityApplied) {
+				this.onActivityApplied(recipe.path, discover.group);
+			}
+
+			await this.loadRecipes();
+		} catch (err) {
+			handleError(err);
+		} finally {
+			this.applyingActivityKey = null;
+			this.requestUpdate();
+		}
+	}
+
+	private async handleSwitchNewThread() {
+		const pending = this.pendingSwitchActivity;
+		if (!pending) return;
+		this.showContextSwitch = false;
+		this.pendingSwitchActivity = null;
+		if (this.onNewSessionRequested) {
+			await this.onNewSessionRequested();
+		}
+		await this.executeActivityApply(pending.recipe, pending.activity, pending.label);
+	}
+
+	private async handleSwitchContinue() {
+		const pending = this.pendingSwitchActivity;
+		if (!pending) return;
+		this.showContextSwitch = false;
+		this.pendingSwitchActivity = null;
+		await this.executeActivityApply(pending.recipe, pending.activity, pending.label);
+	}
+
+	private handleSwitchCancel() {
+		this.showContextSwitch = false;
+		this.pendingSwitchActivity = null;
+		this.requestUpdate();
+	}
+
+	private renderActivities(recipe: RecipeEntry): TemplateResult | null {
+		if (!recipe.activities || recipe.activities.length === 0) return null;
+
+		return html`
+			<div class="flex flex-wrap gap-1.5 mt-2">
+				${recipe.activities.map((activity) => {
+					const label = typeof activity === "string" ? activity : activity.label;
+					const hint = typeof activity === "object" ? activity.hint : undefined;
+					const hasDiscover = typeof activity === "object" && !!activity.discover;
+					const loading = this.isActivityLoading(recipe.path, label);
+
+					return html`
+						<button
+							class="flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-border hover:bg-secondary/50 transition-colors disabled:opacity-50"
+							title=${hint || label}
+							?disabled=${!hasDiscover || loading}
+							@click=${() => hasDiscover && this.handleActivityClick(recipe, activity)}
+						>
+							${loading ? html`<span class="animate-spin">⟳</span>` : ""}
+							${label}
+						</button>
+					`;
+				})}
+			</div>
+		`;
+	}
+
+	private renderDiscoverErrors(recipePath: string): TemplateResult | null {
+		const errors = this.discoverErrors[recipePath];
+		if (!errors || errors.length === 0) return null;
+
+		return html`
+			<div class="mt-2 p-2 rounded-md bg-destructive/10 border border-destructive/30 relative">
+				<button
+					class="absolute top-1 right-1 text-destructive/60 hover:text-destructive"
+					@click=${() => {
+						const next = { ...this.discoverErrors };
+						delete next[recipePath];
+						this.discoverErrors = next;
+						this.requestUpdate();
+					}}
+				>${icon(X, "xs")}</button>
+				<div class="text-xs font-medium text-destructive mb-1">Discovery Errors</div>
+				${errors.map(
+					(err) => html`
+						<div class="text-xs text-destructive/80 flex flex-col gap-0.5 mb-1 last:mb-0">
+							<span class="font-medium">${err.step} (${err.stepType})</span>
+							<span>${err.message}</span>
+						</div>
+					`,
+				)}
+			</div>
+		`;
 	}
 
 	private renderApplyDialog(entry: RecipeEntry): TemplateResult {
@@ -313,6 +486,68 @@ export class RecipesTab extends MenuTab {
 		`;
 	}
 
+	private renderContextSwitchDialog(): TemplateResult {
+		const pending = this.pendingSwitchActivity;
+		const fromGroup = this.currentRecipeContext?.activityGroup || "none";
+		const toGroup = pending
+			? (typeof pending.activity === "object" ? pending.activity.discover?.group : "?")
+			: "?";
+		const recipeTitle = pending?.recipe.title || "Recipe";
+
+		return html`
+			<div
+				class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+				@click=${(e: Event) => {
+					if (e.target === e.currentTarget) this.handleSwitchCancel();
+				}}
+			>
+				<div class="bg-background border border-border rounded-lg shadow-xl max-w-md w-full p-6 flex flex-col gap-4">
+					<div class="flex items-start justify-between">
+						<div>
+							<h3 class="text-lg font-semibold text-foreground">Change Context</h3>
+							<p class="text-sm text-muted-foreground">${recipeTitle}</p>
+						</div>
+					</div>
+
+					<div class="flex flex-col gap-2 text-sm">
+						<div class="flex items-center gap-2">
+							<span class="text-muted-foreground">From:</span>
+							<span class="font-medium">${fromGroup}</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<span class="text-muted-foreground">To:</span>
+							<span class="font-medium">${toGroup}</span>
+						</div>
+						<p class="text-xs text-muted-foreground mt-1">
+							Starting a new thread will clear the current conversation. The current conversation stays saved.
+						</p>
+					</div>
+
+					<div class="flex justify-end gap-2 mt-2">
+						${Button({
+							variant: "ghost",
+							size: "sm",
+							children: "Cancel",
+							onClick: () => this.handleSwitchCancel(),
+						})}
+						${Button({
+							variant: "outline",
+							size: "sm",
+							children: "Continue Anyway",
+							onClick: () => this.handleSwitchContinue(),
+						})}
+						${Button({
+							variant: "default",
+							size: "sm",
+							children: "New Thread",
+							onClick: () => this.handleSwitchNewThread(),
+						})}
+					</div>
+				</div>
+			</div>
+		`;
+	}
+
 	getTabName(): string {
 		return "Recipes";
 	}
@@ -380,6 +615,8 @@ export class RecipesTab extends MenuTab {
 												${recipe.parameters && recipe.parameters.length > 0
 													? html`<div class="text-xs text-muted-foreground">${recipe.parameters.length} parameter${recipe.parameters.length === 1 ? "" : "s"}</div>`
 													: ""}
+												${this.renderActivities(recipe)}
+												${this.renderDiscoverErrors(recipe.path)}
 											</button>
 											<div class="flex gap-1">
 												${Button({
@@ -426,6 +663,7 @@ export class RecipesTab extends MenuTab {
 					)
 				: ""}
 			${this.importMode === "deeplink" ? this.renderImportPanel() : ""}
+			${this.showContextSwitch ? this.renderContextSwitchDialog() : ""}
 		`;
 	}
 }

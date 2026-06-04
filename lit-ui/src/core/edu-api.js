@@ -438,12 +438,18 @@ export const eduApi = {
     /**
      * Apply a recipe to the session's current goose thread.
      * Backend resolves the active thread automatically.
+     * If `activityTrigger` is provided, the recipe's discover block runs
+     * before template rendering (bypasses parameter dialog).
      */
-    async applyRecipe(sessionId, token, recipePath, parameterValues) {
+    async applyRecipe(sessionId, token, recipePath, parameterValues, activityTrigger) {
         return request(`/sessions/${sessionId}/recipes/apply`, {
             method: "POST",
             headers: authHeader(token),
-            body: JSON.stringify({ recipe_path: recipePath, parameter_values: parameterValues }),
+            body: JSON.stringify({
+                recipe_path: recipePath,
+                parameter_values: parameterValues,
+                activity_trigger: activityTrigger,
+            }),
         });
     },
     /** Generate a new recipe from the session's current conversation */

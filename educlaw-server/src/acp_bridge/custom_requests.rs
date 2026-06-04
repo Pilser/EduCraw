@@ -8,9 +8,10 @@ pub use goose_sdk::custom_requests::{
     // Session management
     DeleteSessionRequest, ExportSessionRequest, ImportSessionRequest, ImportSessionResponse,
     // Recipe CRUD + session integration
-    ActivityTriggerDto, ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse,
-    CreateRecipeRequest, CreateRecipeResponse, DeleteRecipeRequest, DiscoverErrorDto,
-    ExportRecipeRequest, ExportRecipeResponse, GenerateFromSessionRequest,
-    GenerateFromSessionResponse, ImportRecipeRequest, ImportRecipeResponse, ListRecipesRequest,
-    ListRecipesResponse, ReadRecipeRequest, ReadRecipeResponse, RecipeEntry, RecipeParameterDto,
+    ActivityDiscoverDto, ActivityItemDto, ActivityTriggerDto, ApplyRecipeToSessionRequest,
+    ApplyRecipeToSessionResponse, CreateRecipeRequest, CreateRecipeResponse, DeleteRecipeRequest,
+    DiscoverActivityDto, DiscoverErrorDto, ExportRecipeRequest, ExportRecipeResponse,
+    GenerateFromSessionRequest, GenerateFromSessionResponse, ImportRecipeRequest,
+    ImportRecipeResponse, ListRecipesRequest, ListRecipesResponse, ReadRecipeRequest,
+    ReadRecipeResponse, RecipeEntry, RecipeParameterDto,
 };

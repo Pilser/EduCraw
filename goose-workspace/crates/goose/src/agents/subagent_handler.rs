@@ -169,7 +169,10 @@ fn get_agent_messages(params: SubagentRunParams) -> AgentMessagesFuture {
 
         if let Some(activities) = recipe.activities {
             for activity in activities {
-                info!("Recipe activity: {}", activity);
+                match activity {
+                    crate::recipe::ActivityItem::Plain(s) => info!("Recipe activity: {}", s),
+                    crate::recipe::ActivityItem::Discover(d) => info!("Recipe discover activity: {} (group: {})", d.label, d.discover.as_ref().map_or("none", |dd| &dd.group)),
+                }
             }
         }
         let session_config = SessionConfig {

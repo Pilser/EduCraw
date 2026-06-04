@@ -43,6 +43,7 @@ let ChatPage = class ChatPage extends LitElement {
         this.streamingMessage = null;
         this.lastLoadedThreadId = null;
         this.lastAppliedRecipePath = null;
+        this.lastAppliedActivityGroup = null;
         this.currentAbort = null;
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
@@ -892,10 +893,7 @@ let ChatPage = class ChatPage extends LitElement {
         sessionsTab.sessionToken = this.sessionToken;
         sessionsTab.onLoadSession = (sessionId) => this.loadSessionById(sessionId);
         sessionsTab.onNewSession = () => this.newSession();
-        const recipesTab = new RecipesTab();
-        recipesTab.sessionId = this.sessionId;
-        recipesTab.sessionToken = this.sessionToken;
-        recipesTab.onRecipeApplied = (resp) => this.handleRecipeApplied(resp);
+        const recipesTab = this.buildRecipesTab();
         const accountTab = new AccountTab();
         accountTab.sessionId = this.sessionId;
         accountTab.sessionToken = this.sessionToken;
@@ -922,10 +920,7 @@ let ChatPage = class ChatPage extends LitElement {
         sessionsTab.sessionToken = this.sessionToken;
         sessionsTab.onLoadSession = (sessionId) => this.loadSessionById(sessionId);
         sessionsTab.onNewSession = () => this.newSession();
-        const recipesTab = new RecipesTab();
-        recipesTab.sessionId = this.sessionId;
-        recipesTab.sessionToken = this.sessionToken;
-        recipesTab.onRecipeApplied = (resp) => this.handleRecipeApplied(resp);
+        const recipesTab = this.buildRecipesTab();
         const accountTab = new AccountTab();
         accountTab.sessionId = this.sessionId;
         accountTab.sessionToken = this.sessionToken;
@@ -938,10 +933,41 @@ let ChatPage = class ChatPage extends LitElement {
         };
         MenuDialog.open([filesTab, sessionsTab, recipesTab, accountTab], undefined, 3, this.tokenBalance);
     }
+    buildRecipesTab() {
+        const tab = new RecipesTab();
+        tab.sessionId = this.sessionId;
+        tab.sessionToken = this.sessionToken;
+        tab.currentRecipeContext = {
+            recipePath: this.lastAppliedRecipePath,
+            activityGroup: this.lastAppliedActivityGroup,
+        };
+        tab.onRecipeApplied = (resp) => this.handleRecipeApplied(resp);
+        tab.onNewSessionRequested = async () => {
+            const resp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "new");
+            this.messages = [];
+            this.currentTitle = "";
+            this.lastLoadedThreadId = resp.thread_id || null;
+            this.lastAppliedRecipePath = null;
+            this.lastAppliedActivityGroup = null;
+            this.showLanding = false;
+            this.isStreaming = false;
+            this.streamingMessage = null;
+            SessionManager.clearSession();
+            SessionManager.saveSession(this.sessionId, this.sessionToken);
+            this.updateUI();
+            this.requestUpdate();
+        };
+        tab.onActivityApplied = (recipePath, activityGroup) => {
+            this.lastAppliedRecipePath = recipePath;
+            this.lastAppliedActivityGroup = activityGroup;
+        };
+        return tab;
+    }
     handleRecipeApplied(resp) {
         console.log("[chat-page] Recipe applied:", resp.title, resp.description);
         this.recipeBanner = { title: resp.title, description: resp.description };
         this.lastAppliedRecipePath = resp.recipePath || null;
+        this.lastAppliedActivityGroup = resp.appliedActivityGroup ?? null;
         this.requestUpdate();
         if (resp.prompt) {
             const editor = this.chatPanel?.agentInterface?._messageEditor;

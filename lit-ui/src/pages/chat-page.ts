@@ -56,6 +56,7 @@ export class ChatPage extends LitElement {
   private chatPanel?: ChatPanel;
   private lastLoadedThreadId: string | null = null;
   private lastAppliedRecipePath: string | null = null;
+  private lastAppliedActivityGroup: string | null = null;
   private fileDrawer?: FileDrawer;
   private previewModal?: FilePreviewModal;
   private currentPreviewFile?: { node: any; isSubject: boolean; subjectId?: string };
@@ -1015,10 +1016,7 @@ export class ChatPage extends LitElement {
     sessionsTab.onLoadSession = (sessionId: string) => this.loadSessionById(sessionId);
     sessionsTab.onNewSession = () => this.newSession();
 
-    const recipesTab = new RecipesTab();
-    recipesTab.sessionId = this.sessionId;
-    recipesTab.sessionToken = this.sessionToken;
-    recipesTab.onRecipeApplied = (resp: ApplyRecipeResponse) => this.handleRecipeApplied(resp);
+    const recipesTab = this.buildRecipesTab();
 
     const accountTab = new AccountTab();
     accountTab.sessionId = this.sessionId;
@@ -1050,10 +1048,7 @@ export class ChatPage extends LitElement {
     sessionsTab.onLoadSession = (sessionId: string) => this.loadSessionById(sessionId);
     sessionsTab.onNewSession = () => this.newSession();
 
-    const recipesTab = new RecipesTab();
-    recipesTab.sessionId = this.sessionId;
-    recipesTab.sessionToken = this.sessionToken;
-    recipesTab.onRecipeApplied = (resp: ApplyRecipeResponse) => this.handleRecipeApplied(resp);
+    const recipesTab = this.buildRecipesTab();
 
     const accountTab = new AccountTab();
     accountTab.sessionId = this.sessionId;
@@ -1069,10 +1064,42 @@ export class ChatPage extends LitElement {
     MenuDialog.open([filesTab, sessionsTab, recipesTab, accountTab], undefined, 3, this.tokenBalance);
   }
 
+  private buildRecipesTab(): RecipesTab {
+    const tab = new RecipesTab();
+    tab.sessionId = this.sessionId;
+    tab.sessionToken = this.sessionToken;
+    tab.currentRecipeContext = {
+      recipePath: this.lastAppliedRecipePath,
+      activityGroup: this.lastAppliedActivityGroup,
+    };
+    tab.onRecipeApplied = (resp: ApplyRecipeResponse) => this.handleRecipeApplied(resp);
+    tab.onNewSessionRequested = async () => {
+      const resp = await eduApi.spawnSession(this.sessionId, this.sessionToken, "new");
+      this.messages = [];
+      this.currentTitle = "";
+      this.lastLoadedThreadId = resp.thread_id || null;
+      this.lastAppliedRecipePath = null;
+      this.lastAppliedActivityGroup = null;
+      this.showLanding = false;
+      this.isStreaming = false;
+      this.streamingMessage = null;
+      SessionManager.clearSession();
+      SessionManager.saveSession(this.sessionId, this.sessionToken);
+      this.updateUI();
+      this.requestUpdate();
+    };
+    tab.onActivityApplied = (recipePath: string, activityGroup: string | null) => {
+      this.lastAppliedRecipePath = recipePath;
+      this.lastAppliedActivityGroup = activityGroup;
+    };
+    return tab;
+  }
+
   private handleRecipeApplied(resp: ApplyRecipeResponse) {
     console.log("[chat-page] Recipe applied:", resp.title, resp.description);
     this.recipeBanner = { title: resp.title, description: resp.description };
     this.lastAppliedRecipePath = resp.recipePath || null;
+    this.lastAppliedActivityGroup = resp.appliedActivityGroup ?? null;
     this.requestUpdate();
 
     if (resp.prompt) {

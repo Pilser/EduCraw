@@ -69,7 +69,7 @@ pub struct Recipe {
     pub settings: Option<Settings>, // settings for the recipe
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub activities: Option<Vec<String>>, // the activity pills that show up when loading the
+    pub activities: Option<Vec<ActivityItem>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<Author>, // any additional author information
@@ -97,6 +97,30 @@ pub struct Author {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>, // any additional metadata for the author
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum ActivityItem {
+    Plain(String),
+    Discover(DiscoverActivity),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DiscoverActivity {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discover: Option<ActivityDiscover>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ActivityDiscover {
+    pub group: String,
+    pub params: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -222,7 +246,7 @@ pub struct RecipeBuilder {
     prompt: Option<String>,
     extensions: Option<Vec<ExtensionConfig>>,
     settings: Option<Settings>,
-    activities: Option<Vec<String>>,
+    activities: Option<Vec<ActivityItem>>,
     author: Option<Author>,
     parameters: Option<Vec<RecipeParameter>>,
     response: Option<Response>,
@@ -288,7 +312,13 @@ impl Recipe {
         if let Some(activities) = &self.activities {
             return activities
                 .iter()
-                .any(|activity| contains_unicode_tags(activity));
+                .any(|activity| match activity {
+                    ActivityItem::Plain(text) => contains_unicode_tags(text),
+                    ActivityItem::Discover(d) => {
+                        contains_unicode_tags(&d.label)
+                            || d.hint.as_ref().is_some_and(|h| contains_unicode_tags(h))
+                    }
+                });
         }
 
         false
@@ -383,7 +413,7 @@ impl RecipeBuilder {
         self
     }
 
-    pub fn activities(mut self, activities: Vec<String>) -> Self {
+    pub fn activities(mut self, activities: Vec<ActivityItem>) -> Self {
         self.activities = Some(activities);
         self
     }
@@ -734,7 +764,7 @@ sub_recipes:
 
         assert!(recipe.activities.is_some());
         let activities = recipe.activities.unwrap();
-        assert_eq!(activities, vec!["activity1", "activity2"]);
+        assert_eq!(activities, vec![ActivityItem::Plain("activity1".to_string()), ActivityItem::Plain("activity2".to_string())]);
     }
 
     #[test]
@@ -761,7 +791,7 @@ isGlobal: true"#;
         assert_eq!(recipe.prompt, Some("Test prompt".to_string()));
         assert!(recipe.activities.is_some());
         let activities = recipe.activities.unwrap();
-        assert_eq!(activities, vec!["Test activity 1", "Test activity 2"]);
+        assert_eq!(activities, vec![ActivityItem::Plain("Test activity 1".to_string()), ActivityItem::Plain("Test activity 2".to_string())]);
         assert!(recipe.extensions.is_some());
         let extensions = recipe.extensions.unwrap();
         assert_eq!(extensions.len(), 0);
@@ -777,7 +807,7 @@ isGlobal: true"#;
             prompt: Some("clean prompt".to_string()),
             extensions: None,
             settings: None,
-            activities: Some(vec!["clean activity 1".to_string()]),
+            activities: Some(vec![ActivityItem::Plain("clean activity 1".to_string())]),
             author: None,
             parameters: None,
             response: None,
@@ -789,8 +819,8 @@ isGlobal: true"#;
 
         // Malicious activities
         recipe.activities = Some(vec![
-            "clean activity".to_string(),
-            format!("malicious{}activity", '\u{E0041}'),
+            ActivityItem::Plain("clean activity".to_string()),
+            ActivityItem::Plain(format!("malicious{}activity", '\u{E0041}')),
         ]);
         assert!(recipe.check_for_security_warnings());
 

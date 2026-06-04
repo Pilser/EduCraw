@@ -16,7 +16,7 @@ use crate::recipe::build_recipe::{build_discovered_recipe, build_recipe_from_tem
 use crate::recipe::discover::{ActivityTrigger, DiscoverExecuteParams};
 use crate::recipe::local_recipes;
 use crate::recipe::local_recipes::load_local_recipe_file;
-use crate::recipe::{Recipe, RecipeParameter, Settings};
+use crate::recipe::{ActivityItem, DiscoverActivity, Recipe, RecipeParameter, Settings};
 use goose_sdk::custom_requests::DiscoverErrorDto;
 use crate::recipe_deeplink;
 use crate::session::session_manager::SessionType;
@@ -129,6 +129,20 @@ pub async fn handle_list(
                 }).collect(),
                 applied_to_current_session: is_applied,
                 is_user_recipe: is_user,
+                activities: r.activities.map(|acts| {
+                    acts.into_iter().map(|a| match a {
+                        ActivityItem::Plain(s) => cr::ActivityItemDto::Plain(s),
+                        ActivityItem::Discover(d) => cr::ActivityItemDto::Discover(cr::DiscoverActivityDto {
+                            label: d.label,
+                            icon: d.icon,
+                            hint: d.hint,
+                            discover: d.discover.map(|dd| cr::ActivityDiscoverDto {
+                                group: dd.group,
+                                params: dd.params,
+                            }),
+                        }),
+                    }).collect()
+                }),
             }
         })
         .collect();
@@ -271,6 +285,8 @@ pub async fn handle_apply_to_session(
                     resolved_extensions: vec![],
                     parameters: vec![],
                     recipe_path: None,
+                    activities: None,
+                    applied_activity_group: None,
                     discover_errors: Some(
                         errors
                             .into_iter()
@@ -351,6 +367,23 @@ pub async fn handle_apply_to_session(
         })
         .collect();
 
+    let activities: Option<Vec<cr::ActivityItemDto>> = recipe.activities.map(|acts| {
+        acts.into_iter()
+            .map(|a| match a {
+                ActivityItem::Plain(s) => cr::ActivityItemDto::Plain(s),
+                ActivityItem::Discover(d) => cr::ActivityItemDto::Discover(cr::DiscoverActivityDto {
+                    label: d.label,
+                    icon: d.icon,
+                    hint: d.hint,
+                    discover: d.discover.map(|dd| cr::ActivityDiscoverDto {
+                        group: dd.group,
+                        params: dd.params,
+                    }),
+                }),
+            })
+            .collect()
+    });
+
     Ok(ApplyRecipeToSessionResponse {
         title: recipe.title,
         description: recipe.description,
@@ -360,6 +393,8 @@ pub async fn handle_apply_to_session(
         parameters,
         recipe_path: Some(resolved_path),
         discover_errors: None,
+        activities,
+        applied_activity_group: req.activity_trigger.as_ref().map(|t| t.group.clone()),
     })
 }
 
@@ -546,10 +581,22 @@ pub async fn handle_generate_from_session(
         .and_then(|v| v.as_str())
         .ok_or_else(|| Error::invalid_params().data("Missing 'instructions' in generated recipe"))?;
 
-    let activities: Vec<String> = json_value
+    let activities: Vec<ActivityItem> = json_value
         .get("activities")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    v.as_str()
+                        .map(|s| ActivityItem::Plain(s.to_string()))
+                        .or_else(|| {
+                            serde_json::from_value::<DiscoverActivity>(v.clone())
+                                .ok()
+                                .map(ActivityItem::Discover)
+                        })
+                })
+                .collect::<Vec<ActivityItem>>()
+        })
         .unwrap_or_default();
 
     // Build and save recipe via handle_create

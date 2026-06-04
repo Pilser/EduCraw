@@ -170,6 +170,7 @@ export interface RecipeEntry {
   parameters?: RecipeParameter[];
   appliedToCurrentSession?: boolean;
   isUserRecipe?: boolean;
+  activities?: ActivityItem[];
 }
 
 export interface CreateRecipeResponse {
@@ -205,6 +206,35 @@ export interface ApplyRecipeResponse {
   resolvedExtensions: string[];
   parameters: RecipeParameter[];
   recipePath?: string | null;
+  /** Activity items from the applied recipe */
+  activities?: ActivityItem[];
+  /** The discover activity group that was triggered (if any) */
+  appliedActivityGroup?: string | null;
+  /** Structured errors from failed required discover steps */
+  discoverErrors?: DiscoverError[];
+}
+
+export interface DiscoverError {
+  code: string;
+  step: string;
+  stepType: string;
+  path: string;
+  message: string;
+}
+
+/** A recipe activity item — plain string or structured discover activity */
+export type ActivityItem =
+  | string
+  | {
+      label: string;
+      icon?: string | null;
+      hint?: string | null;
+      discover?: ActivityDiscover | null;
+    };
+
+export interface ActivityDiscover {
+  group: string;
+  params: Record<string, string>;
 }
 
 export interface GenerateRecipeResponse {

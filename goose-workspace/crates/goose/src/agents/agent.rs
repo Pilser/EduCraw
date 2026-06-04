@@ -43,7 +43,7 @@ use crate::permission::permission_judge::PermissionCheckResult;
 use crate::permission::PermissionConfirmation;
 use crate::providers::base::{PermissionRouting, Provider};
 use crate::providers::errors::ProviderError;
-use crate::recipe::{Author, Recipe, Response, Settings};
+use crate::recipe::{ActivityItem, Author, Recipe, Response, Settings};
 use crate::security::adversary_inspector::AdversaryInspector;
 use crate::security::egress_inspector::EgressInspector;
 use crate::security::security_inspector::SecurityInspector;
@@ -2232,8 +2232,13 @@ impl Agent {
                     .iter()
                     .map(|act| {
                         act.as_str()
-                            .map(|s| s.to_string())
-                            .ok_or(anyhow!("'activities' array element is not a string"))
+                            .map(|s| crate::recipe::ActivityItem::Plain(s.to_string()))
+                            .or_else(|| {
+                                serde_json::from_value::<crate::recipe::DiscoverActivity>(act.clone())
+                                    .ok()
+                                    .map(crate::recipe::ActivityItem::Discover)
+                            })
+                            .ok_or(anyhow!("'activities' array element is not a string or discover object"))
                     })
                     .collect::<Result<_, _>>()?;
 
@@ -2262,11 +2267,12 @@ impl Agent {
                 let bullet_re = Regex::new(r"^[•\-*\d]+\.?\s*").expect("Invalid regex");
 
                 // Process each line in the activities section.
-                let activities: Vec<String> = activities_text
+                let activities: Vec<ActivityItem> = activities_text
                     .lines()
                     .map(|line| bullet_re.replace(line, "").to_string())
                     .map(|s| s.trim().to_string())
                     .filter(|line| !line.is_empty())
+                    .map(ActivityItem::Plain)
                     .collect();
 
                 (instructions, activities)
