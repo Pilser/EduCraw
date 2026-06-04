@@ -12,7 +12,27 @@ import type {
 	RecipeEntry,
 	RecipeParameter,
 } from "../core/edu-types.js";
-import { Download, Upload, Plus, Trash2, Sparkles, Play, Globe, FileText, X } from "lucide";
+import { Download, Upload, Plus, Trash2, Sparkles, Play, Globe, FileText, X, Book, BookOpen, Brain, GraduationCap, Lightbulb, MessageSquare, Puzzle, Search, Star, Target, Trophy, Wand2, Zap } from "lucide";
+
+const LUCIDE_ICONS: Record<string, any> = {
+	book: Book,
+	"book-open": BookOpen,
+	brain: Brain,
+	"graduation-cap": GraduationCap,
+	lightbulb: Lightbulb,
+	"message-square": MessageSquare,
+	puzzle: Puzzle,
+	search: Search,
+	star: Star,
+	target: Target,
+	trophy: Trophy,
+	sparkles: Sparkles,
+	play: Play,
+	globe: Globe,
+	"file-text": FileText,
+	"wand-2": Wand2,
+	zap: Zap,
+};
 
 @customElement("recipes-tab")
 export class RecipesTab extends MenuTab {
@@ -320,20 +340,29 @@ export class RecipesTab extends MenuTab {
 		return html`
 			<div class="flex flex-wrap gap-1.5 mt-2">
 				${recipe.activities.map((activity) => {
-					const label = typeof activity === "string" ? activity : activity.label;
-					const hint = typeof activity === "object" ? activity.hint : undefined;
-					const hasDiscover = typeof activity === "object" && !!activity.discover;
+					const isObject = typeof activity === "object";
+					const label = isObject ? activity.label : activity;
+					const rawIcon = isObject ? activity.icon : undefined;
+					const lucideIcon = rawIcon ? LUCIDE_ICONS[rawIcon.toLowerCase()] : undefined;
+					const hint = isObject ? activity.hint : undefined;
+					const hasDiscover = isObject && !!activity.discover;
 					const loading = this.isActivityLoading(recipe.path, label);
 
 					return html`
 						<button
-							class="flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-border hover:bg-secondary/50 transition-colors disabled:opacity-50"
+							class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-primary/30 bg-primary/[0.04] text-foreground hover:bg-primary/[0.1] hover:border-primary/60 active:scale-95 transition-all duration-150 disabled:opacity-50 disabled:active:scale-100 shadow-sm"
 							title=${hint || label}
 							?disabled=${!hasDiscover || loading}
 							@click=${() => hasDiscover && this.handleActivityClick(recipe, activity)}
 						>
-							${loading ? html`<span class="animate-spin">⟳</span>` : ""}
-							${label}
+							${loading
+								? html`<span class="inline-block w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin shrink-0" />`
+								: lucideIcon
+									? html`<span class="shrink-0">${icon(lucideIcon, "sm")}</span>`
+									: rawIcon
+										? html`<span class="text-sm shrink-0">${rawIcon}</span>`
+										: ""}
+							<span>${label}</span>
 						</button>
 					`;
 				})}
@@ -512,11 +541,11 @@ export class RecipesTab extends MenuTab {
 					<div class="flex flex-col gap-2 text-sm">
 						<div class="flex items-center gap-2">
 							<span class="text-muted-foreground">From:</span>
-							<span class="font-medium">${fromGroup}</span>
+							<span class="font-medium text-foreground">${fromGroup}</span>
 						</div>
 						<div class="flex items-center gap-2">
 							<span class="text-muted-foreground">To:</span>
-							<span class="font-medium">${toGroup}</span>
+							<span class="font-medium text-foreground">${toGroup}</span>
 						</div>
 						<p class="text-xs text-muted-foreground mt-1">
 							Starting a new thread will clear the current conversation. The current conversation stays saved.
@@ -592,25 +621,25 @@ export class RecipesTab extends MenuTab {
 										<div>No recipes yet. Click "Generate from Chat" to create one from the current conversation.</div>
 									</div>
 								`
-							: this.recipes.map(
+									: this.recipes.map(
 									(recipe) => html`
-										<div class="flex items-center gap-2 p-3 border border-border rounded-lg hover:bg-secondary/50 transition-colors">
+										<div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3 border border-border rounded-lg hover:bg-secondary/50 transition-colors">
 											<button
-												class="flex-1 flex flex-col gap-1 text-left"
+												class="flex-1 flex flex-col gap-1 text-left min-w-0"
 												@click=${() => this.openApplyDialog(recipe.path)}
 												title="Click to apply this recipe"
 											>
-												<div class="font-medium text-foreground flex items-center gap-2">
+												<div class="font-medium text-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
 													${recipe.title}
 													${recipe.appliedToCurrentSession
-														? html`<span class="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-800">✓ Applied</span>`
+														? html`<span class="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary whitespace-nowrap">✓ Applied</span>`
 														: ""}
 													${recipe.global
-														? html`<span class="text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground flex items-center gap-1">${icon(Globe, "xs")} global</span>`
+														? html`<span class="text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground flex items-center gap-1 whitespace-nowrap">${icon(Globe, "xs")} global</span>`
 														: ""}
 												</div>
 												${recipe.description
-													? html`<div class="text-xs text-muted-foreground line-clamp-2">${recipe.description}</div>`
+													? html`<div class="text-xs text-muted-foreground">${recipe.description}</div>`
 													: ""}
 												${recipe.parameters && recipe.parameters.length > 0
 													? html`<div class="text-xs text-muted-foreground">${recipe.parameters.length} parameter${recipe.parameters.length === 1 ? "" : "s"}</div>`
@@ -618,7 +647,7 @@ export class RecipesTab extends MenuTab {
 												${this.renderActivities(recipe)}
 												${this.renderDiscoverErrors(recipe.path)}
 											</button>
-											<div class="flex gap-1">
+											<div class="flex gap-1 self-end sm:self-center shrink-0">
 												${Button({
 													variant: "ghost",
 													size: "sm",
