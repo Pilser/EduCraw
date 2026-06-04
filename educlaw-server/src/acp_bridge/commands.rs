@@ -134,11 +134,11 @@ pub async fn handle_import_session(
 // ═══════════════════════════════════════════════════════════════════════
 
 use super::custom_requests::{
-    ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse, CreateRecipeRequest,
-    CreateRecipeResponse, DeleteRecipeRequest, ExportRecipeRequest, ExportRecipeResponse,
-    GenerateFromSessionRequest, GenerateFromSessionResponse, ImportRecipeRequest,
-    ImportRecipeResponse, ListRecipesRequest, ListRecipesResponse, ReadRecipeRequest,
-    ReadRecipeResponse, RecipeEntry,
+    ActivityTriggerDto, ApplyRecipeToSessionRequest, ApplyRecipeToSessionResponse,
+    CreateRecipeRequest, CreateRecipeResponse, DeleteRecipeRequest, ExportRecipeRequest,
+    ExportRecipeResponse, GenerateFromSessionRequest, GenerateFromSessionResponse,
+    ImportRecipeRequest, ImportRecipeResponse, ListRecipesRequest, ListRecipesResponse,
+    ReadRecipeRequest, ReadRecipeResponse, RecipeEntry,
 };
 
 /// Create a recipe from YAML/JSON content — saved to {projectDir}/.agents/recipes/
@@ -242,15 +242,24 @@ pub async fn handle_generate_from_session(
         .map_err(|e| AppError::Session(format!("GenerateFromSession ACP error: {e}")))
 }
 
-/// Apply a recipe to an active session, persisting recipe metadata + resolved params
+/// Apply a recipe to an active session, persisting recipe metadata + resolved params.
+/// If `activity_trigger` is present, the recipe's `discover` block runs (Phase 1)
+/// before template rendering (Phase 2), bypassing the parameter dialog.
 pub async fn handle_apply_recipe_to_session(
     cx: &ConnectionTo<SacpAgent>,
     session_id: String,
     recipe_path: String,
     parameter_values: Option<std::collections::HashMap<String, String>>,
     project_dir: Option<String>,
+    activity_trigger: Option<ActivityTriggerDto>,
 ) -> Result<ApplyRecipeToSessionResponse> {
-    let req = ApplyRecipeToSessionRequest { session_id, recipe_path, parameter_values, project_dir };
+    let req = ApplyRecipeToSessionRequest {
+        session_id,
+        recipe_path,
+        parameter_values,
+        project_dir,
+        activity_trigger,
+    };
     cx.send_request(req)
         .block_task()
         .await

@@ -27,7 +27,7 @@ use serde::Deserialize;
 use crate::acp_bridge::{
     handle_apply_recipe_to_session, handle_create_recipe, handle_delete_recipe,
     handle_export_recipe, handle_generate_from_session, handle_import_recipe,
-    handle_list_recipes, handle_read_recipe,
+    handle_list_recipes, handle_read_recipe, ActivityTriggerDto,
 };
 use crate::auth::bearer_token;
 use crate::error::{AppError, Result};
@@ -224,6 +224,9 @@ struct ApplyRecipeBody {
     parameter_values: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
     project_dir: Option<String>,
+    /// Activity trigger for dynamic discover (bypasses parameter dialog)
+    #[serde(default)]
+    activity_trigger: Option<ActivityTriggerDto>,
 }
 
 async fn apply_recipe(
@@ -251,6 +254,7 @@ async fn apply_recipe(
         body.recipe_path,
         body.parameter_values,
         Some(project_dir),
+        body.activity_trigger,
     )
     .await?;
     Ok(Json(serde_json::json!(resp)))

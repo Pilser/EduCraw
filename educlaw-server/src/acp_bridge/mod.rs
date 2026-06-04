@@ -29,7 +29,7 @@ pub use commands::{
     ForkSessionResult, SessionListItem,
 };
 
-pub use custom_requests::ImportSessionResponse;
+pub use custom_requests::{ActivityTriggerDto, DiscoverErrorDto, ImportSessionResponse};
 
 pub use session::{
     handle_cancel, handle_input_sse, handle_replay_sse, init_acp_session,
