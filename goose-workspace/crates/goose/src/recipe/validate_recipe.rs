@@ -54,6 +54,71 @@ pub fn validate_recipe_template_from_content(
     Ok(recipe)
 }
 
+/// Like `validate_recipe_template_from_content` but allows additional template
+/// variables that are injected by discover steps (not declared in `parameters[]`).
+/// `allowed_undeclared` should contain all discover step names.
+pub fn validate_recipe_template_for_discovery(
+    recipe_content: &str,
+    recipe_dir: Option<String>,
+    allowed_undeclared: &HashSet<String>,
+) -> Result<Recipe> {
+    let (recipe_template, mut template_variables) =
+        parse_recipe_content(recipe_content, recipe_dir.clone())?;
+    let recipe_parameters = &recipe_template.parameters;
+    validate_optional_parameters(recipe_parameters)?;
+
+    // Remove built-in and discover-injected variables from template checks
+    template_variables.remove(BUILT_IN_RECIPE_DIR_PARAM);
+    for name in allowed_undeclared {
+        template_variables.remove(name);
+    }
+
+    let param_keys: HashSet<String> = recipe_parameters
+        .as_ref()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|p| p.key.clone())
+        .collect();
+
+    let missing_keys: Vec<&String> = template_variables
+        .difference(&param_keys)
+        .collect();
+
+    // For extra keys, also skip discover step names (they may be intentionally declared)
+    let extra_keys: Vec<&String> = param_keys
+        .iter()
+        .filter(|k| !allowed_undeclared.contains(*k))
+        .filter(|k| !template_variables.contains(*k))
+        .collect();
+
+    if !missing_keys.is_empty() || !extra_keys.is_empty() {
+        let mut message = String::new();
+        if !missing_keys.is_empty() {
+            message.push_str(&format!(
+                "Missing definitions for parameters in the recipe file: {}.",
+                missing_keys.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if !extra_keys.is_empty() {
+            message.push_str(&format!(
+                "\nUnnecessary parameter definitions: {}.",
+                extra_keys.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        return Err(anyhow::anyhow!("{}", message.trim_end()));
+    }
+
+    validate_prompt_or_instructions(&recipe_template)?;
+    validate_retry_config(&recipe_template)?;
+    if let Some(response) = &recipe_template.response {
+        if let Some(json_schema) = &response.json_schema {
+            validate_json_schema(json_schema)?;
+        }
+    }
+
+    Ok(recipe_template)
+}
+
 fn validate_retry_config(recipe: &Recipe) -> Result<()> {
     if let Some(ref retry_config) = recipe.retry {
         if let Err(validation_error) = retry_config.validate() {

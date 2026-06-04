@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 
 pub mod acp_handlers;
 pub mod build_recipe;
+pub mod discover;
 pub mod local_recipes;
 pub mod read_recipe_file_content;
 mod recipe_extension_adapter;
@@ -84,6 +85,9 @@ pub struct Recipe {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetryConfig>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discover: Option<Vec<discover::DiscoverGroup>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -224,6 +228,7 @@ pub struct RecipeBuilder {
     response: Option<Response>,
     sub_recipes: Option<Vec<SubRecipe>>,
     retry: Option<RetryConfig>,
+    discover: Option<Vec<discover::DiscoverGroup>>,
 }
 
 impl Recipe {
@@ -312,6 +317,7 @@ impl Recipe {
             response: None,
             sub_recipes: None,
             retry: None,
+            discover: None,
         }
     }
 
@@ -407,6 +413,11 @@ impl RecipeBuilder {
         self
     }
 
+    pub fn discover(mut self, discover: Vec<discover::DiscoverGroup>) -> Self {
+        self.discover = Some(discover);
+        self
+    }
+
     pub fn build(self) -> Result<Recipe, &'static str> {
         let title = self.title.ok_or("Title is required")?;
         let description = self.description.ok_or("Description is required")?;
@@ -429,6 +440,7 @@ impl RecipeBuilder {
             response: self.response,
             sub_recipes: self.sub_recipes,
             retry: self.retry,
+            discover: self.discover,
         })
     }
 }

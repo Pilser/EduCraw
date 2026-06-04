@@ -80,6 +80,8 @@ pub struct Session {
     pub recipe: Option<Recipe>,
     pub user_recipe_values: Option<HashMap<String, String>>,
     pub applied_recipe_path: Option<String>,
+    #[serde(default)]
+    pub recipe_activity_context: Option<String>,
     pub conversation: Option<Conversation>,
     pub message_count: usize,
     pub provider_name: Option<String>,
@@ -112,6 +114,7 @@ pub struct SessionUpdateBuilder<'a> {
     recipe: Option<Option<Recipe>>,
     user_recipe_values: Option<Option<HashMap<String, String>>>,
     applied_recipe_path: Option<Option<String>>,
+    recipe_activity_context: Option<Option<String>>,
     provider_name: Option<Option<String>>,
     model_config: Option<Option<ModelConfig>>,
     goose_mode: Option<GooseMode>,
@@ -149,6 +152,7 @@ impl<'a> SessionUpdateBuilder<'a> {
             recipe: None,
             user_recipe_values: None,
             applied_recipe_path: None,
+            recipe_activity_context: None,
             provider_name: None,
             model_config: None,
             goose_mode: None,
@@ -288,6 +292,11 @@ impl<'a> SessionUpdateBuilder<'a> {
 
     pub fn thread_id(mut self, thread_id: Option<String>) -> Self {
         self.thread_id = Some(thread_id);
+        self
+    }
+
+    pub fn recipe_activity_context(mut self, context: Option<String>) -> Self {
+        self.recipe_activity_context = Some(context);
         self
     }
 }
@@ -509,6 +518,7 @@ impl Default for Session {
             model_config: None,
             goose_mode: GooseMode::default(),
             thread_id: None,
+            recipe_activity_context: None,
         }
     }
 }
@@ -592,6 +602,10 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_default(),
             thread_id: row.try_get("thread_id").ok().flatten(),
+            recipe_activity_context: row
+                .try_get("recipe_activity_context")
+                .ok()
+                .flatten(),
         })
     }
 }
@@ -1308,6 +1322,7 @@ impl SessionStorage {
         add_update!(builder.model_config, "model_config_json");
         add_update!(builder.goose_mode, "goose_mode");
         add_update!(builder.thread_id, "thread_id");
+        add_update!(builder.recipe_activity_context, "recipe_activity_context");
 
         if updates.is_empty() {
             return Ok(());
@@ -1393,6 +1408,9 @@ impl SessionStorage {
         }
         if let Some(thread_id) = builder.thread_id {
             q = q.bind(thread_id);
+        }
+        if let Some(recipe_activity_context) = builder.recipe_activity_context {
+            q = q.bind(recipe_activity_context);
         }
 
         let pool = self.pool().await?;

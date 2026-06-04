@@ -179,6 +179,15 @@ pub(crate) fn build_skill_md(name: &str, description: &str, content: &str) -> St
     md
 }
 
+/// Read a skill's frontmatter from its SKILL.md file path.
+/// Returns (name, description) if the skill has valid frontmatter.
+pub fn read_skill_frontmatter(skill_md: &Path) -> Option<(String, String)> {
+    let content = std::fs::read_to_string(skill_md).ok()?;
+    let (metadata, _): (SkillFrontmatter, String) = parse_frontmatter(&content).ok()??;
+    let name = metadata.name.filter(|n| !n.is_empty())?;
+    Some((name, metadata.description))
+}
+
 pub(crate) fn parse_skill_frontmatter(raw: &str) -> (String, String) {
     if !raw.trim_start().starts_with("---") {
         return (String::new(), raw.to_string());

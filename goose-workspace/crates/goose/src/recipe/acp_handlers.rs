@@ -12,10 +12,12 @@ use crate::conversation::message::{Message, MessageContent};
 use crate::model::ModelConfig;
 use crate::prompt_template;
 use crate::providers;
-use crate::recipe::build_recipe::build_recipe_from_template;
+use crate::recipe::build_recipe::{build_discovered_recipe, build_recipe_from_template, BuildDiscoveredRecipeError};
+use crate::recipe::discover::{ActivityTrigger, DiscoverExecuteParams};
 use crate::recipe::local_recipes;
 use crate::recipe::local_recipes::load_local_recipe_file;
 use crate::recipe::{Recipe, RecipeParameter, Settings};
+use goose_sdk::custom_requests::DiscoverErrorDto;
 use crate::recipe_deeplink;
 use crate::session::session_manager::SessionType;
 use crate::session::SessionManager;
@@ -242,13 +244,63 @@ pub async fn handle_apply_to_session(
         .into_iter()
         .collect();
 
-    let recipe = build_recipe_from_template(
-        recipe_file.content,
-        &recipe_file.parent_dir,
-        param_values.clone(),
-        None::<fn(&str, &str) -> Result<String, anyhow::Error>>,
-    )
-    .map_err(|e| Error::invalid_params().data(e.to_string()))?;
+    let recipe = if let Some(trigger) = &req.activity_trigger {
+        let working_dir = std::env::current_dir().unwrap_or_default();
+        let discover_params = DiscoverExecuteParams {
+            working_dir,
+            activity_trigger: Some(ActivityTrigger {
+                group: trigger.group.clone(),
+                params: trigger.params.clone(),
+            }),
+        };
+        match build_discovered_recipe(
+            recipe_file.content.clone(),
+            &recipe_file.parent_dir,
+            param_values.clone(),
+            Some(discover_params),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(BuildDiscoveredRecipeError::DiscoverFailed(errors)) => {
+                return Ok(ApplyRecipeToSessionResponse {
+                    title: String::new(),
+                    description: String::new(),
+                    instructions: None,
+                    prompt: None,
+                    resolved_extensions: vec![],
+                    parameters: vec![],
+                    recipe_path: None,
+                    discover_errors: Some(
+                        errors
+                            .into_iter()
+                            .map(|e| DiscoverErrorDto {
+                                code: e.code,
+                                step: e.step,
+                                step_type: e.step_type,
+                                path: e.path,
+                                message: e.message,
+                            })
+                            .collect(),
+                    ),
+                });
+            }
+            Err(e) => {
+                return Err(Error::invalid_params().data(format!(
+                    "Failed to build discovered recipe: {}",
+                    e
+                )))
+            }
+        }
+    } else {
+        build_recipe_from_template(
+            recipe_file.content,
+            &recipe_file.parent_dir,
+            param_values.clone(),
+            None::<fn(&str, &str) -> Result<String, anyhow::Error>>,
+        )
+        .map_err(|e| Error::invalid_params().data(e.to_string()))?
+    };
 
     let resolved_path = path.to_string_lossy().to_string();
     let user_values: HashMap<String, String> = param_values.into_iter().collect();
@@ -258,6 +310,7 @@ pub async fn handle_apply_to_session(
         .recipe(Some(recipe.clone()))
         .applied_recipe_path(Some(resolved_path.clone()))
         .user_recipe_values(Some(user_values))
+        .recipe_activity_context(req.activity_trigger.as_ref().map(|t| t.group.clone()))
         .apply()
         .await
         .map_err(|e| Error::internal_error().data(e.to_string()))?;
@@ -306,6 +359,7 @@ pub async fn handle_apply_to_session(
         resolved_extensions,
         parameters,
         recipe_path: Some(resolved_path),
+        discover_errors: None,
     })
 }
 

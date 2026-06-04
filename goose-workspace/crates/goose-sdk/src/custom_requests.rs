@@ -1225,6 +1225,32 @@ pub struct ApplyRecipeToSessionRequest {
     /// Project root for name resolution
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_dir: Option<String>,
+
+    /// Activity trigger for dynamic discover (bypasses parameter dialog)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_trigger: Option<ActivityTriggerDto>,
+}
+
+/// Activity trigger sent from frontend activity click.
+/// Carries the discover group name + parameter values to bypass the parameter dialog.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityTriggerDto {
+    /// Which discover group to activate
+    pub group: String,
+    /// Parameter values for discovery + template rendering
+    pub params: HashMap<String, String>,
+}
+
+/// Structured error from a required discover step that failed.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverErrorDto {
+    pub code: String,
+    pub step: String,
+    pub step_type: String,
+    pub path: String,
+    pub message: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -1242,6 +1268,10 @@ pub struct ApplyRecipeToSessionResponse {
     pub parameters: Vec<RecipeParameterDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe_path: Option<String>,
+
+    /// Structured errors from failed required discover steps
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discover_errors: Option<Vec<DiscoverErrorDto>>,
 }
 
 /// Generate a recipe from a session's conversation history using a sub-agent.

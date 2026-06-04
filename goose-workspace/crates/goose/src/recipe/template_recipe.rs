@@ -91,7 +91,7 @@ fn replace_unparseable_vars_with_raw(
 
 pub fn render_recipe_content_with_params(
     content: &str,
-    params: &HashMap<String, String>,
+    params: &HashMap<String, serde_json::Value>,
 ) -> Result<String> {
     // Pre-process content to replace empty double quotes with single quotes
     // This prevents MiniJinja from escaping "" to "\"\"" which would break YAML parsing
@@ -102,9 +102,14 @@ pub fn render_recipe_content_with_params(
     let content_with_safe_variables =
         preprocess_template_variables(&content_with_empty_quotes_replaced)?;
 
+    let recipe_dir = params
+        .get(BUILT_IN_RECIPE_DIR_PARAM)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let env = add_template_in_env(
         &content_with_safe_variables,
-        params.get(BUILT_IN_RECIPE_DIR_PARAM).cloned(),
+        recipe_dir,
         UndefinedBehavior::Strict,
     )?;
     let template = env.get_template(CURRENT_TEMPLATE_NAME).unwrap();
@@ -112,6 +117,23 @@ pub fn render_recipe_content_with_params(
         .render(params)
         .map_err(|e| anyhow::anyhow!("Failed to render the recipe {}", e))?;
     Ok(rendered_content)
+}
+
+/// Phase 1 render: resolve only the path/url fields in discover steps.
+/// Uses Lenient undefined behavior — missing params produce empty string
+/// instead of errors (so optional steps can have optional path segments).
+pub fn render_discover_path(
+    template_str: &str,
+    params: &HashMap<String, String>,
+) -> Result<String> {
+    use minijinja::Environment;
+    let mut env = Environment::new();
+    env.set_undefined_behavior(UndefinedBehavior::Lenient);
+    let tmpl = env
+        .template_from_str(template_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse discover path template: {}", e))?;
+    tmpl.render(params)
+        .map_err(|e| anyhow::anyhow!("Failed to render discover path: {}", e))
 }
 
 fn add_template_in_env(
@@ -202,13 +224,17 @@ mod tests {
 
         use crate::recipe::template_recipe::render_recipe_content_with_params;
 
+        fn string_param(key: &str, value: &str) -> (String, serde_json::Value) {
+            (key.to_string(), serde_json::Value::String(value.to_string()))
+        }
+
         #[test]
         fn test_render_content_with_params() {
             // Test basic parameter substitution
             let content = "Hello {{ name }}!";
             let params = HashMap::from([
-                ("recipe_dir".to_string(), "some_dir".to_string()),
-                ("name".to_string(), "World".to_string()),
+                string_param("recipe_dir", "some_dir"),
+                string_param("name", "World"),
             ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hello World!");
@@ -216,8 +242,8 @@ mod tests {
             // Test empty parameter substitution
             let content = "Hello {{ empty }}!";
             let params = HashMap::from([
-                ("recipe_dir".to_string(), "some_dir".to_string()),
-                ("empty".to_string(), "".to_string()),
+                string_param("recipe_dir", "some_dir"),
+                string_param("empty", ""),
             ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hello !");
@@ -225,23 +251,27 @@ mod tests {
             // Test multiple parameters
             let content = "{{ greeting }} {{ name }}!";
             let params = HashMap::from([
-                ("recipe_dir".to_string(), "some_dir".to_string()),
-                ("greeting".to_string(), "Hi".to_string()),
-                ("name".to_string(), "Alice".to_string()),
+                string_param("recipe_dir", "some_dir"),
+                string_param("greeting", "Hi"),
+                string_param("name", "Alice"),
             ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hi Alice!");
 
             // Test missing parameter results in error
             let content = "Hello {{ missing }}!";
-            let params = HashMap::from([("recipe_dir".to_string(), "some_dir".to_string())]);
+            let params = HashMap::from([
+                string_param("recipe_dir", "some_dir"),
+            ]);
             let err = render_recipe_content_with_params(content, &params).unwrap_err();
             let error_msg = err.to_string();
             assert!(error_msg.contains("Failed to render the recipe"));
 
             // Test invalid template syntax results in error
             let content = "Hello {{ unclosed";
-            let params = HashMap::from([("recipe_dir".to_string(), "some_dir".to_string())]);
+            let params = HashMap::from([
+                string_param("recipe_dir", "some_dir"),
+            ]);
             let err = render_recipe_content_with_params(content, &params).unwrap_err();
             assert!(err.to_string().contains("unexpected end of input"));
         }
@@ -249,27 +279,31 @@ mod tests {
         #[test]
         fn test_render_content_with_spaced_variables() {
             let content = "Hello {{hf model org}}_{{hf model name}}!";
-            let params = HashMap::from([("recipe_dir".to_string(), "some_dir".to_string())]);
+            let params = HashMap::from([
+                string_param("recipe_dir", "some_dir"),
+            ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hello {{hf model org}}_{{hf model name}}!");
 
             let content = "Hello {{hf model org}_{hf model name}}!";
-            let params = HashMap::from([("recipe_dir".to_string(), "some_dir".to_string())]);
+            let params = HashMap::from([
+                string_param("recipe_dir", "some_dir"),
+            ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hello {{hf model org}_{hf model name}}!");
 
             let content = "Hello {{valid_var}}!";
             let params = HashMap::from([
-                ("recipe_dir".to_string(), "some_dir".to_string()),
-                ("valid_var".to_string(), "World".to_string()),
+                string_param("recipe_dir", "some_dir"),
+                string_param("valid_var", "World"),
             ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hello World!");
 
             let content = "{{valid_var}} and {{invalid var}}";
             let params = HashMap::from([
-                ("recipe_dir".to_string(), "some_dir".to_string()),
-                ("valid_var".to_string(), "Hello".to_string()),
+                string_param("recipe_dir", "some_dir"),
+                string_param("valid_var", "Hello"),
             ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "Hello and {{invalid var}}");
@@ -282,11 +316,13 @@ prompt: ""
 name: "Simple Recipe"
 description: "A test recipe"
 "#;
-            let params = HashMap::from([("recipe_dir".to_string(), "test_dir".to_string())]);
+            let params = HashMap::from([
+                string_param("recipe_dir", "test_dir"),
+            ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
 
             assert!(result.contains("prompt: ''"));
-            assert!(!result.contains(r#"prompt: "\"\"""#)); // Should not contain escaped quotes
+            assert!(!result.contains(r#"prompt: "\"\"""#));
 
             assert!(result.contains(r#"name: "Simple Recipe""#));
         }
@@ -294,9 +330,24 @@ description: "A test recipe"
         #[test]
         fn test_jinja_escape_syntax() {
             let content = r#"{{'{{param_key}}'}}"#;
-            let params = HashMap::from([("recipe_dir".to_string(), "test_dir".to_string())]);
+            let params = HashMap::from([
+                string_param("recipe_dir", "test_dir"),
+            ]);
             let result = render_recipe_content_with_params(content, &params).unwrap();
             assert_eq!(result, "{{param_key}}");
+        }
+
+        #[test]
+        fn test_render_with_structured_value() {
+            let content = "Path: {{ materials.path }}, Files: {% for f in materials.entries %}{{ f }},{% endfor %}";
+            let mut params: HashMap<String, serde_json::Value> = HashMap::new();
+            params.insert("recipe_dir".to_string(), serde_json::Value::String(".".to_string()));
+            params.insert("materials".to_string(), serde_json::json!({
+                "path": "/study/math",
+                "entries": ["a.pdf", "b.pdf"]
+            }));
+            let result = render_recipe_content_with_params(content, &params).unwrap();
+            assert_eq!(result, "Path: /study/math, Files: a.pdf,b.pdf,");
         }
     }
 }
