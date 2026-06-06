@@ -62,12 +62,15 @@ walkdir = "2"
 # Base64 encoding for image data-URLs
 base64 = "0.22"
 
-# Security hardening
-seccompiler = "0.5"
+# Security hardening (libc used by ensure_host_networking for geteuid check)
 libc = "0.2"
 
 # Hashing (session_id → IP block mapping)
 blake3 = "1.5"
+
+# Container runtime (Youki — OCI container lifecycle)
+libcontainer = { version = "0.6.0", default-features = false, features = ["v2", "systemd"] }
+nix = "0.29"
 
 # Goose ACP protocol (SACP client)
 agent-client-protocol-schema = { version = "0.11", features = ["unstable"] }

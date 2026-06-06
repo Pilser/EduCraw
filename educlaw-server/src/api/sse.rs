@@ -27,6 +27,7 @@ use crate::acp_bridge::{
 use crate::auth::bearer_token;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
+use crate::session::container::collect_subject_dirs;
 use crate::session::dirs::SessionDirs;
 
 use super::AppState;
@@ -134,12 +135,29 @@ async fn session_input(
     let registry = Arc::clone(&state.registry);
     let existing = registry.get(&session_id).await;
     if existing.is_none() {
+        let student = state.backend.get_student(&student_id)
+            .await
+            .ok()
+            .flatten();
+        let cohort_id = student.as_ref()
+            .map(|s| s.cohort_id.clone())
+            .unwrap_or_default();
+        let student_workspace = student.map_or_else(
+            || std::path::PathBuf::from(&state.students_root).join(&student_id),
+            |s| {
+                let component = s.home_dir.as_deref().unwrap_or(&s.username);
+                std::path::PathBuf::from(&state.students_root).join(component)
+            },
+        );
+        let subject_dirs = collect_subject_dirs(std::path::Path::new(&state.subjects_root), &cohort_id);
+
         init_acp_session(
             state.goose_bin.clone().into(),
-            dirs.merged.clone(),
             goose_path_root,
             dirs.config.clone(),
+            student_workspace,
             std::path::PathBuf::from(&state.jail_tools_host),
+            subject_dirs,
             env_vars,
             model,
             state.backend.clone(),
@@ -168,7 +186,6 @@ async fn session_input(
         body.request_id,
         state.backend.clone(),
         &student_id,
-        &dirs.merged,
         last_input_at,
     )
     .await?;

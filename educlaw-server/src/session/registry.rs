@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::db::DbBackend;
+use libcontainer::container::Container;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -39,10 +40,13 @@ pub struct ManagedSession {
     // SACP connection handle — reused on reconnect (Clone-able)
     pub cx: sacp::ConnectionTo<sacp::Agent>,
 
+    // Youki container handle — used for lifecycle (kill, status, delete)
+    pub container: Arc<Mutex<Option<Container>>>,
+
     // Goose subprocess — kept alive during grace period, killed when expired
     pub child: Arc<Mutex<Option<tokio::process::Child>>>,
 
-    // Pid of the unshare wrapper process — used for process-group kill during cleanup
+    // Pid of the container init process — used for process-group kill during cleanup
     pub pid: u32,
 
     // Replaceable notification sender — swapped to a new channel on each WS reconnect
@@ -82,7 +86,8 @@ impl ManagedSession {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         cx: sacp::ConnectionTo<sacp::Agent>,
-        child: tokio::process::Child,
+        container: Option<Container>,
+        child: Option<tokio::process::Child>,
         pid: u32,
         // The SAME Arc that was passed to spawn_sacp_client — must be shared so
         // swapping the inner Sender on reconnect reaches the sacp callback.
@@ -105,7 +110,8 @@ impl ManagedSession {
     ) -> Self {
         Self {
             cx,
-            child: Arc::new(Mutex::new(Some(child))),
+            container: Arc::new(Mutex::new(container)),
+            child: Arc::new(Mutex::new(child)),
             pid,
             notif_tx_shared,
             acp_session_id,

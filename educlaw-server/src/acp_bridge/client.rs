@@ -18,7 +18,7 @@ use sacp::schema::{
 };
 use sacp::{Agent as SacpAgent, ByteStreams, Client, ConnectionTo};
 use serde_json::Value;
-use tokio::process::{ChildStdin, ChildStdout};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -34,9 +34,8 @@ use chrono::Utc;
 /// Returns connection, session_id holder (None initially - set by LoadSession or first Prompt),
 /// and available models from goose.
 pub async fn spawn_sacp_client(
-    child_stdin: ChildStdin,
-    child_stdout: ChildStdout,
-    workspace: PathBuf,
+    child_stdin: impl AsyncWrite + Unpin + Send + 'static,
+    child_stdout: impl AsyncRead + Unpin + Send + 'static,
     model: Option<String>,
     provider: Option<String>,
     notif_tx: Arc<Mutex<mpsc::Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,

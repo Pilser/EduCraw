@@ -143,6 +143,11 @@ async fn main() -> anyhow::Result<()> {
             for s in &active {
                 let (b1, b2) = crate::session::namespace::session_ip_block(&s.id);
                 crate::session::namespace::cleanup_veth(b1, b2).await;
+
+                // Try container stale cleanup first (kills orphaned processes, removes state)
+                crate::session::container::cleanup_stale_container(&workspace_root, &s.id);
+
+                // Fallback: old unshare session cleanup
                 if !s.overlay_mount.is_empty() {
                     use std::path::Path;
                     crate::session::namespace::umount_overlay(Path::new(&s.overlay_mount)).await;

@@ -30,8 +30,9 @@ use crate::db::{DbBackend, Session, Student};
 use crate::error::{AppError, Result};
 use crate::session::{
     broker::now_secs,
+    container::{self, collect_subject_dirs},
     dirs::SessionDirs,
-    namespace::{cleanup_veth, kill_process_tree, mount_overlay, session_ip_block, umount_overlay},
+    namespace::{cleanup_veth, kill_process_tree, session_ip_block},
     watchdog::{run_watchdog, WatchdogConfig},
 };
 
@@ -170,8 +171,6 @@ async fn create_session(
             }
         }
     }
-
-    mount_overlay(&dirs).await?;
 
     let subject_ids: Vec<String> = if student.cohort_id.is_empty() {
         vec![]
@@ -510,12 +509,29 @@ async fn spawn_session(
         SpawnAction::New => None,
     };
 
+    let student = state.backend.get_student(&student_id)
+        .await
+        .ok()
+        .flatten();
+    let cohort_id = student.as_ref()
+        .map(|s| s.cohort_id.clone())
+        .unwrap_or_default();
+    let student_workspace = student.map_or_else(
+        || std::path::PathBuf::from(&state.students_root).join(&student_id),
+        |s| student_home_path(&state.students_root, &s),
+    );
+    let subject_dirs = collect_subject_dirs(
+        std::path::Path::new(&state.subjects_root),
+        &cohort_id,
+    );
+
     init_acp_session(
         std::path::PathBuf::from(&state.goose_bin),
-        dirs.merged.clone(),
         goose_path_root,
         dirs.config.clone(),
+        student_workspace,
         std::path::PathBuf::from(&state.jail_tools_host),
+        subject_dirs,
         env_vars,
         model,
         state.backend.clone(),
@@ -586,30 +602,31 @@ async fn terminate_session(
         .ok_or_else(|| AppError::NotFound(format!("session {session_id} not found")))?;
 
     if let Some(managed) = state.registry.get(&session_id).await {
-        kill_process_tree(managed.pid as i64, 5).await;
+        // Container path: kill + delete handles process, mounts, cgroup
+        let mut cg = managed.container.lock().await;
+        container::kill_and_delete_container(&mut cg);
+
+        // Fallback for old unshare sessions (no container): kill process tree
+        if cg.is_none() {
+            kill_process_tree(managed.pid as i64, 5).await;
+        }
+
         let mut child_guard = managed.child.lock().await;
         *child_guard = None;
         state.registry.remove(&session_id).await;
-        tracing::info!(session_id = %session_id, pid = managed.pid, "goose process tree killed via registry");
     }
 
     if let Some(pid) = session.namespace_pid {
         kill_process_tree(pid, 5).await;
     }
 
-    // Remove veth pair (child end auto-destroyed with netns teardown)
+    // Remove veth pair (needed for both container and unshare sessions)
     let (b1, b2) = session_ip_block(&session_id);
     cleanup_veth(b1, b2).await;
-
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-    if !umount_overlay(&dirs.merged).await {
-        tracing::warn!(session_id = %session_id, "overlay umount failed — cleanup may fail");
-    }
 
     state.backend.set_session_state(&session_id, "ended").await?;
     state.broker.remove_entry(&session_id).await;
     crate::session::dirs::cleanup_session_dir(&state.workspace_root, &session_id);
-    crate::security::cgroups::teardown_session_cgroup(&session_id).await;
 
     tracing::info!(session_id = %session_id, "session terminated");
     Ok(StatusCode::NO_CONTENT)

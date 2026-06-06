@@ -37,6 +37,7 @@ use crate::auth::{bearer_token, hash_password, Claims};
 use crate::db::{DbBackend, Student};
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
+use crate::session::container;
 
 use super::{common, AppState};
 
@@ -392,21 +393,39 @@ async fn terminate_session(
 ) -> Result<impl IntoResponse> {
     require_admin(&state, &headers)?;
 
-    let session = state.backend.get_session(&id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("session {id} not found")))?;
+    // Try container-based kill if session is in the registry
+    let mut used_container = false;
+    if let Some(managed) = state.registry.get(&id).await {
+        let mut cg = managed.container.lock().await;
+        used_container = cg.is_some();
+        container::kill_and_delete_container(&mut cg);
 
-    if let Some(pid) = session.namespace_pid {
-        crate::session::namespace::kill_process_tree(pid, 5).await;
+        if !used_container {
+            let mut child_guard = managed.child.lock().await;
+            *child_guard = None;
+            crate::session::namespace::kill_process_tree(managed.pid as i64, 5).await;
+        }
+        state.registry.remove(&id).await;
     }
 
-    if !crate::session::namespace::umount_overlay(std::path::Path::new(&session.overlay_mount)).await {
-        tracing::warn!(session_id = %id, "admin: overlay umount failed — cleanup may fail");
+    // Fallback via namespace_pid from DB (old unshare sessions not in registry)
+    if !used_container {
+        let session = state.backend.get_session(&id).await?.ok_or_else(|| {
+            AppError::NotFound(format!("session {id} not found"))
+        })?;
+        if let Some(pid) = session.namespace_pid {
+            crate::session::namespace::kill_process_tree(pid, 5).await;
+        }
+        if !crate::session::namespace::umount_overlay(
+            std::path::Path::new(&session.overlay_mount),
+        ).await {
+            tracing::warn!(session_id = %id, "admin: overlay umount failed — cleanup may fail");
+        }
     }
+
     state.backend.set_session_state(&id, "ended").await?;
     state.broker.remove_entry(&id).await;
     crate::session::dirs::cleanup_session_dir(&state.workspace_root, &id);
-    crate::security::cgroups::teardown_session_cgroup(&id).await;
 
     tracing::info!(session_id = %id, "admin: session force-terminated");
     Ok(StatusCode::NO_CONTENT)

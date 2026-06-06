@@ -20,6 +20,7 @@ use tokio::time::sleep;
 use crate::db::DbBackend;
 use crate::session::{
     broker::{now_secs, SessionBroker},
+    container::{self},
     dirs::cleanup_session_dir,
     namespace::{cleanup_veth, kill_process_tree, session_ip_block, umount_overlay},
     registry::SessionRegistry,
@@ -81,22 +82,25 @@ pub async fn run_watchdog(
                 }
             }
 
-            // Kill goose process tree via its unshare process group
+            // Kill goose via container or fallback to unshare process group
+            let mut used_container = false;
             if let Some(ref registry) = config.registry {
                 if let Some(managed) = registry.get(&config.session_id).await {
-                    // Kill the entire process group first (unshare wrapper + goose + all children)
-                    // kill_process_tree uses kill -9 -pid which hits the whole process group,
-                    // then polls kill -0 until the process is gone or 5s timeout passes.
-                    let group_pid = managed.pid as i64;
-                    kill_process_tree(group_pid, 5).await;
-                    tracing::info!(session_id = %config.session_id, pid = managed.pid, "watchdog: goose process group killed");
+                    let mut cg = managed.container.lock().await;
+                    used_container = cg.is_some();
+                    container::kill_and_delete_container(&mut cg);
 
-                    // Fallback kill via tokio child handle, then drop it
-                    let mut child_guard = managed.child.lock().await;
-                    if let Some(ref mut child) = *child_guard {
-                        let _ = child.kill().await;
+                    if !used_container {
+                        let group_pid = managed.pid as i64;
+                        kill_process_tree(group_pid, 5).await;
+                        tracing::info!(session_id = %config.session_id, pid = managed.pid, "watchdog: goose process group killed");
+
+                        let mut child_guard = managed.child.lock().await;
+                        if let Some(ref mut child) = *child_guard {
+                            let _ = child.kill().await;
+                        }
+                        *child_guard = None;
                     }
-                    *child_guard = None;
                     registry.remove(&config.session_id).await;
                 }
             }
@@ -105,11 +109,14 @@ pub async fn run_watchdog(
             let (b1, b2) = session_ip_block(&config.session_id);
             cleanup_veth(b1, b2).await;
 
-            if !umount_overlay(&config.overlay_mount).await {
-                tracing::warn!(
-                    session_id = %config.session_id,
-                    "watchdog: overlay umount failed — cleanup may fail"
-                );
+            // Container delete handles unmount; unshare sessions need manual umount
+            if !used_container {
+                if !umount_overlay(&config.overlay_mount).await {
+                    tracing::warn!(
+                        session_id = %config.session_id,
+                        "watchdog: overlay umount failed — cleanup may fail"
+                    );
+                }
             }
             cleanup_session_dir(&config.workspace_root, &config.session_id);
 

@@ -1,10 +1,11 @@
 // Shared utility functions for API handlers
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::acp_bridge::init_acp_session;
 use crate::error::{AppError, Result};
+use crate::session::container::collect_subject_dirs;
 use crate::session::dirs::SessionDirs;
 use crate::session::registry::ManagedSession;
 
@@ -90,12 +91,29 @@ pub async fn get_managed_session(
         .await
         .unwrap_or(None);
 
+    let student = state.backend.get_student(&student_id)
+        .await
+        .ok()
+        .flatten();
+    let cohort_id = student.as_ref()
+        .map(|s| s.cohort_id.clone())
+        .unwrap_or_default();
+    let student_workspace = student.map_or_else(
+        || std::path::PathBuf::from(&state.students_root).join(&student_id),
+        |s| {
+            let component = s.home_dir.as_deref().unwrap_or(&s.username);
+            std::path::PathBuf::from(&state.students_root).join(component)
+        },
+    );
+    let subject_dirs = collect_subject_dirs(Path::new(&state.subjects_root), &cohort_id);
+
     init_acp_session(
         std::path::PathBuf::from(&state.goose_bin),
-        dirs.merged.clone(),
         goose_path_root,
         dirs.config.clone(),
+        student_workspace,
         std::path::PathBuf::from(&state.jail_tools_host),
+        subject_dirs,
         env_vars,
         model,
         state.backend.clone(),

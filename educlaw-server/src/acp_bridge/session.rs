@@ -8,11 +8,13 @@
 //   handle_replay_sse  — load historical thread, replay as SSE
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use nix::unistd::pipe;
 
 use sacp::schema::{
     CancelNotification, ContentBlock, NewSessionRequest, PromptRequest, SessionId,
@@ -26,7 +28,10 @@ use crate::db::DbBackend;
 use crate::db::TurnTokens;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
-use crate::session::namespace::{build_pivot_root_script, session_ip_block, setup_veth_pair};
+use crate::session::container::{
+    self, write_oci_config, cleanup_container_state, BindSources, ContainerEnv, SessionBundle,
+};
+use crate::session::namespace::{session_ip_block, setup_container_network, setup_veth_pair};
 use crate::session::registry::{ManagedSession, RequestDedupeEntry, RequestState, SessionRegistry};
 
 use super::client::spawn_sacp_client;
@@ -34,6 +39,31 @@ use super::commands::handle_load_session as acp_handle_load_session;
 use super::images;
 use super::model_poller::spawn_model_poller;
 use super::token_calculator;
+
+
+/// Strip ANSI escape sequences from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_escape = false;
+    for c in s.chars() {
+        if in_escape {
+            if c == 'm' || c == 'H' {
+                in_escape = false;
+            }
+            // CSI sequences end with a letter in [A–Z@[]_`{|}~]
+            else if c.is_ascii_uppercase() || c == 'h' || c == 'l' {
+                in_escape = false;
+            }
+            continue;
+        }
+        if c == '\x1b' {
+            in_escape = true;
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -71,10 +101,11 @@ async fn frame_with_id(managed: &Arc<ManagedSession>, mut frame: serde_json::Val
 /// no managed session exists yet.
 pub async fn init_acp_session(
     goose_bin: PathBuf,
-    workspace: PathBuf,
     goose_path_root: PathBuf,
     session_config_dir: PathBuf,
+    student_workspace: PathBuf,
     jail_tools_host: PathBuf,
+    subject_dirs: Vec<PathBuf>,
     env_vars: Vec<(String, String)>,
     model: Option<String>,
     backend: Arc<dyn DbBackend>,
@@ -85,126 +116,216 @@ pub async fn init_acp_session(
     registry: Arc<SessionRegistry>,
     recent_thread_id: Option<String>,
 ) -> Result<()> {
-    // Already initialised?
     if registry.get(&session_id).await.is_some() {
         return Ok(());
     }
 
-    if let Err(e) = tokio::fs::create_dir_all(&goose_path_root).await {
-        tracing::warn!(session_id = %session_id, error = %e, "Failed to create goose path root");
-    }
-    if let Err(e) = tokio::fs::create_dir_all(&session_config_dir).await {
-        tracing::warn!(session_id = %session_id, error = %e, "Failed to create session config dir");
-    }
+    tokio::fs::create_dir_all(&goose_path_root).await?;
+    tokio::fs::create_dir_all(&session_config_dir).await?;
 
     if let Some(ref prompt) = system_prompt {
-        let prompt_dir = goose_path_root.join("config").join("prompts");
-        if let Err(e) = tokio::fs::create_dir_all(&prompt_dir).await {
-            tracing::warn!(session_id = %session_id, error = %e, "Failed to create prompt dir");
-        }
-        if let Err(e) = tokio::fs::write(prompt_dir.join("system.md"), prompt).await {
-            tracing::warn!(session_id = %session_id, error = %e, "Failed to write system prompt");
-        }
+        let prompt_dir = session_config_dir.join("config").join("prompts");
+        tokio::fs::create_dir_all(&prompt_dir).await?;
+        tokio::fs::write(prompt_dir.join("system.md"), prompt).await?;
     }
 
-    // Resolve IP block from session_id (deterministic, no external state)
     let (b1, b2) = session_ip_block(&session_id);
 
-    // Build pivot_root inner script (filesystem jail + network config inside ns)
-    let merged = workspace.display().to_string();
-    let goose_bin_path = goose_bin.display().to_string();
-    let goose_path_root_host = goose_path_root.display().to_string();
-    let claw_config_home_host = session_config_dir.display().to_string();
-    let goose_path_root_in_jail = "/goose_home";
-    let claw_config_home_in_jail = "/claw_config";
-    let jail_tools_host_str = jail_tools_host.display().to_string();
-    let inner_script = build_pivot_root_script(
-        &merged,
+    // ── Build OCI container bundle ──────────────────────────────────────
+    let bundle_root = session_config_dir.parent().expect("config dir has parent");
+    let workspace_root = bundle_root.parent().expect("bundle dir has parent");
+
+    let bundle = SessionBundle::new(
+        &workspace_root.to_string_lossy(),
         &session_id,
-        &goose_bin_path,
-        &jail_tools_host_str,
-        &goose_path_root_host,
-        &claw_config_home_host,
-        b1,
-        b2,
     );
+    bundle.create_dirs()?;
 
-    let mut cmd = tokio::process::Command::new("unshare");
-    let is_root = unsafe { libc::getuid() } == 0;
-    if is_root {
-        cmd.args([
-            "--mount", "--pid", "--net", "--fork",
-            "sh", "-c", &inner_script,
-        ]);
-    } else {
-        cmd.args([
-            "--user", "--map-root-user", "--mount", "--pid", "--net", "--fork",
-            "sh", "-c", &inner_script,
-        ]);
-    }
-    cmd.current_dir(&workspace);
-    cmd.env_clear();
-    cmd.env("GOOSE_PATH_ROOT", goose_path_root_in_jail);
-    cmd.env("CLAW_CONFIG_HOME", claw_config_home_in_jail);
-    for (k, v) in &env_vars {
-        cmd.env(k, v);
-    }
-    // Force HOME to an in-jail path; forwarded host HOME may not exist after pivot_root.
-    cmd.env("HOME", goose_path_root_in_jail);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    // subject_dirs are pre-resolved by the caller using collect_subject_dirs.
 
-    // seccomp + setsid in pre_exec
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                if let Ok(filter) = crate::security::seccomp::build_student_filter() {
-                    seccompiler::apply_filter(&filter)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                }
-                Ok(())
-            });
+    let sources = BindSources {
+        goose_bin: goose_bin.clone(),
+        jail_tools: jail_tools_host,
+        student_home: student_workspace,
+        config_dir: session_config_dir.clone(),
+        ssl_certs: PathBuf::from("/etc/ssl"),
+        subject_dirs,
+    };
+
+    let env = ContainerEnv {
+        env_vars,
+        model: model.clone(),
+    };
+
+    write_oci_config(&bundle, &sources, &env)?;
+
+    // ── Create pipes for stdio ──────────────────────────────────────────
+    // stdin:  parent writes, container reads
+    let (stdin_child, stdin_parent) = pipe()
+        .map_err(|e| AppError::Session(format!("pipe stdin: {e}")))?;
+    // stdout: container writes, parent reads
+    let (stdout_parent, stdout_child) = pipe()
+        .map_err(|e| AppError::Session(format!("pipe stdout: {e}")))?;
+    // stderr: container writes, parent reads
+    let (stderr_parent, stderr_child) = pipe()
+        .map_err(|e| AppError::Session(format!("pipe stderr: {e}")))?;
+
+    // ── Pre-flight: validate all bind mount sources exist ──────────────
+    let bind_sources_to_check = [
+        (&sources.goose_bin, "goose_bin"),
+        (&sources.jail_tools, "jail_tools"),
+        (&sources.student_home, "student_home"),
+        (&sources.config_dir, "config_dir"),
+        (&sources.ssl_certs, "ssl_certs"),
+    ];
+    for (path, label) in &bind_sources_to_check {
+        if !path.exists() {
+            return Err(AppError::Session(format!(
+                "bind mount source {label} does not exist: {}",
+                path.display()
+            )));
         }
     }
+
+    // Debug: inspect jail-tools structure and PATH
+    let tools_path = &sources.jail_tools;
+    tracing::debug!(session_id = %session_id, path = %tools_path.display(), "jail-tools source");
+    match std::fs::read_dir(tools_path) {
+        Ok(rd) => {
+            for entry in rd.filter_map(|e| e.ok()) {
+                let kind = entry.file_type().ok().map(|t| {
+                    if t.is_dir() { "dir" } else if t.is_symlink() { "symlink" } else { "file" }
+                }).unwrap_or("?");
+                tracing::debug!(session_id = %session_id, name = %entry.path().display(), kind, "jail-tools entry");
+            }
+        }
+        Err(e) => tracing::warn!(session_id = %session_id, error = %e, "jail-tools read_dir failed"),
+    }
+    for (k, v) in &env.env_vars {
+        if k == "PATH" {
+            tracing::debug!(session_id = %session_id, value = %v, "PATH env var");
+        }
+    }
+
+    // ── Clean any stale Youki state from a previous container instance ──
+    cleanup_container_state(&bundle.bundle_dir, &session_id);
+
+    // ── Build container (synchronous — ContainerBuilder is !Send) ───────
+    let mut container = container::build_container(
+        &bundle,
+        Some(stdin_child),
+        Some(stdout_child),
+        Some(stderr_child),
+    )
+    .map_err(|e| {
+        // Give child a moment to flush any output before exit
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Drain stdout pipe (Youki tracing may write to fd 1 not fd 2)
+        let mut out_buf = vec![0u8; 65536];
+        let mut out_total = 0usize;
+        loop {
+            match nix::unistd::read(stdout_parent.as_raw_fd(), &mut out_buf[out_total..]) {
+                Ok(0) => break,
+                Ok(n) => out_total += n,
+                Err(_) => break,
+            }
+        }
+        if out_total > 0 {
+            let raw = String::from_utf8_lossy(&out_buf[..out_total]);
+            let clean = strip_ansi(&raw);
+            tracing::error!(
+                session_id = %session_id,
+                "container child stdout:\n{}",
+                clean
+            );
+        }
+
+        // Drain stderr pipe
+        let mut err_buf = vec![0u8; 65536];
+        let mut err_total = 0usize;
+        loop {
+            match nix::unistd::read(stderr_parent.as_raw_fd(), &mut err_buf[err_total..]) {
+                Ok(0) => break,
+                Ok(n) => err_total += n,
+                Err(_) => break,
+            }
+        }
+        if err_total > 0 {
+            let raw = String::from_utf8_lossy(&err_buf[..err_total]);
+            let clean = strip_ansi(&raw);
+            tracing::error!(
+                session_id = %session_id,
+                "container child stderr:\n{}",
+                clean
+            );
+        }
+
+        // Check if bundle dir is intact
+        let bundle_listing = match std::fs::read_dir(&bundle.bundle_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .map(|e| e.path().display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            Err(e2) => format!("<read_dir error: {e2}>"),
+        };
+        tracing::error!(
+            session_id = %session_id,
+            bundle_dir = %bundle.bundle_dir.display(),
+            contents = %bundle_listing,
+            "bundle dir contents after build failure"
+        );
+
+        AppError::Session(format!("build container: {e}"))
+    })?;
+
+    let pid = container.pid()
+        .ok_or_else(|| AppError::Session("container has no PID".to_string()))?
+        .as_raw() as u32;
 
     tracing::info!(
         session_id = %session_id,
-        model = ?model,
-        goose_path_root_host = %goose_path_root.display(),
-        config_home_host = %session_config_dir.display(),
-        goose_path_root_in_jail = goose_path_root_in_jail,
-        config_home_in_jail = claw_config_home_in_jail,
-        "📦 [GOOSE] Spawning ACP subprocess (SSE init)..."
+        pid = pid,
+        bundle = %bundle.bundle_dir.display(),
+        "container built"
     );
 
-    let mut child = cmd.spawn().map_err(|e| {
-        AppError::Session(format!("failed to spawn goose: {e}"))
-    })?;
-
-    let pid = child.id().ok_or_else(|| {
-        AppError::Session("goose spawn produced no PID".to_string())
-    })?;
-
-    tracing::info!(session_id = %session_id, pid = pid, "✓ [GOOSE] Subprocess spawned (SSE init)");
-
-    // Configure veth pair from host side (Option B: nsenter from host)
+    // ── Configure veth + child-side networking before container starts ──
     setup_veth_pair(pid, b1, b2).await?;
-    tracing::info!(session_id = %session_id, b1, b2, "veth pair configured");
+    // Configure child-side IP, route, link state via nsenter into container netns
+    setup_container_network(pid, b1, b2).await?;
+    tracing::info!(session_id = %session_id, b1, b2, "veth pair and container network configured");
 
-    let child_stdin = child.stdin.take().expect("stdin piped");
-    let child_stdout = child.stdout.take().expect("stdout piped");
-    let child_stderr = child.stderr.take().expect("stderr piped");
+    // Start the container (resume paused init process)
+    container::start_container(&mut container)
+        .map_err(|e| AppError::Session(format!("start container: {e}")))?;
+    tracing::info!(session_id = %session_id, pid = pid, "container started");
+
+    // ── Convert parent pipe ends to tokio I/O ───────────────────────────
+    let stdin_file: tokio::fs::File = unsafe {
+        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
+            stdin_parent.into_raw_fd(),
+        ))
+    };
+    let stdout_file: tokio::fs::File = unsafe {
+        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
+            stdout_parent.into_raw_fd(),
+        ))
+    };
+    let stderr_file: tokio::fs::File = unsafe {
+        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
+            stderr_parent.into_raw_fd(),
+        ))
+    };
 
     // Drain stderr
     let sid_stderr = session_id.clone();
     tokio::spawn(async move {
         use tokio::io::AsyncBufReadExt;
-        let mut lines = tokio::io::BufReader::new(child_stderr).lines();
+        let mut lines = tokio::io::BufReader::new(stderr_file).lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            let line = strip_ansi(&line);
             if line.contains("error") || line.contains("Error") || line.contains("ERROR") {
                 tracing::error!(target: "goose_stderr", session_id = %sid_stderr, "✗ {}", line);
             } else if line.contains("warn") || line.contains("Warn") {
@@ -252,9 +373,8 @@ pub async fn init_acp_session(
     };
 
     let (cx, acp_session_id_holder, available_models_from_goose) = spawn_sacp_client(
-        child_stdin,
-        child_stdout,
-        workspace.clone(),
+        stdin_file,
+        stdout_file,
         model.clone(),
         provider,
         notif_tx_shared.clone(),
@@ -293,7 +413,8 @@ pub async fn init_acp_session(
 
     let managed = ManagedSession::new(
         cx.clone(),
-        child,
+        Some(container),
+        None,
         pid,
         notif_tx_shared.clone(),
         acp_session_id_holder.clone(),
@@ -328,7 +449,6 @@ pub async fn handle_input_sse(
     request_id: Option<String>,
     backend: Arc<dyn DbBackend>,
     student_id: &str,
-    workspace: &PathBuf,
     last_input_at: Arc<AtomicU64>,
 ) -> Result<SseEventStream> {
     let managed = registry

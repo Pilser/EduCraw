@@ -1,8 +1,8 @@
 // educlaw-server/src/session/namespace.rs
 //
-// OverlayFS management (kernel overlayfs), filesystem jails (pivot_root),
-// and network namespace isolation (veth pairs) for session subprocesses.
-// Uses the unshare(mount+pid+net) approach — no Docker, sub-100ms startup.
+// Host networking bootstrap (NAT/iptables), veth pair management,
+// legacy overlay unmount (fallback for pre-migration sessions),
+// and container-side network configuration via nsenter.
 
 use std::path::Path;
 use std::time::Duration;
@@ -10,7 +10,6 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::error::{AppError, Result};
-use crate::session::dirs::SessionDirs;
 
 // ── Host networking bootstrap (NAT + forwarding) ─────────────────────────
 
@@ -95,40 +94,69 @@ async fn ensure_iptables_rule(check_args: &[&str], add_args: &[&str], label: &st
     Ok(())
 }
 
-// ── OverlayFS ──────────────────────────────────────────────────────────────
+// ── Container network setup (nsenter child-side config) ───────────────────
 
-/// Mount kernel overlayfs over the session's lower/upper/work dirs into merged/.
+/// Configure the container-side of a veth pair via nsenter.
 ///
-/// This is a strict migration path: no fallback to fuse-overlayfs.
-/// The server must run as root for this mount to succeed.
-pub async fn mount_overlay(dirs: &SessionDirs) -> Result<()> {
-    if unsafe { libc::geteuid() } != 0 {
-        return Err(AppError::Session(
-            "kernel overlayfs requires root: run educlaw-server as root (no fuse fallback)".to_string(),
-        ));
-    }
+/// Must be called after `setup_veth_pair` (which moves the child end into the
+/// container's netns and configures the host end) and before the container
+/// process starts executing (between `build_container` and `start_container`).
+///
+/// The PID is stable once `build_container` returns (container status = Created).
+pub async fn setup_container_network(pid: u32, b1: u16, b2: u16) -> Result<()> {
+    let veth_child = format!("veth_c_{b1}_{b2}");
+    let child_ip = format!("10.200.{b1}.{b2}/24");
+    let child_gw = format!("10.200.{b1}.1");
 
-    let options = format!(
-        "lowerdir={},upperdir={},workdir={}",
-        dirs.lower.display(),
-        dirs.upper.display(),
-        dirs.work.display(),
-    );
-
-    let output = Command::new("mount")
-        .args(["-t", "overlay", "overlay", "-o", &options, &dirs.merged.display().to_string()])
+    // Bring loopback up inside the container netns
+    let output = Command::new("nsenter")
+        .args(["-t", &pid.to_string(), "-n", "--", "ip", "link", "set", "lo", "up"])
         .output()
         .await
-        .map_err(|e| AppError::Session(format!("kernel overlay mount command failed: {e}")))?;
-
+        .map_err(|e| AppError::Session(format!("nsenter lo up: {e}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Session(format!(
-            "kernel overlay mount failed: {stderr}"
-        )));
+        return Err(AppError::Session(format!("nsenter lo up error: {stderr}")));
     }
+
+    // Assign IP to the child veth
+    let output = Command::new("nsenter")
+        .args(["-t", &pid.to_string(), "-n", "--", "ip", "addr", "add", &child_ip, "dev", &veth_child])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("nsenter addr add: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("nsenter addr add error: {stderr}")));
+    }
+
+    // Bring child veth up
+    let output = Command::new("nsenter")
+        .args(["-t", &pid.to_string(), "-n", "--", "ip", "link", "set", &veth_child, "up"])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("nsenter veth up: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("nsenter veth up error: {stderr}")));
+    }
+
+    // Add default route via host end
+    let output = Command::new("nsenter")
+        .args(["-t", &pid.to_string(), "-n", "--", "ip", "route", "add", "default", "via", &child_gw])
+        .output()
+        .await
+        .map_err(|e| AppError::Session(format!("nsenter route add: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Session(format!("nsenter route add error: {stderr}")));
+    }
+
+    tracing::debug!(pid, b1, b2, "container network configured via nsenter");
     Ok(())
 }
+
+// ── Legacy overlay unmount (fallback for pre-migration sessions) ───────────
 
 /// Unmount kernel overlayfs.
 ///
@@ -242,130 +270,11 @@ pub fn session_ip_block(session_id: &str) -> (u16, u16) {
     (b1, b2)
 }
 
-// ── Filesystem jail (pivot_root script) ───────────────────────────────────
-
-/// Build a shell script that runs INSIDE the unshared namespace to:
-///   1. bind-mount system dirs (usr, lib, lib64, etc) read-only into merged/
-///   2. bind-mount goose binary on host /tmp/ then move into merged/
-///   3. mount proc, devtmpfs, tmpfs into merged/
-///   4. configure networking (veth child already moved in by host)
-///   5. double-bind merged/ with exec flag
-///   6. pivot_root into merged/ (hides the host filesystem)
-///   7. detach the old root
-///   8. exec goose acp
-///
-/// `session_id` is used for a unique temp bind-mount path on /tmp.
-/// `goose_bin` is the host path to the goose binary.
-/// `b1`, `b2` are the IP block octets (child gets `10.200.{b1}.{b2}`).
-/// Every step logs to stderr so the outer Rust stderr-drain captures it.
-pub fn build_pivot_root_script(
-    merged: &str,
-    session_id: &str,
-    goose_bin: &str,
-    jail_tools_host: &str,
-    goose_path_root_host: &str,
-    claw_config_home_host: &str,
-    b1: u16,
-    b2: u16,
-) -> String {
-    let veth_child = format!("veth_c_{b1}_{b2}");
-    let child_ip = format!("10.200.{b1}.{b2}/24");
-    let child_gw = format!("10.200.{b1}.1");
-
-    format!(
-        r#"set -e
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-M="{merged}"
-SID="{session_id}"
-GB="{goose_bin}"
-JTH="{jail_tools_host}"
-GPRH="{goose_path_root_host}"
-CFGH="{claw_config_home_host}"
-VC="{veth_child}"
-CIP="{child_ip}"
-CGW="{child_gw}"
-
-echo "[pivot] step 0: bind merged root onto itself" >&2
-mkdir -p "$M"
-mount --bind "$M" "$M"
-mount -o remount,bind,exec "$M" "$M"
-
-echo "[pivot] step 1: mount jail tools (custom static busybox) - NO host system dirs" >&2
-mkdir -p "$M/tools" "/tmp/educraw_tools_$SID"
-mount --bind "$JTH" "/tmp/educraw_tools_$SID"
-mount --move "/tmp/educraw_tools_$SID" "$M/tools"
-mount -o remount,bind,exec,ro "$M/tools"
-
-echo "[pivot] step 2: mount goose binary (existing mechanism preserved)" >&2
-mkdir -p "$M"
-rm -rf "$M/goose"
-touch "$M/goose"
-touch "/tmp/educraw_goose_$SID"
-mount --bind "$GB" "/tmp/educraw_goose_$SID"
-mount -o remount,bind,exec "/tmp/educraw_goose_$SID" >/dev/null 2>&1 || true
-mount --move "/tmp/educraw_goose_$SID" "$M/goose"
-mount -o remount,bind,exec,ro "$M/goose" >/dev/null 2>&1 || true
-
-echo "[pivot] step 3: bind student data dirs into jail" >&2
-mkdir -p "$GPRH" "$CFGH"
-mkdir -p "$M/goose_home" "$M/claw_config"
-mount --bind "$GPRH" "$M/goose_home"
-mount --bind "$CFGH" "$M/claw_config"
-
-
-
-echo "[pivot] step 4: mount runtime filesystems" >&2
-mkdir -p "$M/proc" "$M/dev" "$M/tmp" "$M/run" "$M/etc"
-mount -t proc proc "$M/proc"
-mount -t devtmpfs devtmpfs "$M/dev"
-mount -t tmpfs tmpfs "$M/tmp"
-mount -t tmpfs tmpfs "$M/run"
-
-# Package manager caches -> tmpfs
-mkdir -p "$M/tmp/pip-cache" "$M/tmp/npm-cache" "$M/tmp/cargo-home"
-
-echo "[pivot] step 4.5: mount host CA certificates" >&2
-mkdir -p "/tmp/educraw_certs_$SID" "$M/etc/ssl"
-mount --bind /etc/ssl "/tmp/educraw_certs_$SID"
-mount --move "/tmp/educraw_certs_$SID" "$M/etc/ssl"
-mount -o remount,bind,ro "$M/etc/ssl"
-
-echo "[pivot] step 5: configure network" >&2
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  ip link show "$VC" >/dev/null 2>&1 && break
-  sleep 0.05 2>/dev/null || true
-done
-ip link set lo up
-ip addr add "$CIP" dev "$VC" >/dev/null 2>&1
-ip link set "$VC" up >/dev/null 2>&1
-ip route add default via "$CGW" >/dev/null 2>&1
-
-echo "[pivot] step 6: write resolv.conf to tmpfs /etc" >&2
-printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0 trust-ad\n' > "$M/etc/resolv.conf"
-
-echo "[pivot] step 7: pivot_root into merged" >&2
-cd "$M"
-mkdir -p .old_root
-pivot_root . .old_root
-cd /
-umount -l /.old_root 2>/dev/null || true
-rmdir /.old_root 2>/dev/null || true
-
-export PATH="/tools/busybox"
-
-echo "[pivot] step 8: exec goose" >&2
-exec /goose acp
-"#
-    )
-}
-
 // ── Network namespace (veth pair setup / teardown) ─────────────────────────
 
-/// Create a veth pair, move the child end into the goose's network namespace,
-/// and configure the host end.  The child end IP/routing is configured by the
-/// inner script (build_pivot_root_script) which runs as root inside the user
-/// namespace — avoiding the nsenter -U -n issue with non-root servers.
+/// Create a veth pair, move the child end into the container's network namespace,
+/// and configure the host end.  The child end IP/routing is configured by a
+/// subsequent `setup_container_network` call via nsenter.
 pub async fn setup_veth_pair(pid: u32, b1: u16, b2: u16) -> Result<()> {
     let veth_host = format!("veth_h_{b1}_{b2}");
     let veth_child = format!("veth_c_{b1}_{b2}");
@@ -394,9 +303,8 @@ pub async fn setup_veth_pair(pid: u32, b1: u16, b2: u16) -> Result<()> {
         return Err(AppError::Session(format!("move veth to netns error: {stderr}")));
     }
 
-    // 3. Child side IP/routing is configured by the inner pivot_root script
-    //    (build_pivot_root_script).  We do NOT nsenter here because non-root
-    //    servers cannot enter another user namespace via setns().
+    // 3. Child side IP/routing is configured by setup_container_network via nsenter.
+    //    Called after build, before start (PID stable, no user namespace to cross).
 
     // 4. Configure host side
     let output = Command::new("ip")
