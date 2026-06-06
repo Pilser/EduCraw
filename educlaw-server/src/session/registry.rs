@@ -74,9 +74,6 @@ pub struct ManagedSession {
     pub student_id: String,
     pub backend: Arc<dyn DbBackend>,
 
-    // Path needed to restart the model-switch poller on reconnect
-    pub session_config_dir: PathBuf,
-
     // ── Request idempotency ───────────────────────────────────
     pub request_dedupe: Arc<Mutex<HashMap<String, RequestDedupeEntry>>>,
     pub request_timeout: Duration,
@@ -89,8 +86,6 @@ impl ManagedSession {
         container: Option<Container>,
         child: Option<tokio::process::Child>,
         pid: u32,
-        // The SAME Arc that was passed to spawn_sacp_client — must be shared so
-        // swapping the inner Sender on reconnect reaches the sacp callback.
         notif_tx_shared: Arc<Mutex<Sender<(Option<serde_json::Value>, Option<Vec<u8>>)>>>,
         acp_session_id: Arc<Mutex<Option<sacp::schema::SessionId>>>,
         model_arc: Arc<Mutex<Option<String>>>,
@@ -99,7 +94,6 @@ impl ManagedSession {
         student_id: String,
         backend: Arc<dyn DbBackend>,
         disconnect_timeout: Duration,
-        session_config_dir: PathBuf,
         message_buffer: Arc<Mutex<VecDeque<String>>>,
         total_buffer_bytes: Arc<AtomicU64>,
         frame_counter: Arc<AtomicU64>,
@@ -127,7 +121,6 @@ impl ManagedSession {
             disconnect_timeout,
             student_id,
             backend,
-            session_config_dir,
             request_dedupe,
             request_timeout,
         }

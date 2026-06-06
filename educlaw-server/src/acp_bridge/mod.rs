@@ -6,7 +6,6 @@
 //   client        — sacp client bootstrap (connect, init, create session)
 //   commands      — ACP command handlers (list_sessions, load_session, fork_session)
 //   images        — parse base64 images from frontend, create ImageContent blocks
-//   model_poller  — background task: polls pending_model.txt → SetSessionModelRequest
 //   notifications — SessionNotification → SSE frames + DB token accounting
 //   permissions   — auto-approve tool permission requests from goose
 //   session       — SSE session orchestrator (init, input, replay, cancel)
@@ -15,7 +14,6 @@ mod client;
 mod commands;
 mod custom_requests;
 mod images;
-mod model_poller;
 mod notifications;
 mod permissions;
 mod session;

@@ -425,7 +425,7 @@ async fn terminate_session(
 
     state.backend.set_session_state(&id, "ended").await?;
     state.broker.remove_entry(&id).await;
-    crate::session::dirs::cleanup_session_dir(&state.workspace_root, &id);
+    crate::session::dirs::cleanup_session_dir(&id);
 
     tracing::info!(session_id = %id, "admin: session force-terminated");
     Ok(StatusCode::NO_CONTENT)

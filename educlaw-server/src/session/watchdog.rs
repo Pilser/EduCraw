@@ -118,7 +118,7 @@ pub async fn run_watchdog(
                     );
                 }
             }
-            cleanup_session_dir(&config.workspace_root, &config.session_id);
+            cleanup_session_dir(&config.session_id);
 
             tracing::info!(
                 session_id = %config.session_id,

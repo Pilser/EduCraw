@@ -42,16 +42,7 @@ pub async fn get_managed_session(
     }
 
     let student_id = session.student_id.clone();
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, session_id);
-
-    let system_prompt = std::fs::read_to_string(dirs.config.join("student.json"))
-        .ok()
-        .and_then(|blob| serde_json::from_str::<serde_json::Value>(&blob).ok())
-        .and_then(|v| v["system_prompt"].as_str().map(|s| s.to_string()))
-        .and_then(|b64| {
-            use base64::{engine::general_purpose::STANDARD, Engine as _};
-            STANDARD.decode(b64).ok().and_then(|bytes| String::from_utf8(bytes).ok())
-        });
+    let dirs = SessionDirs::for_existing_session(session_id);
 
     let mut env_vars: Vec<(String, String)> = Vec::new();
     for key in &[
@@ -110,7 +101,7 @@ pub async fn get_managed_session(
     init_acp_session(
         std::path::PathBuf::from(&state.goose_bin),
         goose_path_root,
-        dirs.config.clone(),
+        dirs.root.clone(),
         student_workspace,
         std::path::PathBuf::from(&state.jail_tools_host),
         subject_dirs,
@@ -120,7 +111,6 @@ pub async fn get_managed_session(
         session_id.to_string(),
         student_id,
         logs_dir,
-        system_prompt,
         Arc::clone(&state.registry),
         recent_thread_id,
     )
@@ -137,8 +127,8 @@ pub async fn get_managed_session(
 /// visible workspace (OverlayFS merged view). Writes go through to the
 /// persistent upper layer, so files survive session end.
 pub fn resolve_recipe_project_dir(state: &AppState, session_id: &str) -> String {
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, session_id);
-    dirs.merged.to_string_lossy().to_string()
+    let dirs = SessionDirs::for_existing_session(session_id);
+    dirs.root.to_string_lossy().to_string()
 }
 
 /// Recursively copy directory and all contents

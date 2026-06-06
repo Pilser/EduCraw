@@ -132,6 +132,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // ── Clean up stale sessions from previous instance ──────────────────
+    // 1. Nuke the entire /tmp/craw/ tree — every session bundle is ephemeral.
+    //    This catches orphaned dirs that don't have a DB entry.
+    crate::session::dirs::cleanup_all_temp_dirs();
+
+    // 2. Mark DB sessions as ended, kill orphaned processes, remove veth pairs.
     // On restart, old sessions in the persistent DB still have state="active"
     // but their veth pairs, overlay mounts, and goose processes are gone.
     // Clean them up to prevent veth name collisions when the frontend
@@ -145,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
                 crate::session::namespace::cleanup_veth(b1, b2).await;
 
                 // Try container stale cleanup first (kills orphaned processes, removes state)
-                crate::session::container::cleanup_stale_container(&workspace_root, &s.id);
+                crate::session::container::cleanup_stale_container(&s.id);
 
                 // Fallback: old unshare session cleanup
                 if !s.overlay_mount.is_empty() {

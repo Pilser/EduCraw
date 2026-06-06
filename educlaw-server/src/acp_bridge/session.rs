@@ -37,7 +37,6 @@ use crate::session::registry::{ManagedSession, RequestDedupeEntry, RequestState,
 use super::client::spawn_sacp_client;
 use super::commands::handle_load_session as acp_handle_load_session;
 use super::images;
-use super::model_poller::spawn_model_poller;
 use super::token_calculator;
 
 
@@ -102,7 +101,7 @@ async fn frame_with_id(managed: &Arc<ManagedSession>, mut frame: serde_json::Val
 pub async fn init_acp_session(
     goose_bin: PathBuf,
     goose_path_root: PathBuf,
-    session_config_dir: PathBuf,
+    bundle_root: PathBuf,
     student_workspace: PathBuf,
     jail_tools_host: PathBuf,
     subject_dirs: Vec<PathBuf>,
@@ -112,7 +111,6 @@ pub async fn init_acp_session(
     session_id: String,
     student_id: String,
     _logs_dir: PathBuf,
-    system_prompt: Option<String>,
     registry: Arc<SessionRegistry>,
     recent_thread_id: Option<String>,
 ) -> Result<()> {
@@ -121,25 +119,17 @@ pub async fn init_acp_session(
     }
 
     tokio::fs::create_dir_all(&goose_path_root).await?;
-    tokio::fs::create_dir_all(&session_config_dir).await?;
-
-    if let Some(ref prompt) = system_prompt {
-        let prompt_dir = session_config_dir.join("config").join("prompts");
-        tokio::fs::create_dir_all(&prompt_dir).await?;
-        tokio::fs::write(prompt_dir.join("system.md"), prompt).await?;
-    }
+    tokio::fs::create_dir_all(&bundle_root).await?;
 
     let (b1, b2) = session_ip_block(&session_id);
 
     // ── Build OCI container bundle ──────────────────────────────────────
-    let bundle_root = session_config_dir.parent().expect("config dir has parent");
     let workspace_root = bundle_root.parent().expect("bundle dir has parent");
 
     let bundle = SessionBundle::new(
-        &workspace_root.to_string_lossy(),
         &session_id,
+        bundle_root.clone(),
     );
-    bundle.create_dirs()?;
 
     // subject_dirs are pre-resolved by the caller using collect_subject_dirs.
 
@@ -147,7 +137,7 @@ pub async fn init_acp_session(
         goose_bin: goose_bin.clone(),
         jail_tools: jail_tools_host,
         student_home: student_workspace,
-        config_dir: session_config_dir.clone(),
+        goose_path_root: goose_path_root.clone(),
         ssl_certs: PathBuf::from("/etc/ssl"),
         subject_dirs,
     };
@@ -175,7 +165,7 @@ pub async fn init_acp_session(
         (&sources.goose_bin, "goose_bin"),
         (&sources.jail_tools, "jail_tools"),
         (&sources.student_home, "student_home"),
-        (&sources.config_dir, "config_dir"),
+        (&sources.goose_path_root, "goose_path_root"),
         (&sources.ssl_certs, "ssl_certs"),
     ];
     for (path, label) in &bind_sources_to_check {
@@ -397,20 +387,6 @@ pub async fn init_acp_session(
 
     tracing::info!(session_id = %session_id, "✓ [SESSION] SSE-init ready");
 
-    spawn_model_poller(
-        session_config_dir.join("pending_model.txt"),
-        cx.clone(),
-        acp_session_id_holder.clone(),
-        session_id.clone(),
-        backend.clone(),
-        model_arc.clone(),
-        // Model poller ctrl_tx is a dummy channel — no persistent connection needed
-        {
-            let (tx, _) = mpsc::channel::<String>(1);
-            tx
-        },
-    );
-
     let managed = ManagedSession::new(
         cx.clone(),
         Some(container),
@@ -424,7 +400,6 @@ pub async fn init_acp_session(
         student_id.clone(),
         backend.clone(),
         registry.disconnect_timeout,
-        session_config_dir.clone(),
         message_buffer,
         buffer_bytes,
         frame_counter,
@@ -1036,7 +1011,6 @@ pub async fn handle_replay_sse(
     thread_id: &str,
     registry: &Arc<SessionRegistry>,
     backend: Arc<dyn DbBackend>,
-    session_config_dir: PathBuf,
 ) -> Result<SseEventStream> {
     let managed = registry
         .get(session_id)
@@ -1072,20 +1046,6 @@ pub async fn handle_replay_sse(
             }
         }
     });
-
-    // Restart model poller so pending model switches work during replay
-    spawn_model_poller(
-        session_config_dir.join("pending_model.txt"),
-        managed.cx.clone(),
-        managed.acp_session_id.clone(),
-        session_id.to_string(),
-        backend.clone(),
-        managed.model_arc.clone(),
-        {
-            let (tx, _) = mpsc::channel::<String>(1);
-            tx
-        },
-    );
 
     let cx = managed.cx.clone();
     let loading_flag = managed.loading_flag.clone();

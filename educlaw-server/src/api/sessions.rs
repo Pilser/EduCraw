@@ -8,6 +8,7 @@
 // PUT    /sessions/:id/model     — switch active model mid-session
 // GET    /sessions/:id/token-usage
 
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,10 +20,12 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use goose_sdk::custom_requests::SetSessionModelConfigRequest;
+use sacp::schema::{
+    NewSessionRequest, SessionConfigId, SessionConfigOptionValue, SetSessionConfigOptionRequest,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-use sacp::schema::NewSessionRequest;
 
 use crate::acp_bridge::init_acp_session;
 use crate::auth::bearer_token;
@@ -99,78 +102,7 @@ async fn create_session(
     };
     let upper = student_home_path(&state.students_root, &student);
 
-    let dirs = SessionDirs::new(&state.workspace_root, &session_id, lower, upper);
-
-    dirs.create_all()
-        .map_err(|e| AppError::Session(format!("failed to create session dirs: {e}")))?;
-
-    let system_prompt_b64 = {
-        let display_name = if student.display_name.trim().is_empty() {
-            student.username.clone()
-        } else {
-            student.display_name.clone()
-        };
-
-        let intro = format!(
-            "You are a personal AI tutor for {display_name}.\n\
-             \n\
-             Your student is working on their subjects. Your role is to use\n\
-             available resources(docs), and understand institution/school perttern in teaching\n\
-             so that you teach them based on their curriculum perttern [We are in DEVELOPMENT SO BE HELPFUL IN DEBUGING].\n\
-             \n\
-             You have built-in tools: you can run Python, JavaScript (Bun), and bash\n\
-             scripts; read files; draw charts; and do calculations. Use them silently\n\
-             in service of the student — like a calculator that works off-screen:\n\
-             - Run computations or draw plots when it helps explain something. Show\n\
-               only the result, never the code, unless the student asks \"how did you\n\
-               do that?\"\n\
-             - Read subject materials (files, documents) from the workspace before\n\
-               answering questions about them.\n\
-             - When the student shares their own work, open and read it before commenting.\n\
-             \n\
-             Language rules (always followed):\n\
-             - Never use programming terms, IT jargon, or computing language with the\n\
-               student. They are not studying computing.\n\
-             - Keep explanations simple and age-appropriate.\n\
-             - When the answer needs a number, calculation, or diagram — compute it;\n\
-               do not describe what the result would look like instead of showing it.\
-            "
-        );
-        serde_json::to_string(&intro).unwrap_or_default()
-    };
-
-    let initial_settings = serde_json::json!({
-        "permissions": {
-            "deny": [
-                "WorkerCreate", "WorkerGet", "WorkerObserve", "WorkerResolveTrust",
-                "WorkerAwaitReady", "WorkerSendPrompt", "WorkerRestart", "WorkerTerminate",
-                "TeamCreate", "TeamDelete",
-                "CronCreate", "CronDelete", "CronList",
-                "TodoWrite", "Agent", "Sleep", "SendUserMessage", "AskUserQuestion",
-                "TaskCreate", "TaskGet", "TaskList", "TaskStop", "TaskUpdate", "TaskOutput",
-                "ListMcpResources", "ReadMcpResource", "McpAuth", "RemoteTrigger",
-                "MCP", "TestingPermission",
-                "Skill", "PowerShell", "LSP", "Config",
-                "EnterPlanMode", "ExitPlanMode", "StructuredOutput"
-            ]
-        }
-    });
-    std::fs::write(
-        dirs.config.join("settings.json"),
-        serde_json::to_string_pretty(&initial_settings).unwrap(),
-    )
-    .map_err(|e| AppError::Session(format!("failed to write session settings: {e}")))?;
-
-    let default_claw_home = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".claw"))
-        .ok();
-    if let Some(creds_src) = default_claw_home.map(|h| h.join("credentials.json")) {
-        if creds_src.exists() {
-            if let Err(e) = std::fs::copy(&creds_src, dirs.config.join("credentials.json")) {
-                tracing::warn!(src = %creds_src.display(), error = %e, "could not copy credentials.json into session config");
-            }
-        }
-    }
+    let dirs = SessionDirs::new(&session_id, lower, upper);
 
     let subject_ids: Vec<String> = if student.cohort_id.is_empty() {
         vec![]
@@ -180,20 +112,6 @@ async fn create_session(
             .map(|s| s.slug)
             .collect()
     };
-
-    let student_json_obj = serde_json::json!({
-        "student_id":       student.id,
-        "username":         student.username,
-        "display_name":     student.display_name,
-        "role":             student.role,
-        "cohort_id":        student.cohort_id,
-        "subject_ids":      subject_ids,
-        "session_id":       session_id,
-        "system_prompt":      system_prompt_b64,
-    });
-    let student_json = student_json_obj.to_string();
-    std::fs::write(dirs.config.join("student.json"), &student_json)
-        .map_err(|e| AppError::Session(format!("failed to write student.json: {e}")))?;
 
     let effective_model = if let Some(m) = body.model.clone().filter(|m| !m.is_empty()) {
         Some(m)
@@ -222,7 +140,7 @@ async fn create_session(
         student_id: student.id.clone(),
         state: "active".to_string(),
         namespace_pid: None,
-        overlay_mount: dirs.merged.display().to_string(),
+        overlay_mount: String::new(),
         model: effective_model.clone(),
         last_input_at: None,
         last_token_checkpoint: 0,
@@ -247,8 +165,8 @@ async fn create_session(
     tokio::spawn(run_watchdog(
         WatchdogConfig {
             session_id: session_id.clone(),
-            overlay_mount: dirs.merged.clone(),
-            workspace_root: state.workspace_root.clone(),
+            overlay_mount: std::path::PathBuf::new(),
+            workspace_root: String::new(),
             idle_timeout: Duration::from_secs(idle_secs),
             warn_before: Duration::from_secs(warn_secs),
             registry: Some(Arc::clone(&state.registry)),
@@ -307,9 +225,8 @@ struct SetModelBody {
 }
 
 /// PUT /sessions/:id/model
-/// Updates the model stored in SQLite and writes it to a side-channel file
-/// that the running pty_bridge can detect and send as a `/model <name>` command
-/// to claw's stdin.
+/// Updates the model in the DB and sends the switch over ACP to the running
+/// goose instance (if the ACP session is active).
 async fn set_model(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -333,21 +250,57 @@ async fn set_model(
     state.backend.set_session_model(&session_id, &model).await?;
     state.backend.set_last_model(&session.student_id, &model).await?;
 
-    let dirs =
-        crate::session::dirs::SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-    let signal_path = dirs.config.join("pending_model.txt");
-    if let Err(e) = std::fs::write(&signal_path, &model) {
-        tracing::warn!(session_id = %session_id, error = %e, "Failed to write pending_model.txt");
-    }
+    // If ACP session is active, send model switch directly over ACP
+    if let Some(managed) = state.registry.get(&session_id).await {
+        let cx = managed.cx.clone();
+        let model_arc = managed.model_arc.clone();
+        let acp_sid = managed.acp_session_id.lock().await.clone();
+        let model_name = model.clone();
+        let backend = state.backend.clone();
+        let thinking_overrides = body.thinking_params.clone();
 
-    if let Some(ref params) = body.thinking_params {
-        if !params.is_empty() {
-            let thinking_path = dirs.config.join("pending_thinking.json");
-            let json_str = serde_json::to_string(params).unwrap_or_default();
-            if let Err(e) = std::fs::write(&thinking_path, &json_str) {
-                tracing::warn!(session_id = %session_id, error = %e, "Failed to write pending_thinking.json");
-            }
-            tracing::info!(session_id = %session_id, has_thinking_override = true, "thinking override written");
+        if let Some(acp_session_id) = acp_sid {
+            tokio::spawn(async move {
+                match backend.get_model_by_name(&model_name).await {
+                    Ok(Some(m)) => {
+                        let mut thinking = m.parsed_thinking_params();
+
+                        // Merge per-session thinking overrides if provided
+                        if let Some(ref overrides) = thinking_overrides {
+                            if !overrides.is_empty() {
+                                thinking.get_or_insert_with(HashMap::new).extend(
+                                    overrides.iter().map(|(k, v)| (k.clone(), v.clone())),
+                                );
+                            }
+                        }
+
+                        // Switch provider first if needed
+                        if let Some(provider) = &m.provider {
+                            let _ = cx
+                                .send_request(SetSessionConfigOptionRequest::new(
+                                    acp_session_id.clone(),
+                                    SessionConfigId::new("provider"),
+                                    SessionConfigOptionValue::value_id(provider.clone()),
+                                ))
+                                .block_task()
+                                .await;
+                        }
+
+                        // Switch model
+                        let _ = cx
+                            .send_request(SetSessionModelConfigRequest {
+                                session_id: acp_session_id.to_string(),
+                                model_id: model_name.clone(),
+                                request_params: thinking,
+                            })
+                            .block_task()
+                            .await;
+
+                        *model_arc.lock().await = Some(model_name);
+                    }
+                    _ => {}
+                }
+            });
         }
     }
 
@@ -451,17 +404,7 @@ async fn spawn_session(
         }));
     }
 
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-
-    // Resolve system_prompt from student.json
-    let system_prompt = std::fs::read_to_string(dirs.config.join("student.json"))
-        .ok()
-        .and_then(|blob| serde_json::from_str::<serde_json::Value>(&blob).ok())
-        .and_then(|v| v["system_prompt"].as_str().map(|s| s.to_string()))
-        .and_then(|b64| {
-            use base64::{engine::general_purpose::STANDARD, Engine as _};
-            STANDARD.decode(b64).ok().and_then(|bytes| String::from_utf8(bytes).ok())
-        });
+    let dirs = SessionDirs::for_existing_session(&session_id);
 
     // Resolve env_vars (same list as sse.rs and threads.rs)
     let mut env_vars: Vec<(String, String)> = Vec::new();
@@ -528,7 +471,7 @@ async fn spawn_session(
     init_acp_session(
         std::path::PathBuf::from(&state.goose_bin),
         goose_path_root,
-        dirs.config.clone(),
+        dirs.root.clone(),
         student_workspace,
         std::path::PathBuf::from(&state.jail_tools_host),
         subject_dirs,
@@ -538,7 +481,6 @@ async fn spawn_session(
         session_id.clone(),
         student_id,
         logs_dir,
-        system_prompt,
         Arc::clone(&state.registry),
         recent_thread_id,
     )
@@ -626,7 +568,7 @@ async fn terminate_session(
 
     state.backend.set_session_state(&session_id, "ended").await?;
     state.broker.remove_entry(&session_id).await;
-    crate::session::dirs::cleanup_session_dir(&state.workspace_root, &session_id);
+    crate::session::dirs::cleanup_session_dir(&session_id);
 
     tracing::info!(session_id = %session_id, "session terminated");
     Ok(StatusCode::NO_CONTENT)

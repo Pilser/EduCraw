@@ -77,22 +77,7 @@ async fn session_input(
     }
 
     let student_id = session.student_id.clone();
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-
-    let student_json_blob =
-        std::fs::read_to_string(dirs.config.join("student.json")).ok();
-
-    let system_prompt: Option<String> = student_json_blob
-        .as_deref()
-        .and_then(|blob| serde_json::from_str::<serde_json::Value>(blob).ok())
-        .and_then(|v| v["system_prompt"].as_str().map(|s| s.to_string()))
-        .and_then(|b64| {
-            use base64::{engine::general_purpose::STANDARD, Engine as _};
-            STANDARD
-                .decode(b64)
-                .ok()
-                .and_then(|bytes| String::from_utf8(bytes).ok())
-        });
+    let dirs = SessionDirs::for_existing_session(&session_id);
 
     let mut env_vars: Vec<(String, String)> = Vec::new();
     for key in &[
@@ -154,7 +139,7 @@ async fn session_input(
         init_acp_session(
             state.goose_bin.clone().into(),
             goose_path_root,
-            dirs.config.clone(),
+            dirs.root.clone(),
             student_workspace,
             std::path::PathBuf::from(&state.jail_tools_host),
             subject_dirs,
@@ -164,7 +149,6 @@ async fn session_input(
             session_id.clone(),
             student_id.clone(),
             logs_dir,
-            system_prompt,
             Arc::clone(&registry),
             recent_thread_id,
         )
@@ -226,14 +210,11 @@ async fn session_replay(
         return Err(AppError::Unauthorized);
     }
 
-    let dirs = SessionDirs::for_existing_session(&state.workspace_root, &session_id);
-
     let stream = handle_replay_sse(
         &session_id,
         &thread_id,
         &state.registry,
         state.backend.clone(),
-        dirs.config.clone(),
     )
     .await?;
 

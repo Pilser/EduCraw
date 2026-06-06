@@ -1,5 +1,4 @@
 use std::fs;
-use std::io;
 use std::os::unix::io::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,10 +12,8 @@ use crate::error::{AppError, Result};
 /// Paths and identities that define one OCI bundle for a session.
 pub struct SessionBundle {
     pub session_id: String,
-    /// Directory containing config.json + rootfs/
+    /// Directory containing config.json
     pub bundle_dir: PathBuf,
-    /// OCI rootfs: tmpfs mount point, bind targets will appear here
-    pub rootfs: PathBuf,
 }
 
 /// Sources for bind mounts inside the container.
@@ -24,7 +21,8 @@ pub struct BindSources {
     pub goose_bin: PathBuf,
     pub jail_tools: PathBuf,
     pub student_home: PathBuf,
-    pub config_dir: PathBuf,
+    /// Persistent student directory mounted at /claw_config (survives sessions)
+    pub goose_path_root: PathBuf,
     pub ssl_certs: PathBuf,
     pub subject_dirs: Vec<PathBuf>,
 }
@@ -38,27 +36,11 @@ pub struct ContainerEnv {
 // ── Bundle creation ──────────────────────────────────────────────────────────
 
 impl SessionBundle {
-    pub fn new(workspace_root: &str, session_id: &str) -> Self {
-        let bundle_dir = PathBuf::from(workspace_root).join(session_id);
-        let rootfs = bundle_dir.join("rootfs");
+    pub fn new(session_id: &str, bundle_dir: PathBuf) -> Self {
         Self {
             session_id: session_id.to_string(),
             bundle_dir,
-            rootfs,
         }
-    }
-
-    /// Create the bundle directory structure and a clean empty rootfs.
-    ///
-    /// Removes any stale content from a previous session at the same path
-    /// so that Youki's `prepare_rootfs` can create default devices and
-    /// symlinks without `EEXIST` errors.
-    pub fn create_dirs(&self) -> io::Result<()> {
-        if self.rootfs.exists() {
-            std::fs::remove_dir_all(&self.rootfs)?;
-        }
-        std::fs::create_dir_all(&self.rootfs)?;
-        Ok(())
     }
 
     /// Remove the entire bundle directory.
@@ -151,7 +133,7 @@ pub fn write_oci_config(
     mounts.push(serde_json::json!({
         "destination": "/claw_config",
         "type": "bind",
-        "source": sources.config_dir,
+        "source": sources.goose_path_root,
         "options": ["bind", "nosuid", "nodev"]
     }));
 
@@ -292,7 +274,6 @@ pub fn build_container(
     tracing::debug!(
         session_id = %bundle.session_id,
         bundle = %bundle.bundle_dir.display(),
-        rootfs = %bundle.rootfs.display(),
         "build_container: starting"
     );
 
@@ -426,8 +407,9 @@ pub fn cleanup_container_state(bundle_dir: &Path, session_id: &str) {
 /// Reads the Youki state file to find the init process PID, kills it,
 /// removes the state directory, and removes the bundle directory.
 /// Best-effort: logs warnings on failure but never propagates errors.
-pub fn cleanup_stale_container(workspace_root: &str, session_id: &str) {
-    let bundle_dir = PathBuf::from(workspace_root).join(session_id);
+pub fn cleanup_stale_container(session_id: &str) {
+    use crate::session::dirs::session_temp_dir;
+    let bundle_dir = session_temp_dir(session_id);
     if !bundle_dir.exists() {
         return;
     }
