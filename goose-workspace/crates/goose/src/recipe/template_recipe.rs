@@ -175,7 +175,7 @@ fn get_env_with_template_variables(
         let state = captured.state();
         let mut vars = HashSet::new();
         for (_, tmpl) in state.env().templates() {
-            vars.extend(tmpl.undeclared_variables(true));
+            vars.extend(tmpl.undeclared_variables(false));
         }
         vars
     };

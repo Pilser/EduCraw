@@ -216,6 +216,18 @@ pub async fn build_discovered_recipe(
     })?;
 
     if let Some(dp) = discover_params {
+        // Activity trigger params must be in render context for template
+        // (e.g., {{ subject }}, {{ topic }}) — they come from the activity click
+        // and are distinct from user_params (parameterValues) which are empty
+        // for activity-triggered applies.
+        if let Some(ref trigger) = dp.activity_trigger {
+            for (k, v) in &trigger.params {
+                render_params
+                    .entry(k.clone())
+                    .or_insert(serde_json::Value::String(v.clone()));
+            }
+        }
+
         let discovery_results = execute_discovery(
             recipe_template.discover.as_deref().unwrap_or(&[]),
             &flat_params,
@@ -226,6 +238,29 @@ pub async fn build_discovered_recipe(
         .map_err(BuildDiscoveredRecipeError::DiscoverFailed)?;
 
         render_params.extend(discovery_results);
+
+        // Inject Null for discover steps not produced (non-enabled groups, optional failures)
+        // so Strict-mode rendering doesn't crash on {% if step_name %} guards.
+        for name in &step_names {
+            render_params.entry(name.clone()).or_insert(serde_json::Value::Null);
+        }
+    }
+
+    // Apply parameter defaults for any params still missing from render context.
+    // Uses explicit `default` first, then falls back to the first `option` if available.
+    if let Some(ref params) = recipe_template.parameters {
+        for param in params {
+            if render_params.contains_key(&param.key) {
+                continue;
+            }
+            if let Some(default) = &param.default {
+                render_params.insert(param.key.clone(), serde_json::Value::String(default.clone()));
+            } else if let Some(options) = &param.options {
+                if let Some(first) = options.first() {
+                    render_params.insert(param.key.clone(), serde_json::Value::String(first.clone()));
+                }
+            }
+        }
     }
 
     let rendered = render_recipe_content_with_params(&recipe_content, &render_params)
@@ -261,7 +296,7 @@ pub enum BuildDiscoveredRecipeError {
     DiscoverFailed(Vec<DiscoverError>),
     #[error("Template render failed: {0}")]
     RenderFailed(anyhow::Error),
-    #[error("Invalid recipe: {0}")]
+    #[error(transparent)]
     Invalid(#[from] RecipeError),
 }
 

@@ -19,7 +19,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub const CURRENT_SCHEMA_VERSION: i32 = 14;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 
@@ -1178,6 +1178,15 @@ impl SessionStorage {
                 sqlx::query(
                     r#"
                     ALTER TABLE sessions ADD COLUMN recipe_path TEXT
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+            }
+            14 => {
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN recipe_activity_context TEXT
                 "#,
                 )
                 .execute(&mut **tx)

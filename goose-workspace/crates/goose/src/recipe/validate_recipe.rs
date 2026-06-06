@@ -95,7 +95,9 @@ pub fn validate_recipe_template_for_discovery(
         let mut message = String::new();
         if !missing_keys.is_empty() {
             message.push_str(&format!(
-                "Missing definitions for parameters in the recipe file: {}.",
+                "Missing definitions for parameters in the recipe file: {}. \
+                 If these are discover step outputs, ensure the step name is listed in `allowed_undeclared` \
+                 or the template uses the step name (not a dotted path) as the root variable.",
                 missing_keys.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")
             ));
         }
@@ -103,6 +105,12 @@ pub fn validate_recipe_template_for_discovery(
             message.push_str(&format!(
                 "\nUnnecessary parameter definitions: {}.",
                 extra_keys.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if !allowed_undeclared.is_empty() {
+            message.push_str(&format!(
+                "\nExcluded discover step names (not required as parameter definitions): {}.",
+                allowed_undeclared.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
             ));
         }
         return Err(anyhow::anyhow!("{}", message.trim_end()));
