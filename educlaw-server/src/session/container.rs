@@ -23,6 +23,10 @@ pub struct BindSources {
     pub student_home: PathBuf,
     /// Persistent student directory mounted at /claw_config (survives sessions)
     pub goose_path_root: PathBuf,
+    /// Prompts directory mounted at /claw_config/config/prompts (read-only overlay)
+    pub prompts_dir: PathBuf,
+    /// System recipes directory mounted at /claw_config/systemRecipes (read-only)
+    pub system_recipes_dir: PathBuf,
     pub ssl_certs: PathBuf,
     pub subject_dirs: Vec<PathBuf>,
 }
@@ -135,6 +139,22 @@ pub fn write_oci_config(
         "type": "bind",
         "source": sources.goose_path_root,
         "options": ["bind", "nosuid", "nodev"]
+    }));
+
+    // Bind mounts: prompts overlay (read-only, shadows /claw_config/config/prompts)
+    mounts.push(serde_json::json!({
+        "destination": "/claw_config/config/prompts",
+        "type": "bind",
+        "source": sources.prompts_dir,
+        "options": ["bind", "ro", "nosuid", "nodev"]
+    }));
+
+    // Bind mounts: system recipes (read-only)
+    mounts.push(serde_json::json!({
+        "destination": "/.systemRecipes",
+        "type": "bind",
+        "source": sources.system_recipes_dir,
+        "options": ["bind", "ro", "nosuid", "nodev"]
     }));
 
     // Bind mounts: SSL certs

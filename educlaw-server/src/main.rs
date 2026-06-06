@@ -99,6 +99,13 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(500 * 1024 * 1024);
 
+    // Path to prompts directory mounted read-only inside the container.
+    let prompts_path = std::env::var("EDUCRAW_PROMPTS_PATH")
+        .unwrap_or_else(|_| "/srv/educraw/prompts".to_string());
+
+    let system_recipes_path = std::env::var("EDUCRAW_SYSTEM_RECIPES_PATH")
+        .unwrap_or_else(|_| "/srv/educraw/systemRecipes".to_string());
+
     // Ensure host routing/NAT prerequisites for per-session network namespaces.
     ensure_host_networking().await
         .map_err(|e| anyhow::anyhow!("host networking bootstrap failed: {e}"))?;
@@ -171,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, jail_tools_host, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes);
+    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, jail_tools_host, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes, prompts_path, system_recipes_path);
 
     let app = Router::new()
         .merge(api::routes())

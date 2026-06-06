@@ -41,6 +41,10 @@ pub struct AppState {
     pub excluded_dirs: std::collections::HashSet<String>,
     /// Per-student disk quota in bytes (0 = unlimited).
     pub student_quota_bytes: u64,
+    /// Path to prompts directory mounted read-only at /claw_config/config/prompts.
+    pub prompts_path: String,
+    /// Path to system recipes directory mounted read-only at /claw_config/systemRecipes.
+    pub system_recipes_path: String,
 }
 
 impl AppState {
@@ -56,6 +60,8 @@ impl AppState {
         students_root: String,
         excluded_dirs: std::collections::HashSet<String>,
         student_quota_bytes: u64,
+        prompts_path: String,
+        system_recipes_path: String,
     ) -> Self {
         Self {
             backend,
@@ -69,6 +75,8 @@ impl AppState {
             students_root,
             excluded_dirs,
             student_quota_bytes,
+            prompts_path,
+            system_recipes_path,
         }
     }
 }

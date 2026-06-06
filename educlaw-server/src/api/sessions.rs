@@ -475,6 +475,8 @@ async fn spawn_session(
         student_workspace,
         std::path::PathBuf::from(&state.jail_tools_host),
         subject_dirs,
+        std::path::PathBuf::from(&state.prompts_path),
+        std::path::PathBuf::from(&state.system_recipes_path),
         env_vars,
         model,
         state.backend.clone(),

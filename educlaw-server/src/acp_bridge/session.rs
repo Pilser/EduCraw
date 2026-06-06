@@ -105,6 +105,8 @@ pub async fn init_acp_session(
     student_workspace: PathBuf,
     jail_tools_host: PathBuf,
     subject_dirs: Vec<PathBuf>,
+    prompts_path: PathBuf,
+    system_recipes_path: PathBuf,
     env_vars: Vec<(String, String)>,
     model: Option<String>,
     backend: Arc<dyn DbBackend>,
@@ -138,6 +140,8 @@ pub async fn init_acp_session(
         jail_tools: jail_tools_host,
         student_home: student_workspace,
         goose_path_root: goose_path_root.clone(),
+        prompts_dir: prompts_path,
+        system_recipes_dir: system_recipes_path,
         ssl_certs: PathBuf::from("/etc/ssl"),
         subject_dirs,
     };
@@ -166,6 +170,8 @@ pub async fn init_acp_session(
         (&sources.jail_tools, "jail_tools"),
         (&sources.student_home, "student_home"),
         (&sources.goose_path_root, "goose_path_root"),
+        (&sources.prompts_dir, "prompts_dir"),
+        (&sources.system_recipes_dir, "system_recipes_dir"),
         (&sources.ssl_certs, "ssl_certs"),
     ];
     for (path, label) in &bind_sources_to_check {
