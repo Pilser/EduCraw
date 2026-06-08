@@ -171,6 +171,9 @@ export interface RecipeEntry {
   appliedToCurrentSession?: boolean;
   isUserRecipe?: boolean;
   activities?: ActivityItem[];
+  appliedActivityGroup?: string | null;
+  appliedActivityLabel?: string | null;
+  activityPromptPin?: string | null;
 }
 
 export interface CreateRecipeResponse {
@@ -203,6 +206,8 @@ export interface ApplyRecipeResponse {
   description: string;
   instructions?: string | null;
   prompt?: string | null;
+  /** Rendered activity pin text shown as pinned context above input */
+  activityPin?: string | null;
   resolvedExtensions: string[];
   parameters: RecipeParameter[];
   recipePath?: string | null;
@@ -210,6 +215,8 @@ export interface ApplyRecipeResponse {
   activities?: ActivityItem[];
   /** The discover activity group that was triggered (if any) */
   appliedActivityGroup?: string | null;
+  /** The specific activity label that was triggered (if any) */
+  appliedActivityLabel?: string | null;
   /** Structured errors from failed required discover steps */
   discoverErrors?: DiscoverError[];
 }

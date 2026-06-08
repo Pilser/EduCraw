@@ -44,6 +44,7 @@ export class RecipesTab extends MenuTab {
 	@property({ attribute: false }) currentRecipeContext?: {
 		recipePath: string | null;
 		activityGroup: string | null;
+		activityLabel: string | null;
 	} | null;
 	/** Called when user picks "New Thread" in the context-switch dialog. Must spawn a fresh goose thread and clear the UI. */
 	@property({ attribute: false }) onNewSessionRequested?: () => Promise<void>;
@@ -51,7 +52,7 @@ export class RecipesTab extends MenuTab {
 	 * Called after a recipe is applied, for tracking what was applied.
 	 * `activityGroup` is null for parameter-dialog applies, the discover group for activity clicks.
 	 */
-	@property({ attribute: false }) onActivityApplied?: (recipePath: string, activityGroup: string | null) => void;
+	@property({ attribute: false }) onActivityApplied?: (recipePath: string, activityGroup: string | null, activityLabel: string | null) => void;
 
 	@state() private recipes: RecipeEntry[] = [];
 	@state() private loading = false;
@@ -95,7 +96,8 @@ export class RecipesTab extends MenuTab {
 
 		try {
 			this.recipes = await eduApi.listRecipes(this.sessionId, this.sessionToken);
-			console.log("[RecipesTab] Recipes loaded", this.recipes.length);
+			const appliedR = this.recipes.find(r => r.appliedToCurrentSession);
+			console.log("[RecipesTab] Recipes loaded", this.recipes.length, "applied:", appliedR ? { title: appliedR.title, group: appliedR.appliedActivityGroup, label: appliedR.appliedActivityLabel, pin: appliedR.activityPromptPin } : "none");
 		} catch (err) {
 			const e = handleError(err);
 			this.error = e.message || "Failed to load recipes";
@@ -150,7 +152,7 @@ export class RecipesTab extends MenuTab {
 				this.onRecipeApplied(result);
 			}
 			if (this.onActivityApplied) {
-				this.onActivityApplied(path, null);
+				this.onActivityApplied(path, null, null);
 			}
 			await this.loadRecipes();
 		} catch (err) {
@@ -261,7 +263,8 @@ export class RecipesTab extends MenuTab {
 		if (ctx) {
 			const sameRecipe = ctx.recipePath === recipe.path;
 			const sameGroup = ctx.activityGroup === discover.group;
-			if (!sameRecipe || !sameGroup) {
+			const sameLabel = ctx.activityLabel === label;
+			if (!sameRecipe || !sameGroup || !sameLabel) {
 				this.pendingSwitchActivity = { recipe, activity, label };
 				this.showContextSwitch = true;
 				this.requestUpdate();
@@ -281,13 +284,13 @@ export class RecipesTab extends MenuTab {
 		this.requestUpdate();
 
 		try {
-			const result = await eduApi.applyRecipe(
-				this.sessionId,
-				this.sessionToken,
-				recipe.path,
-				undefined,
-				{ group: discover.group, params: discover.params },
-			);
+		const result = await eduApi.applyRecipe(
+			this.sessionId,
+			this.sessionToken,
+			recipe.path,
+			undefined,
+			{ group: discover.group, label, params: discover.params },
+		);
 
 			if (result.discoverErrors && result.discoverErrors.length > 0) {
 				this.discoverErrors = { ...this.discoverErrors, [recipe.path]: result.discoverErrors };
@@ -297,10 +300,10 @@ export class RecipesTab extends MenuTab {
 				this.onRecipeApplied(result);
 			}
 			if (this.onActivityApplied) {
-				this.onActivityApplied(recipe.path, discover.group);
+				this.onActivityApplied(recipe.path, discover.group, label);
 			}
 
-			await this.loadRecipes();
+			this.closeDialog?.();
 		} catch (err) {
 			handleError(err);
 		} finally {
@@ -337,6 +340,8 @@ export class RecipesTab extends MenuTab {
 	private renderActivities(recipe: RecipeEntry): TemplateResult | null {
 		if (!recipe.activities || recipe.activities.length === 0) return null;
 
+		const activeLabel = recipe.appliedActivityLabel;
+
 		return html`
 			<div class="flex flex-wrap gap-1.5 mt-2">
 				${recipe.activities.map((activity) => {
@@ -347,22 +352,27 @@ export class RecipesTab extends MenuTab {
 					const hint = isObject ? activity.hint : undefined;
 					const hasDiscover = isObject && !!activity.discover;
 					const loading = this.isActivityLoading(recipe.path, label);
+					const isSelected = hasDiscover && activeLabel != null && activeLabel === label;
 
 					return html`
 						<button
-							class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-primary/30 bg-primary/[0.04] text-foreground hover:bg-primary/[0.1] hover:border-primary/60 active:scale-95 transition-all duration-150 disabled:opacity-50 disabled:active:scale-100 shadow-sm"
+							class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-all duration-150 disabled:opacity-50 disabled:active:scale-100 shadow-sm ${isSelected
+								? 'border-primary bg-primary/[0.12] ring-1 ring-primary'
+								: 'border-primary/30 bg-primary/[0.04] text-foreground hover:bg-primary/[0.1] hover:border-primary/60 active:scale-95'}"
 							title=${hint || label}
 							?disabled=${!hasDiscover || loading}
 							@click=${() => hasDiscover && this.handleActivityClick(recipe, activity)}
 						>
-							${loading
-								? html`<span class="inline-block w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin shrink-0" />`
-								: lucideIcon
-									? html`<span class="shrink-0">${icon(lucideIcon, "sm")}</span>`
-									: rawIcon
-										? html`<span class="text-sm shrink-0">${rawIcon}</span>`
-										: ""}
-							<span>${label}</span>
+							${isSelected
+								? html`<span class="text-primary shrink-0 text-xs leading-none">✓</span>`
+								: loading
+									? html`<span class="inline-block w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin shrink-0" />`
+									: lucideIcon
+										? html`<span class="shrink-0">${icon(lucideIcon, "sm")}</span>`
+										: rawIcon
+											? html`<span class="text-sm shrink-0">${rawIcon}</span>`
+											: ""}
+							<span>${isSelected ? html`<span class="text-primary font-semibold">${label}</span>` : html`<span>${label}</span>`}</span>
 						</button>
 					`;
 				})}

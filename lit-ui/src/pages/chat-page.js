@@ -38,12 +38,14 @@ let ChatPage = class ChatPage extends LitElement {
         this.fileDrawerOpen = false;
         this.previewModalOpen = false;
         this.recipeBanner = null;
+        this.activityPromptPin = null;
         this.messages = [];
         this.isStreaming = false;
         this.streamingMessage = null;
         this.lastLoadedThreadId = null;
         this.lastAppliedRecipePath = null;
         this.lastAppliedActivityGroup = null;
+        this.lastAppliedActivityLabel = null;
         this.currentAbort = null;
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
@@ -127,6 +129,31 @@ let ChatPage = class ChatPage extends LitElement {
     async initChat() {
         this.activeModelId = "grok-4-1-fast-reasoning";
         this.activeModelDisplayName = "grok-4-1-fast-reasoning";
+        // Restore activity context from recipe list (goose persists these on session)
+        try {
+            const recipes = await eduApi.listRecipes(this.sessionId, this.sessionToken);
+            console.log("[chat-page] Recipes loaded on init:", recipes.map(r => ({ title: r.title, applied: r.appliedToCurrentSession, group: r.appliedActivityGroup, pin: r.activityPromptPin })));
+            const applied = recipes.find(r => r.appliedToCurrentSession);
+            if (applied) {
+                if (applied.activityPromptPin) {
+                    this.activityPromptPin = applied.activityPromptPin;
+                }
+                if (applied.appliedActivityGroup) {
+                    this.lastAppliedActivityGroup = applied.appliedActivityGroup;
+                }
+                if (applied.appliedActivityLabel) {
+                    this.lastAppliedActivityLabel = applied.appliedActivityLabel;
+                }
+                if (applied.path) {
+                    this.lastAppliedRecipePath = applied.path;
+                }
+            }
+        }
+        catch (err) {
+            if (isSessionFatal(err))
+                throw err;
+            // non-fatal — pin just won't show on refresh
+        }
         try {
             const sessionModels = await eduApi.getSessionModels(this.sessionId, this.auth.token);
             const activeId = sessionModels.active || this.activeModelId;
@@ -940,6 +967,7 @@ let ChatPage = class ChatPage extends LitElement {
         tab.currentRecipeContext = {
             recipePath: this.lastAppliedRecipePath,
             activityGroup: this.lastAppliedActivityGroup,
+            activityLabel: this.lastAppliedActivityLabel,
         };
         tab.onRecipeApplied = (resp) => this.handleRecipeApplied(resp);
         tab.onNewSessionRequested = async () => {
@@ -949,6 +977,7 @@ let ChatPage = class ChatPage extends LitElement {
             this.lastLoadedThreadId = resp.thread_id || null;
             this.lastAppliedRecipePath = null;
             this.lastAppliedActivityGroup = null;
+            this.lastAppliedActivityLabel = null;
             this.showLanding = false;
             this.isStreaming = false;
             this.streamingMessage = null;
@@ -957,29 +986,23 @@ let ChatPage = class ChatPage extends LitElement {
             this.updateUI();
             this.requestUpdate();
         };
-        tab.onActivityApplied = (recipePath, activityGroup) => {
+        tab.onActivityApplied = (recipePath, activityGroup, activityLabel) => {
             this.lastAppliedRecipePath = recipePath;
             this.lastAppliedActivityGroup = activityGroup;
+            this.lastAppliedActivityLabel = activityLabel;
         };
         return tab;
     }
     handleRecipeApplied(resp) {
-        console.log("[chat-page] Recipe applied:", resp.title, resp.description);
+        console.log("[chat-page] Recipe applied:", resp.title, resp.description, "activityPin:", resp.activityPin, "appliedActivityGroup:", resp.appliedActivityGroup, "appliedActivityLabel:", resp.appliedActivityLabel);
         this.recipeBanner = { title: resp.title, description: resp.description };
         this.lastAppliedRecipePath = resp.recipePath || null;
         this.lastAppliedActivityGroup = resp.appliedActivityGroup ?? null;
-        this.requestUpdate();
-        if (resp.prompt) {
-            const editor = this.chatPanel?.agentInterface?._messageEditor;
-            if (editor) {
-                editor.value = resp.prompt;
-                requestAnimationFrame(() => {
-                    const ta = editor.shadowRoot?.querySelector("textarea") || editor.querySelector("textarea");
-                    if (ta)
-                        ta.focus();
-                });
-            }
+        this.lastAppliedActivityLabel = resp.appliedActivityLabel ?? null;
+        if (resp.activityPin) {
+            this.activityPromptPin = resp.activityPin;
         }
+        this.requestUpdate();
         setTimeout(() => {
             this.recipeBanner = null;
             this.requestUpdate();
@@ -1187,6 +1210,27 @@ let ChatPage = class ChatPage extends LitElement {
           </div>
         </div>
 
+        ${this.activityPromptPin
+            ? html `
+            <div class="flex items-center gap-2 px-4 border-b border-border shrink-0 h-7 bg-primary/[0.03]">
+              <span class="text-primary shrink-0 text-xs leading-none">📌</span>
+              <div class="flex-1 overflow-hidden relative h-full">
+                <div class="absolute inset-0 flex items-center overflow-hidden">
+                  <div class="marquee-text">
+                    <span class="text-xs text-foreground/80 whitespace-nowrap">${this.activityPromptPin}&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+                    <span class="text-xs text-foreground/80 whitespace-nowrap">${this.activityPromptPin}&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                class="shrink-0 text-muted-foreground hover:text-foreground transition-colors leading-none text-xs"
+                @click=${() => { this.activityPromptPin = null; this.requestUpdate(); }}
+                title="Dismiss"
+              >✕</button>
+            </div>
+          `
+            : ''}
+
         <!-- Chat Area -->
         <div class="flex-1 flex flex-col min-h-0 relative">
           ${this.recipeBanner
@@ -1311,6 +1355,9 @@ __decorate([
 __decorate([
     state()
 ], ChatPage.prototype, "recipeBanner", void 0);
+__decorate([
+    state()
+], ChatPage.prototype, "activityPromptPin", void 0);
 __decorate([
     state()
 ], ChatPage.prototype, "messages", void 0);

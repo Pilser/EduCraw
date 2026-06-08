@@ -43,6 +43,18 @@ body {
     cursor: pointer;
 }
 
+/* Continuous loop marquee for activity context pin */
+@keyframes marquee-loop {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+.marquee-text {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marquee-loop 20s linear infinite;
+}
+
 /* Shimmer animation for thinking text */
 @keyframes shimmer {
     0% {

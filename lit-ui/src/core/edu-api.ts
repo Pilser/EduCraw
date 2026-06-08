@@ -268,6 +268,16 @@ export const eduApi = {
     }
   },
 
+  /** Get basic session metadata from Helix DB */
+  async getSession(
+    sessionId: string,
+    token: string,
+  ): Promise<{ [key: string]: unknown }> {
+    return request(`/sessions/${sessionId}`, {
+      headers: authHeader(token),
+    });
+  },
+
   /** Get available models for a session */
   async getSessionModels(
     sessionId: string,
@@ -632,7 +642,7 @@ export const eduApi = {
     token: string,
     recipePath: string,
     parameterValues?: Record<string, string>,
-    activityTrigger?: { group: string; params: Record<string, string> },
+    activityTrigger?: { group: string; label: string; params: Record<string, string> },
   ): Promise<ApplyRecipeResponse> {
     return request<ApplyRecipeResponse>(
       `/sessions/${sessionId}/recipes/apply`,

@@ -203,6 +203,12 @@ export const eduApi = {
             throw new Error(`${res.status}: ${parsed.error || text || res.statusText}`);
         }
     },
+    /** Get basic session metadata from Helix DB */
+    async getSession(sessionId, token) {
+        return request(`/sessions/${sessionId}`, {
+            headers: authHeader(token),
+        });
+    },
     /** Get available models for a session */
     async getSessionModels(sessionId, token) {
         return request(`/sessions/${sessionId}/models`, {
