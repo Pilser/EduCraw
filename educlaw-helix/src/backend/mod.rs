@@ -7,6 +7,7 @@ use crate::types::*;
 pub mod api;
 pub mod cohorts;
 pub mod extract;
+pub mod ipam;
 pub mod models;
 pub mod sessions;
 pub mod students;
@@ -97,6 +98,11 @@ pub trait DbBackend: Send + Sync {
     async fn delete_code(&self, id: &str) -> Result<()>;
     async fn redeem_code(&self, code: &str, student_id: &str) -> Result<RedeemResult>;
     async fn export_codes(&self, tokens: i64) -> Result<Vec<TokenCode>>;
+    // ── IPAM ──
+    async fn check_subnet(&self, subnet: &str) -> Result<bool>;
+    async fn claim_subnet(&self, subnet: &str, session_id: &str) -> Result<bool>;
+    async fn release_subnet(&self, subnet: &str) -> Result<()>;
+    async fn release_session_subnets(&self, session_id: &str) -> Result<()>;
     // ── API ──
     async fn get_me(&self, student_id: &str) -> Result<serde_json::Value>;
     async fn get_session_models(&self, session_id: &str) -> Result<serde_json::Value>;
@@ -186,6 +192,12 @@ impl DbBackend for HelixClient {
     async fn delete_code(&self, id: &str) -> Result<()> { self._delete_code(id).await }
     async fn redeem_code(&self, code: &str, student_id: &str) -> Result<RedeemResult> { self._redeem_code(code, student_id).await }
     async fn export_codes(&self, tokens: i64) -> Result<Vec<TokenCode>> { self._export_codes(tokens).await }
+
+    // ── IPAM (delegates to ipam.rs) ──
+    async fn check_subnet(&self, subnet: &str) -> Result<bool> { self._check_subnet(subnet).await }
+    async fn claim_subnet(&self, subnet: &str, session_id: &str) -> Result<bool> { self._claim_subnet(subnet, session_id).await }
+    async fn release_subnet(&self, subnet: &str) -> Result<()> { self._release_subnet(subnet).await }
+    async fn release_session_subnets(&self, session_id: &str) -> Result<()> { self._release_session_subnets(session_id).await }
 
     // ── API (delegates to api.rs) ──
     async fn get_me(&self, student_id: &str) -> Result<serde_json::Value> { self._get_me(student_id).await }

@@ -4,6 +4,7 @@ use crate::config::HelixConfig;
 use crate::error::{HelixError, Result};
 use crate::queries;
 
+#[derive(Clone)]
 pub struct HelixClient {
     http: reqwest::Client,
     config: HelixConfig,
