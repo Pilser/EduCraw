@@ -1066,6 +1066,15 @@ pub struct RecipeEntry {
     /// Activity items (plain text or structured discover activities)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activities: Option<Vec<ActivityItemDto>>,
+    /// The discover activity group applied to the current session, if this entry matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_activity_group: Option<String>,
+    /// The specific activity label applied to the current session, if this entry matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_activity_label: Option<String>,
+    /// Rendered activity pin text persisted from the session, if this entry matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_prompt_pin: Option<String>,
 }
 
 /// Serializable recipe parameter for ACP responses.
@@ -1241,6 +1250,8 @@ pub struct ApplyRecipeToSessionRequest {
 pub struct ActivityTriggerDto {
     /// Which discover group to activate
     pub group: String,
+    /// The specific activity label (used on frontend to mark only this button as selected)
+    pub label: String,
     /// Parameter values for discovery + template rendering
     pub params: HashMap<String, String>,
 }
@@ -1294,6 +1305,9 @@ pub struct ApplyRecipeToSessionResponse {
     pub instructions: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// Rendered activity pin text shown as context label above input
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_pin: Option<String>,
     #[serde(default)]
     pub resolved_extensions: Vec<String>,
     #[serde(default)]
@@ -1310,6 +1324,9 @@ pub struct ApplyRecipeToSessionResponse {
     /// The discover activity group that was triggered (if any)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_activity_group: Option<String>,
+    /// The specific activity label that was triggered (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_activity_label: Option<String>,
 }
 
 /// Generate a recipe from a session's conversation history using a sub-agent.

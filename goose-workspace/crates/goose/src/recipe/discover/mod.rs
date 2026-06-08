@@ -61,6 +61,8 @@ pub enum DiscoverType {
 pub struct ActivityTrigger {
     /// Which discover group to enable
     pub group: String,
+    /// The specific activity label (used on frontend to mark only this button as selected)
+    pub label: String,
     /// Parameter values for discovery + template rendering
     pub params: HashMap<String, String>,
 }

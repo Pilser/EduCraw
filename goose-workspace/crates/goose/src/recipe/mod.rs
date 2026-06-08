@@ -58,6 +58,9 @@ pub struct Recipe {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>, // the prompt to start the session with
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_pin: Option<String>, // pinned context label shown above input when activity triggered
+
     #[serde(
         skip_serializing_if = "Option::is_none",
         default,
@@ -244,6 +247,7 @@ pub struct RecipeBuilder {
 
     // Optional fields
     prompt: Option<String>,
+    activity_pin: Option<String>,
     extensions: Option<Vec<ExtensionConfig>>,
     settings: Option<Settings>,
     activities: Option<Vec<ActivityItem>>,
@@ -339,6 +343,7 @@ impl Recipe {
             description: None,
             instructions: None,
             prompt: None,
+            activity_pin: None,
             extensions: None,
             settings: None,
             activities: None,
@@ -462,6 +467,7 @@ impl RecipeBuilder {
             description,
             instructions: self.instructions,
             prompt: self.prompt,
+            activity_pin: self.activity_pin,
             extensions: self.extensions,
             settings: self.settings,
             activities: self.activities,

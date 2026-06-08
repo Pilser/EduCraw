@@ -19,7 +19,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 14;
+pub const CURRENT_SCHEMA_VERSION: i32 = 16;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 
@@ -82,6 +82,10 @@ pub struct Session {
     pub applied_recipe_path: Option<String>,
     #[serde(default)]
     pub recipe_activity_context: Option<String>,
+    #[serde(default)]
+    pub activity_prompt_pin: Option<String>,
+    #[serde(default)]
+    pub recipe_activity_label: Option<String>,
     pub conversation: Option<Conversation>,
     pub message_count: usize,
     pub provider_name: Option<String>,
@@ -115,6 +119,8 @@ pub struct SessionUpdateBuilder<'a> {
     user_recipe_values: Option<Option<HashMap<String, String>>>,
     applied_recipe_path: Option<Option<String>>,
     recipe_activity_context: Option<Option<String>>,
+    activity_prompt_pin: Option<Option<String>>,
+    recipe_activity_label: Option<Option<String>>,
     provider_name: Option<Option<String>>,
     model_config: Option<Option<ModelConfig>>,
     goose_mode: Option<GooseMode>,
@@ -153,6 +159,8 @@ impl<'a> SessionUpdateBuilder<'a> {
             user_recipe_values: None,
             applied_recipe_path: None,
             recipe_activity_context: None,
+            activity_prompt_pin: None,
+            recipe_activity_label: None,
             provider_name: None,
             model_config: None,
             goose_mode: None,
@@ -297,6 +305,16 @@ impl<'a> SessionUpdateBuilder<'a> {
 
     pub fn recipe_activity_context(mut self, context: Option<String>) -> Self {
         self.recipe_activity_context = Some(context);
+        self
+    }
+
+    pub fn activity_prompt_pin(mut self, pin: Option<String>) -> Self {
+        self.activity_prompt_pin = Some(pin);
+        self
+    }
+
+    pub fn recipe_activity_label(mut self, label: Option<String>) -> Self {
+        self.recipe_activity_label = Some(label);
         self
     }
 }
@@ -519,6 +537,8 @@ impl Default for Session {
             goose_mode: GooseMode::default(),
             thread_id: None,
             recipe_activity_context: None,
+            activity_prompt_pin: None,
+            recipe_activity_label: None,
         }
     }
 }
@@ -604,6 +624,14 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
             thread_id: row.try_get("thread_id").ok().flatten(),
             recipe_activity_context: row
                 .try_get("recipe_activity_context")
+                .ok()
+                .flatten(),
+            activity_prompt_pin: row
+                .try_get("activity_prompt_pin")
+                .ok()
+                .flatten(),
+            recipe_activity_label: row
+                .try_get("recipe_activity_label")
                 .ok()
                 .flatten(),
         })
@@ -1192,6 +1220,24 @@ impl SessionStorage {
                 .execute(&mut **tx)
                 .await?;
             }
+            15 => {
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN activity_prompt_pin TEXT
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+            }
+            16 => {
+                sqlx::query(
+                    r#"
+                    ALTER TABLE sessions ADD COLUMN recipe_activity_label TEXT
+                "#,
+                )
+                .execute(&mut **tx)
+                .await?;
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1255,6 +1301,7 @@ impl SessionStorage {
                accumulated_total_tokens, accumulated_input_tokens, accumulated_output_tokens,
                accumulated_cache_read_tokens, accumulated_cache_write_tokens,
                schedule_id, recipe_json, user_recipe_values_json, recipe_path,
+               recipe_activity_context, activity_prompt_pin, recipe_activity_label,
                provider_name, model_config_json, goose_mode, thread_id
         FROM sessions
         WHERE id = ?
@@ -1332,6 +1379,8 @@ impl SessionStorage {
         add_update!(builder.goose_mode, "goose_mode");
         add_update!(builder.thread_id, "thread_id");
         add_update!(builder.recipe_activity_context, "recipe_activity_context");
+        add_update!(builder.activity_prompt_pin, "activity_prompt_pin");
+        add_update!(builder.recipe_activity_label, "recipe_activity_label");
 
         if updates.is_empty() {
             return Ok(());
@@ -1420,6 +1469,12 @@ impl SessionStorage {
         }
         if let Some(recipe_activity_context) = builder.recipe_activity_context {
             q = q.bind(recipe_activity_context);
+        }
+        if let Some(activity_prompt_pin) = builder.activity_prompt_pin {
+            q = q.bind(activity_prompt_pin);
+        }
+        if let Some(recipe_activity_label) = builder.recipe_activity_label {
+            q = q.bind(recipe_activity_label);
         }
 
         let pool = self.pool().await?;

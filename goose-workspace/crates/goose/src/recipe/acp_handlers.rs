@@ -80,14 +80,20 @@ pub async fn handle_list(
     let all = local_recipes::list_local_recipes()
         .map_err(|e| Error::internal_error().data(e.to_string()))?;
 
-    // Resolve applied recipe path and project dir from session once (avoid N+1)
-    let applied_path: Option<String> = match (session_manager, session_id) {
+    // Resolve applied recipe path + activity context from session once (avoid N+1)
+    let (applied_path, applied_activity_group, activity_prompt_pin, applied_activity_label): (Option<String>, Option<String>, Option<String>, Option<String>) = match (session_manager, session_id) {
         (Some(sm), Some(sid)) => {
-            sm.get_session(sid, false).await
-                .ok()
-                .and_then(|s| s.applied_recipe_path)
+            match sm.get_session(sid, false).await.ok() {
+                Some(s) => (
+                    s.applied_recipe_path,
+                    s.recipe_activity_context,
+                    s.activity_prompt_pin,
+                    s.recipe_activity_label,
+                ),
+                None => (None, None, None, None),
+            }
         }
-        _ => None,
+        _ => (None, None, None, None),
     };
     // Use env::current_dir() because list_local_recipes() paths are
     // canonicalized from CWD, not from session.working_dir (which may be
@@ -129,6 +135,9 @@ pub async fn handle_list(
                 }).collect(),
                 applied_to_current_session: is_applied,
                 is_user_recipe: is_user,
+                applied_activity_group: if is_applied { applied_activity_group.clone() } else { None },
+                applied_activity_label: if is_applied { applied_activity_label.clone() } else { None },
+                activity_prompt_pin: if is_applied { activity_prompt_pin.clone() } else { None },
                 activities: r.activities.map(|acts| {
                     acts.into_iter().map(|a| match a {
                         ActivityItem::Plain(s) => cr::ActivityItemDto::Plain(s),
@@ -264,6 +273,7 @@ pub async fn handle_apply_to_session(
             working_dir,
             activity_trigger: Some(ActivityTrigger {
                 group: trigger.group.clone(),
+                label: trigger.label.clone(),
                 params: trigger.params.clone(),
             }),
         };
@@ -282,11 +292,13 @@ pub async fn handle_apply_to_session(
                     description: String::new(),
                     instructions: None,
                     prompt: None,
+                    activity_pin: None,
                     resolved_extensions: vec![],
                     parameters: vec![],
                     recipe_path: None,
                     activities: None,
                     applied_activity_group: None,
+                    applied_activity_label: None,
                     discover_errors: Some(
                         errors
                             .into_iter()
@@ -321,12 +333,16 @@ pub async fn handle_apply_to_session(
     let resolved_path = path.to_string_lossy().to_string();
     let user_values: HashMap<String, String> = param_values.into_iter().collect();
 
+    let prompt_pin = req.activity_trigger.as_ref().and_then(|_| recipe.activity_pin.clone());
+
     session_manager
         .update(&req.session_id)
         .recipe(Some(recipe.clone()))
         .applied_recipe_path(Some(resolved_path.clone()))
         .user_recipe_values(Some(user_values))
         .recipe_activity_context(req.activity_trigger.as_ref().map(|t| t.group.clone()))
+        .activity_prompt_pin(prompt_pin)
+        .recipe_activity_label(req.activity_trigger.as_ref().map(|t| t.label.clone()))
         .apply()
         .await
         .map_err(|e| Error::internal_error().data(e.to_string()))?;
@@ -389,12 +405,14 @@ pub async fn handle_apply_to_session(
         description: recipe.description,
         instructions: recipe.instructions,
         prompt: recipe.prompt,
+        activity_pin: recipe.activity_pin,
         resolved_extensions,
         parameters,
         recipe_path: Some(resolved_path),
         discover_errors: None,
         activities,
         applied_activity_group: req.activity_trigger.as_ref().map(|t| t.group.clone()),
+        applied_activity_label: req.activity_trigger.as_ref().map(|t| t.label.clone()),
     })
 }
 
