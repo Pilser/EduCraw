@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use educlaw_helix::Session;
+
 use crate::acp_bridge::init_acp_session;
 use crate::error::{AppError, Result};
 use crate::session::container::collect_subject_dirs;
@@ -10,6 +12,98 @@ use crate::session::dirs::SessionDirs;
 use crate::session::registry::ManagedSession;
 
 use super::AppState;
+
+/// Resolved parameters for spawning a goose container, shared across all
+/// callers (`spawn_session`, `session_input`, `get_managed_session`).
+///
+/// See [`resolve_spawn_params`].
+pub struct SpawnParams {
+    pub goose_bin: PathBuf,
+    pub goose_path_root: PathBuf,
+    pub bundle_root: PathBuf,
+    pub student_workspace: PathBuf,
+    pub jail_tools_host: PathBuf,
+    pub subject_dirs: Vec<PathBuf>,
+    pub prompts_path: PathBuf,
+    pub system_recipes_path: PathBuf,
+    pub env_vars: Vec<(String, String)>,
+    pub model: Option<String>,
+    pub logs_dir: PathBuf,
+}
+
+/// Resolve the common parameters needed by `init_acp_session`.
+///
+/// Deduplicates the ~40-line resolution block that was copy-pasted across
+/// `sessions.rs::spawn_session`, `sse.rs::session_input`, and this module's
+/// `get_managed_session`.
+pub async fn resolve_spawn_params(
+    state: &AppState,
+    session: &Session,
+    student_id: &str,
+    dirs: &SessionDirs,
+) -> SpawnParams {
+    let mut env_vars: Vec<(String, String)> = Vec::new();
+    for key in &[
+        "HOME", "USER", "PATH", "TERM",
+        "XAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
+        "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "NOVITA_API_KEY",
+        "NVIDIA_API_KEY", "CEREBRAS_API_KEY", "INCEPTION_API_KEY",
+        "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
+        "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
+        "OPENAI_BASE_URL",
+        "GOOSE_EXCLUDED_DIRS",
+        "EXA_API_KEY",
+    ] {
+        if let Ok(val) = std::env::var(key) {
+            env_vars.push((key.to_string(), val));
+        }
+    }
+
+    let model = session
+        .model
+        .clone()
+        .filter(|m| !m.is_empty())
+        .or_else(|| std::env::var("GOOSE_MODEL").ok());
+
+    let goose_path_root = std::path::PathBuf::from(&state.students_root).join(student_id);
+    let logs_dir = std::path::PathBuf::from(&state.workspace_root)
+        .parent()
+        .unwrap_or(std::path::Path::new("/data"))
+        .join(format!("students/{}", student_id))
+        .join(".goose/logs");
+
+    let student = state.backend.get_student(student_id)
+        .await
+        .ok()
+        .flatten();
+    let cohort_id = student.as_ref()
+        .map(|s| s.cohort_id.clone())
+        .unwrap_or_default();
+    let student_workspace = student.map_or_else(
+        || std::path::PathBuf::from(&state.students_root).join(student_id),
+        |s| {
+            let component = s.home_dir.as_deref().unwrap_or(&s.username);
+            std::path::PathBuf::from(&state.students_root).join(component)
+        },
+    );
+    let subject_dirs = collect_subject_dirs(Path::new(&state.subjects_root), &cohort_id);
+
+    SpawnParams {
+        goose_bin: std::path::PathBuf::from(&state.goose_bin),
+        goose_path_root,
+        bundle_root: dirs.root.clone(),
+        student_workspace,
+        jail_tools_host: std::path::PathBuf::from(&state.jail_tools_host),
+        subject_dirs,
+        prompts_path: std::path::PathBuf::from(&state.prompts_path),
+        system_recipes_path: std::path::PathBuf::from(&state.system_recipes_path),
+        env_vars,
+        model,
+        logs_dir,
+    }
+}
 
 /// Look up a managed session in the registry, lazily spawning goose if needed.
 ///
@@ -44,77 +138,21 @@ pub async fn get_managed_session(
     let student_id = session.student_id.clone();
     let dirs = SessionDirs::for_existing_session(session_id);
 
-    let mut env_vars: Vec<(String, String)> = Vec::new();
-    for key in &[
-        "HOME", "USER", "PATH", "TERM",
-        "XAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
-        "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "NOVITA_API_KEY",
-        "NVIDIA_API_KEY", "CEREBRAS_API_KEY", "INCEPTION_API_KEY",
-        "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
-        "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
-        "OPENAI_BASE_URL",
-        "GOOSE_EXCLUDED_DIRS",
-        "EXA_API_KEY",
-    ] {
-        if let Ok(val) = std::env::var(key) {
-            env_vars.push((key.to_string(), val));
-        }
-    }
-
-    let model = session
-        .model
-        .clone()
-        .filter(|m| !m.is_empty())
-        .or_else(|| std::env::var("GOOSE_MODEL").ok());
-
-    let goose_path_root = std::path::PathBuf::from(&state.students_root).join(&student_id);
-    let logs_dir = std::path::PathBuf::from(&state.workspace_root)
-        .parent()
-        .unwrap_or(std::path::Path::new("/data"))
-        .join(format!("students/{}", student_id))
-        .join(".goose/logs");
-
     let recent_thread_id = state
         .backend
         .get_recent_thread_id(&student_id)
         .await
         .unwrap_or(None);
 
-    let student = state.backend.get_student(&student_id)
-        .await
-        .ok()
-        .flatten();
-    let cohort_id = student.as_ref()
-        .map(|s| s.cohort_id.clone())
-        .unwrap_or_default();
-    let student_workspace = student.map_or_else(
-        || std::path::PathBuf::from(&state.students_root).join(&student_id),
-        |s| {
-            let component = s.home_dir.as_deref().unwrap_or(&s.username);
-            std::path::PathBuf::from(&state.students_root).join(component)
-        },
-    );
-    let subject_dirs = collect_subject_dirs(Path::new(&state.subjects_root), &cohort_id);
+    let p = resolve_spawn_params(state, &session, &student_id, &dirs).await;
 
     init_acp_session(
-        std::path::PathBuf::from(&state.goose_bin),
-        goose_path_root,
-        dirs.root.clone(),
-        student_workspace,
-        std::path::PathBuf::from(&state.jail_tools_host),
-        subject_dirs,
-        std::path::PathBuf::from(&state.prompts_path),
-        std::path::PathBuf::from(&state.system_recipes_path),
-        env_vars,
-        model,
-        state.backend.clone(),
-        session_id.to_string(),
-        student_id,
-        logs_dir,
-        Arc::clone(&state.registry),
-        recent_thread_id,
+        p.goose_bin, p.goose_path_root, p.bundle_root,
+        p.student_workspace, p.jail_tools_host, p.subject_dirs,
+        p.prompts_path, p.system_recipes_path,
+        p.env_vars, p.model, state.backend.clone(),
+        &state.helix_client, session_id.to_string(), student_id, p.logs_dir,
+        Arc::clone(&state.registry), recent_thread_id,
     )
     .await?;
 

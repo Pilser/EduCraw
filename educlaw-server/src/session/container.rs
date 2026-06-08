@@ -214,6 +214,42 @@ pub fn write_oci_config(
         "perf_event_open", "bpf", "userfaultfd",
     ];
 
+    // ── Cgroup resource limits from environment ──────────────────
+    let memory_limit: u64 = std::env::var("EDUCLAW_CGROUP_MEMORY_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(536870912);
+
+    let pids_limit: i64 = std::env::var("EDUCLAW_CGROUP_PIDS_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(256);
+
+    let cpu_cfg: Option<(i64, i64)> = std::env::var("EDUCLAW_CGROUP_CPU_MAX")
+        .ok()
+        .and_then(|v| {
+            let parts: Vec<&str> = v.split_whitespace().collect();
+            if parts.len() == 2 {
+                let quota = parts[0].parse().ok()?;
+                let period = parts[1].parse().ok()?;
+                Some((quota, period))
+            } else {
+                None
+            }
+        });
+
+    let mut resources = serde_json::json!({
+        "memory": { "limit": memory_limit },
+        "pids": { "limit": pids_limit }
+    });
+
+    if let Some((quota, period)) = cpu_cfg {
+        resources["cpu"] = serde_json::json!({
+            "quota": quota,
+            "period": period
+        });
+    }
+
     let config = serde_json::json!({
         "ociVersion": "1.0.2",
         "process": {
@@ -226,7 +262,7 @@ pub fn write_oci_config(
                 "bounding": caps,
                 "effective": caps,
                 "permitted": caps,
-                "ambient": caps
+                "ambient": []
             },
             "rlimits": [
                 { "type": "RLIMIT_NOFILE", "hard": 1024, "soft": 1024 }
@@ -247,10 +283,7 @@ pub fn write_oci_config(
                 { "type": "uts" },
                 { "type": "ipc" }
             ],
-            "resources": {
-                "memory": { "limit": 536870912 },
-                "pids": { "limit": 256 }
-            },
+            "resources": resources,
             "seccomp": {
                 "defaultAction": "SCMP_ACT_ALLOW",
                 "architectures": ["SCMP_ARCH_X86_64"],
@@ -336,13 +369,85 @@ pub fn build_container(
             error = %e,
             "build_container failed"
         );
+    } else {
+        // Log notify socket path for debugging
+        let state_dir = container_state_dir(&bundle.bundle_dir, &bundle.session_id);
+        let notify_sock = state_dir.join("notify.sock");
+        tracing::debug!(
+            session_id = %bundle.session_id,
+            notify_sock = %notify_sock.display(),
+            exists = notify_sock.exists(),
+            "container built, notify socket status"
+        );
     }
     result
 }
 
 /// Start a previously created container (resume the paused init process).
 pub fn start_container(container: &mut Container) -> std::result::Result<(), libcontainer::error::LibcontainerError> {
-    container.start()
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    let state_dir = container.root.clone();
+    let notify_sock = state_dir.join("notify.sock");
+    tracing::debug!(
+        "start_container: notify socket at {}, exists={}",
+        notify_sock.display(),
+        notify_sock.exists()
+    );
+
+    // Try normal container.start() first
+    let result = container.start();
+    match &result {
+        Ok(()) => return Ok(()),
+        Err(e) => {
+            tracing::warn!(
+                "start_container: container.start() failed: {e}, socket={}, exists={}, \
+                 falling back to manual notify",
+                notify_sock.display(),
+                notify_sock.exists()
+            );
+        }
+    }
+
+    // Fallback: connect to the notify socket ourselves, send "start container",
+    // and update the container state to Running.
+    // libcontainer 0.6.0 always creates the socket at {state_dir}/notify.sock
+    // during build() and the init process blocks on accept() there.
+    let mut stream = UnixStream::connect(&notify_sock).map_err(|e| {
+        let msg = format!(
+            "manual notify connect failed: {e} (kind={:?}), socket={}, exists={}",
+            e.kind(),
+            notify_sock.display(),
+            notify_sock.exists()
+        );
+        tracing::error!("start_container: {msg}");
+        libcontainer::error::LibcontainerError::Other(msg)
+    })?;
+    stream.write_all(b"start container").map_err(|e| {
+        let msg = format!(
+            "manual notify write failed: {e}, socket={}",
+            notify_sock.display()
+        );
+        tracing::error!("start_container: {msg}");
+        libcontainer::error::LibcontainerError::Other(msg)
+    })?;
+
+    container.set_status(libcontainer::container::state::ContainerStatus::Running);
+    container.save().map_err(|e| {
+        let msg = format!(
+            "manual notify: container.save() failed: {e}, socket={}",
+            notify_sock.display()
+        );
+        tracing::error!("start_container: {msg}");
+        libcontainer::error::LibcontainerError::Other(msg)
+    })?;
+
+    tracing::info!(
+        "start_container: manual notify succeeded for container at {}",
+        notify_sock.display()
+    );
+    Ok(())
 }
 
 /// Send a signal to the container init process.
@@ -454,6 +559,68 @@ pub fn cleanup_stale_container(session_id: &str) {
 
     // Remove the entire bundle directory
     let _ = fs::remove_dir_all(&bundle_dir);
+}
+
+/// Scan `/sys/fs/cgroup/` for leftover `:youki:*` cgroups, kill any processes
+/// still attached, and remove the cgroup directories.
+///
+/// Call during shutdown to clean up orphaned container processes that survived
+/// beyond the container lifecycle (e.g. init process died but container process
+/// kept running, holding the cgroup open).
+pub fn cleanup_orphaned_cgroups() {
+    let cgroup_root = Path::new("/sys/fs/cgroup");
+    let Ok(entries) = std::fs::read_dir(cgroup_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(":youki:") {
+            continue;
+        }
+        // Kill any processes still in this cgroup
+        let procs_path = entry.path().join("cgroup.procs");
+        if let Ok(content) = std::fs::read_to_string(&procs_path) {
+            for line in content.lines() {
+                if let Ok(pid) = line.trim().parse::<i32>() {
+                    tracing::debug!(pid, cgroup = %name, "orphaned cgroup: killing process");
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output();
+                }
+            }
+        }
+        // Remove the empty cgroup directory
+        if let Err(e) = std::fs::remove_dir(&entry.path()) {
+            tracing::warn!(cgroup = %name, error = %e, "could not remove orphaned cgroup");
+        } else {
+            tracing::debug!(cgroup = %name, "removed orphaned cgroup");
+        }
+    }
+}
+
+/// Reap any zombie child processes of the current process.
+///
+/// Zombie children accumulate when libcontainer init processes exit but the
+/// server never calls `waitpid()` on them.  They consume a PID and show up
+/// as `<defunct>` in `ps`.  Call during shutdown to clean them up.
+pub fn reap_zombie_children() {
+    loop {
+        // WNOHANG returns immediately; -1 means any child
+        match nix::sys::wait::waitpid(None, Some(nix::sys::wait::WaitPidFlag::WNOHANG)) {
+            Ok(nix::sys::wait::WaitStatus::Exited(pid, _))
+            | Ok(nix::sys::wait::WaitStatus::Signaled(pid, _, _)) => {
+                tracing::debug!(pid = %pid, "reaped zombie child");
+            }
+            Ok(nix::sys::wait::WaitStatus::StillAlive) | Err(nix::errno::Errno::ECHILD) => break,
+            // EINTR can happen — just retry
+            Err(nix::errno::Errno::EINTR) => continue,
+            other => {
+                tracing::warn!("waitpid unexpected: {:?}", other);
+                break;
+            }
+        }
+    }
 }
 
 /// Kill an active container from the registry and delete it.

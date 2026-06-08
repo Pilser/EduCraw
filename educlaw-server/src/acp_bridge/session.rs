@@ -24,6 +24,8 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use chrono::Utc;
 
+use educlaw_helix::DbBackend as HelixDb;
+
 use crate::db::DbBackend;
 use crate::db::TurnTokens;
 use crate::error::{AppError, Result};
@@ -31,7 +33,7 @@ use crate::session::broker::now_secs;
 use crate::session::container::{
     self, write_oci_config, cleanup_container_state, BindSources, ContainerEnv, SessionBundle,
 };
-use crate::session::namespace::{session_ip_block, setup_container_network, setup_veth_pair};
+use crate::session::namespace::{cleanup_veth, session_ip_block, setup_container_network, setup_veth_pair};
 use crate::session::registry::{ManagedSession, RequestDedupeEntry, RequestState, SessionRegistry};
 
 use super::client::spawn_sacp_client;
@@ -98,6 +100,9 @@ async fn frame_with_id(managed: &Arc<ManagedSession>, mut frame: serde_json::Val
 /// Initialise the ACP session (spawn goose, register in registry).
 /// Called lazily from the first `POST /sessions/{id}/input` when
 /// no managed session exists yet.
+///
+/// Uses a spawn-guard to prevent double-spawn when concurrent requests
+/// arrive for the same session (TOCTOU race on `registry.get` + `register`).
 pub async fn init_acp_session(
     goose_bin: PathBuf,
     goose_path_root: PathBuf,
@@ -110,20 +115,93 @@ pub async fn init_acp_session(
     env_vars: Vec<(String, String)>,
     model: Option<String>,
     backend: Arc<dyn DbBackend>,
+    helix_client: &educlaw_helix::HelixClient,
     session_id: String,
     student_id: String,
     _logs_dir: PathBuf,
     registry: Arc<SessionRegistry>,
     recent_thread_id: Option<String>,
 ) -> Result<()> {
-    if registry.get(&session_id).await.is_some() {
-        return Ok(());
-    }
+    // ── Spawn guard: claim exclusive spawn right ──────────────────
+    let _guard = loop {
+        if registry.get(&session_id).await.is_some() {
+            return Ok(());
+        }
+        if let Some(guard) = registry.try_start_spawn(&session_id) {
+            break guard;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+
+    let result = init_acp_session_impl(
+        goose_bin, goose_path_root, bundle_root,
+        student_workspace, jail_tools_host, subject_dirs,
+        prompts_path, system_recipes_path,
+        env_vars, model, backend, helix_client,
+        session_id.clone(), student_id, _logs_dir,
+        registry.clone(), recent_thread_id,
+    ).await;
+
+    result
+}
+
+/// Body of `init_acp_session` — spawns the container and registers.
+async fn init_acp_session_impl(
+    goose_bin: PathBuf,
+    goose_path_root: PathBuf,
+    bundle_root: PathBuf,
+    student_workspace: PathBuf,
+    jail_tools_host: PathBuf,
+    subject_dirs: Vec<PathBuf>,
+    prompts_path: PathBuf,
+    system_recipes_path: PathBuf,
+    env_vars: Vec<(String, String)>,
+    model: Option<String>,
+    backend: Arc<dyn DbBackend>,
+    helix_client: &educlaw_helix::HelixClient,
+    session_id: String,
+    student_id: String,
+    _logs_dir: PathBuf,
+    registry: Arc<SessionRegistry>,
+    recent_thread_id: Option<String>,
+) -> Result<()> {
 
     tokio::fs::create_dir_all(&goose_path_root).await?;
     tokio::fs::create_dir_all(&bundle_root).await?;
 
-    let (b1, b2) = session_ip_block(&session_id);
+    let (mut b1, mut b2, mut b3) = session_ip_block(&session_id);
+
+    // ── Claim subnet in IPAM (with linear probe on collision) ──────────
+    {
+        let subnet = format!("10.{b1}.{b2}.{b3}/24");
+        let mut claimed = HelixDb::claim_subnet(helix_client, &subnet, &session_id)
+            .await
+            .map_err(|e| AppError::Session(format!("ipam claim failed: {e}")))?;
+
+        if !claimed {
+            let (ob1, ob2, ob3) = (b1, b2, b3);
+            let mut found = false;
+            for offset in 1u16..=20 {
+                let (probe_b3, carry) = ob3.overflowing_add(offset);
+                let probe_b2 = if carry { ob2.wrapping_add(1) } else { ob2 };
+                let probe = format!("10.{ob1}.{probe_b2}.{probe_b3}/24");
+                if HelixDb::claim_subnet(helix_client, &probe, &session_id)
+                    .await
+                    .map_err(|e| AppError::Session(format!("ipam probe failed: {e}")))?
+                {
+                    b2 = probe_b2;
+                    b3 = probe_b3;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(AppError::Session(
+                    "IPAM: no free subnet after 20 probes".to_string(),
+                ));
+            }
+        }
+    }
 
     // ── Build OCI container bundle ──────────────────────────────────────
     let workspace_root = bundle_root.parent().expect("bundle dir has parent");
@@ -165,6 +243,13 @@ pub async fn init_acp_session(
         .map_err(|e| AppError::Session(format!("pipe stderr: {e}")))?;
 
     // ── Pre-flight: validate all bind mount sources exist ──────────────
+    tracing::debug!(
+        session_id = %session_id,
+        goose_bin = %sources.goose_bin.display(),
+        student_home = %sources.student_home.display(),
+        goose_path_root = %sources.goose_path_root.display(),
+        "init_acp_session: bind mount sources"
+    );
     let bind_sources_to_check = [
         (&sources.goose_bin, "goose_bin"),
         (&sources.jail_tools, "jail_tools"),
@@ -288,9 +373,11 @@ pub async fn init_acp_session(
     );
 
     // ── Configure veth + child-side networking before container starts ──
-    setup_veth_pair(pid, b1, b2).await?;
+    // Remove any stale veth from a previous instance before creating a new one
+    cleanup_veth(b1, b2, b3).await;
+    setup_veth_pair(pid, b1, b2, b3).await?;
     // Configure child-side IP, route, link state via nsenter into container netns
-    setup_container_network(pid, b1, b2).await?;
+    setup_container_network(pid, b1, b2, b3).await?;
     tracing::info!(session_id = %session_id, b1, b2, "veth pair and container network configured");
 
     // Start the container (resume paused init process)
@@ -304,16 +391,66 @@ pub async fn init_acp_session(
             stdin_parent.into_raw_fd(),
         ))
     };
-    let stdout_file: tokio::fs::File = unsafe {
-        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
-            stdout_parent.into_raw_fd(),
-        ))
-    };
     let stderr_file: tokio::fs::File = unsafe {
         tokio::fs::File::from_std(std::fs::File::from_raw_fd(
             stderr_parent.into_raw_fd(),
         ))
     };
+
+    // Filter stdout: libcontainer's init process may write tracing output
+    // (e.g. "seccomp not available") to the container's stdout pipe, which
+    // would cause Transport parse error in the SACP JSON-RPC client.  We
+    // insert a line-based filter that only forwards valid JSON lines.
+    let stdout_file_raw = unsafe {
+        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
+            stdout_parent.into_raw_fd(),
+        ))
+    };
+    let (filtered_read, filtered_write) = nix::unistd::pipe()
+        .map_err(|e| AppError::Session(format!("filter pipe: {e}")))?;
+    let filtered_write_file: tokio::fs::File = unsafe {
+        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
+            filtered_write.into_raw_fd(),
+        ))
+    };
+    let stdout_file: tokio::fs::File = unsafe {
+        tokio::fs::File::from_std(std::fs::File::from_raw_fd(
+            filtered_read.into_raw_fd(),
+        ))
+    };
+    {
+        let sid_stdout = session_id.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+            let mut reader = tokio::io::BufReader::new(stdout_file_raw);
+            let mut writer = tokio::io::BufWriter::new(filtered_write_file);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                            let _ = writer.write_all(trimmed.as_bytes()).await;
+                            let _ = writer.write_all(b"\n").await;
+                            let _ = writer.flush().await;
+                        } else {
+                            tracing::debug!(
+                                target: "goose_stdout_filter",
+                                session_id = %sid_stdout,
+                                "dropped non-JSON line: {trimmed}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(target: "goose_stdout_filter", error = %e, "read error");
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     // Drain stderr
     let sid_stderr = session_id.clone();
@@ -367,6 +504,15 @@ pub async fn init_acp_session(
         }
         None => None,
     };
+
+    // Persist model as student's last_model (best-effort — if the Model node
+    // doesn't exist in Helix the edge is silently skipped)
+    if let Some(ref model_name) = model {
+        match backend.set_last_model(&student_id, model_name).await {
+            Ok(()) => tracing::info!(session_id = %session_id, model = %model_name, "persisted last_model"),
+            Err(e) => tracing::warn!(session_id = %session_id, error = %e, "failed to persist last_model"),
+        }
+    }
 
     let (cx, acp_session_id_holder, available_models_from_goose) = spawn_sacp_client(
         stdin_file,

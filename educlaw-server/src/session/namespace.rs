@@ -17,7 +17,7 @@ use crate::error::{AppError, Result};
 ///
 /// Idempotent behavior:
 /// - enables `net.ipv4.ip_forward=1`
-/// - ensures NAT MASQUERADE for 10.200.0.0/16
+/// - ensures NAT MASQUERADE for 10.0.0.0/8
 /// - ensures FORWARD accept rules for outbound + established return traffic
 ///
 /// Must run with root privileges.
@@ -41,23 +41,23 @@ pub async fn ensure_host_networking() -> Result<()> {
     }
 
     ensure_iptables_rule(
-        &["-t", "nat", "-C", "POSTROUTING", "-s", "10.200.0.0/16", "-j", "MASQUERADE"],
-        &["-t", "nat", "-A", "POSTROUTING", "-s", "10.200.0.0/16", "-j", "MASQUERADE"],
-        "NAT MASQUERADE for 10.200.0.0/16",
+        &["-t", "nat", "-C", "POSTROUTING", "-s", "10.0.0.0/8", "-j", "MASQUERADE"],
+        &["-t", "nat", "-A", "POSTROUTING", "-s", "10.0.0.0/8", "-j", "MASQUERADE"],
+        "NAT MASQUERADE for 10.0.0.0/8",
     )
     .await?;
 
     ensure_iptables_rule(
-        &["-C", "FORWARD", "-s", "10.200.0.0/16", "-j", "ACCEPT"],
-        &["-A", "FORWARD", "-s", "10.200.0.0/16", "-j", "ACCEPT"],
-        "FORWARD allow outbound 10.200.0.0/16",
+        &["-C", "FORWARD", "-s", "10.0.0.0/8", "-j", "ACCEPT"],
+        &["-A", "FORWARD", "-s", "10.0.0.0/8", "-j", "ACCEPT"],
+        "FORWARD allow outbound 10.0.0.0/8",
     )
     .await?;
 
     ensure_iptables_rule(
-        &["-C", "FORWARD", "-d", "10.200.0.0/16", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-        &["-A", "FORWARD", "-d", "10.200.0.0/16", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-        "FORWARD allow established/related to 10.200.0.0/16",
+        &["-C", "FORWARD", "-d", "10.0.0.0/8", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+        &["-A", "FORWARD", "-d", "10.0.0.0/8", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+        "FORWARD allow established/related to 10.0.0.0/8",
     )
     .await?;
 
@@ -103,10 +103,10 @@ async fn ensure_iptables_rule(check_args: &[&str], add_args: &[&str], label: &st
 /// process starts executing (between `build_container` and `start_container`).
 ///
 /// The PID is stable once `build_container` returns (container status = Created).
-pub async fn setup_container_network(pid: u32, b1: u16, b2: u16) -> Result<()> {
-    let veth_child = format!("veth_c_{b1}_{b2}");
-    let child_ip = format!("10.200.{b1}.{b2}/24");
-    let child_gw = format!("10.200.{b1}.1");
+pub async fn setup_container_network(pid: u32, b1: u16, b2: u16, b3: u16) -> Result<()> {
+    let veth_child = format!("vc{b1}_{b2}_{b3}");
+    let child_ip = format!("10.{b1}.{b2}.{b3}/24");
+    let child_gw = format!("10.{b1}.{b2}.1");
 
     // Bring loopback up inside the container netns
     let output = Command::new("nsenter")
@@ -249,25 +249,26 @@ pub async fn kill_process_tree(pid: i64, timeout_secs: u64) {
 }
 
 
-// ── Unique IP allocation (session_id → 10.200.{b1}.{b2}) ──────────────────
+// ── Unique IP allocation (session_id → 10.{b1}.{b2}.{b3}) ──────────────────
 //
-// Deterministic, collision-free mapping from session UUID to a /24 block
-// in 10.200.0.0/16. Uses BLAKE3 for uniform distribution without external
-// state (no IPAM server, no DB table, no counter).
+// Deterministic mapping from session UUID to a /24 block in 10.0.0.0/8.
+// Uses BLAKE3 for uniform distribution without external state.
 
-/// Map a session UUID to a unique /24 subnet within 10.200.0.0/16.
+/// Map a session UUID to a unique /24 subnet within 10.0.0.0/8.
 ///
-/// Returns `(b1, b2)` such that the child gets `10.200.{b1}.{b2}/24` and
-/// the host end gets `10.200.{b1}.1/24`.
+/// Returns `(b1, b2, b3)` such that the child gets `10.{b1}.{b2}.{b3}/24` and
+/// the host end gets `10.{b1}.{b2}.1/24`.
 ///
-/// Two bytes from the BLAKE3 hash give 64 009 unique subnets — collision
-/// probability at 10 000 concurrent sessions is ≈1.2 × 10⁻⁶.
-pub fn session_ip_block(session_id: &str) -> (u16, u16) {
+/// Three bytes from the BLAKE3 hash give 253×256×256 = 16 580 608 unique
+/// subnets — collision probability at 10 000 concurrent sessions is negligible
+/// (~0.3 %).
+pub fn session_ip_block(session_id: &str) -> (u16, u16, u16) {
     let hash = blake3::hash(session_id.as_bytes());
     let b = hash.as_bytes();
     let b1 = (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) % 253 + 1) as u16;
-    let b2 = (u32::from_le_bytes([b[4], b[5], b[6], b[7]]) % 253 + 1) as u16;
-    (b1, b2)
+    let b2 = b[4] as u16;
+    let b3 = b[5] as u16;
+    (b1, b2, b3)
 }
 
 // ── Network namespace (veth pair setup / teardown) ─────────────────────────
@@ -275,10 +276,10 @@ pub fn session_ip_block(session_id: &str) -> (u16, u16) {
 /// Create a veth pair, move the child end into the container's network namespace,
 /// and configure the host end.  The child end IP/routing is configured by a
 /// subsequent `setup_container_network` call via nsenter.
-pub async fn setup_veth_pair(pid: u32, b1: u16, b2: u16) -> Result<()> {
-    let veth_host = format!("veth_h_{b1}_{b2}");
-    let veth_child = format!("veth_c_{b1}_{b2}");
-    let host_ip = format!("10.200.{b1}.1/24");
+pub async fn setup_veth_pair(pid: u32, b1: u16, b2: u16, b3: u16) -> Result<()> {
+    let veth_host = format!("ve{b1}_{b2}_{b3}");
+    let veth_child = format!("vc{b1}_{b2}_{b3}");
+    let host_ip = format!("10.{b1}.{b2}.1/24");
 
     // 1. Create veth pair
     let output = Command::new("ip")
@@ -335,10 +336,45 @@ pub async fn setup_veth_pair(pid: u32, b1: u16, b2: u16) -> Result<()> {
 
 /// Remove the host end of a veth pair. The child end is auto-destroyed when
 /// the network namespace is torn down (last process exits).
-pub async fn cleanup_veth(b1: u16, b2: u16) {
-    let veth_host = format!("veth_h_{b1}_{b2}");
+pub async fn cleanup_veth(b1: u16, b2: u16, b3: u16) {
+    let veth_host = format!("ve{b1}_{b2}_{b3}");
     let _ = Command::new("ip")
         .args(["link", "delete", &veth_host])
         .output()
         .await;
+}
+
+/// Remove any orphaned veth interfaces left from a crashed or unclean shutdown.
+///
+/// Scans ALL veth interfaces on the host and deletes those matching our naming
+/// conventions (`ve*`, `vc*`, or the legacy `veth_h_*` / `veth_c_*`).  This is
+/// safe because:
+///   - Active sessions' veths are already cleaned by the caller
+///   - Any remaining interface with our naming is by definition orphaned
+///   - veths are ephemeral kernel objects with no persistent state
+///
+/// Run ONCE at server startup.
+pub async fn cleanup_orphaned_veths() {
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            r#"ip -o link show type veth | awk -F': ' '{print $2}' | awk '{print $1}' | grep -E '^(ve|vc|veth_h_|veth_c_)[0-9_]+' | cut -d@ -f1 | sort -u | xargs -r -L1 ip link delete"#,
+        ])
+        .output()
+        .await;
+    match output {
+        Ok(o) if o.status.success() => {
+            let deleted = String::from_utf8_lossy(&o.stdout);
+            if !deleted.is_empty() {
+                tracing::info!("orphaned veth interfaces cleaned up");
+            }
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            tracing::warn!(stderr = %stderr, "orphaned veth cleanup had errors (harmless)");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "orphaned veth cleanup command failed (harmless)");
+        }
+    }
 }

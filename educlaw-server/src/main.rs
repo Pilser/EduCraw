@@ -65,6 +65,15 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&workspace_root)?;
 
     let goose_bin = std::env::var("GOOSE_BIN").unwrap_or_else(|_| "goose".to_string());
+    // Debug: verify the goose binary exists at the configured path
+    {
+        let p = std::path::Path::new(&goose_bin);
+        if p.exists() {
+            tracing::info!(path = %goose_bin, size = ?std::fs::metadata(&goose_bin).ok().map(|m| m.len()), "GOOSE_BIN found");
+        } else {
+            tracing::error!(path = %goose_bin, "GOOSE_BIN does NOT exist — container will fail to exec /goose");
+        }
+    }
 
     let jail_tools_host = std::env::var("JAIL_TOOLS_HOST")
         .unwrap_or_else(|_| "/srv/educraw/jail-tools".to_string());
@@ -125,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // ── HelixDB backend ────────────────────────────────────────────────
-    let backend: Arc<dyn crate::db::DbBackend> = {
+    let helix_client: Arc<educlaw_helix::HelixClient> = {
         tracing::info!("using HelixDB backend");
         educlaw_helix::validate_queries()?;
         let config = HelixConfig::from_env()
@@ -135,7 +144,10 @@ async fn main() -> anyhow::Result<()> {
         client.test_connection().await
             .map_err(|e| anyhow::anyhow!("HelixDB connection failed: {e}"))?;
         educlaw_helix::init_schema(&client).await?;
-        Arc::new(HelixBackend::new(client))
+        Arc::new(client)
+    };
+    let backend: Arc<dyn crate::db::DbBackend> = {
+        Arc::new(HelixBackend::new((*helix_client).clone()))
     };
 
     // ── Clean up stale sessions from previous instance ──────────────────
@@ -143,18 +155,23 @@ async fn main() -> anyhow::Result<()> {
     //    This catches orphaned dirs that don't have a DB entry.
     crate::session::dirs::cleanup_all_temp_dirs();
 
-    // 2. Mark DB sessions as ended, kill orphaned processes, remove veth pairs.
+    // 2. Mark DB sessions as ended, kill orphaned processes, remove veth pairs,
+    //    and release IP reservations.
     // On restart, old sessions in the persistent DB still have state="active"
     // but their veth pairs, overlay mounts, and goose processes are gone.
     // Clean them up to prevent veth name collisions when the frontend
     // tries to restore an old session ID from localStorage.
     {
+        use educlaw_helix::DbBackend as HelixDb;
         let active = backend.list_active_sessions().await?;
         if !active.is_empty() {
             tracing::info!("cleaning up {} stale session(s) from previous instance", active.len());
             for s in &active {
-                let (b1, b2) = crate::session::namespace::session_ip_block(&s.id);
-                crate::session::namespace::cleanup_veth(b1, b2).await;
+                let (b1, b2, b3) = crate::session::namespace::session_ip_block(&s.id);
+                crate::session::namespace::cleanup_veth(b1, b2, b3).await;
+
+                // Release IP reservation
+                let _ = HelixDb::release_session_subnets(&*helix_client, &s.id).await;
 
                 // Try container stale cleanup first (kills orphaned processes, removes state)
                 crate::session::container::cleanup_stale_container(&s.id);
@@ -175,10 +192,19 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // 3. Clean up orphaned veth interfaces from crashed sessions (no DB entry).
+    crate::session::namespace::cleanup_orphaned_veths().await;
+
+    // 4. Clean up orphaned youki cgroups and any container processes still
+    //    trapped in them (e.g. /goose acp that survived server crash).
+    crate::session::container::cleanup_orphaned_cgroups();
+
     let web_root = std::env::var("EDUCLAW_WEB_ROOT")
         .unwrap_or_else(|_| "./educlaw-web/dist".to_string());
 
-    let state = api::AppState::new(backend, auth_config, workspace_root, goose_bin, jail_tools_host, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes, prompts_path, system_recipes_path);
+    let state = api::AppState::new(backend, (*helix_client).clone(), auth_config, workspace_root, goose_bin, jail_tools_host, broker, registry, subjects_root, students_root, excluded_dirs, student_quota_bytes, prompts_path, system_recipes_path);
+
+    let state_for_shutdown = state.clone();
 
     let app = Router::new()
         .merge(api::routes())
@@ -193,8 +219,126 @@ async fn main() -> anyhow::Result<()> {
         .parse()?;
 
     tracing::info!("educlaw-server listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            tracing::warn!(%addr, "port in use — retrying once after 2s");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::net::TcpListener::bind(addr).await?
+        }
+        Err(e) => return Err(e.into()),
+    };
 
-    Ok(())
+    if let Err(e) = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+    {
+        tracing::warn!(error = %e, "server exited with error");
+    }
+
+    // Graceful shutdown: clean up all active sessions
+    tracing::info!("server shutting down — cleaning up active sessions");
+    let cleanup = cleanup_all_sessions(&state_for_shutdown);
+    if tokio::time::timeout(Duration::from_secs(30), cleanup).await.is_err() {
+        tracing::warn!("cleanup timed out — forcing exit");
+    }
+
+    // Force exit — spawned tasks (watchdog, stderr drainer, notification
+    // forwarders) keep the tokio runtime alive indefinitely otherwise.
+    tracing::info!("forced exit — goodbye");
+    std::process::exit(0);
+}
+
+/// Listen for SIGINT (Ctrl+C) and SIGTERM to trigger graceful shutdown.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("shutdown signal received");
+}
+
+/// Clean up all active sessions on graceful shutdown.
+///
+/// Kills all managed containers, removes veth pairs, cleans up temp dirs,
+/// and marks DB sessions as ended. Runs both against the in-memory registry
+/// and as a defense-in-depth pass against any remaining DB entries.
+async fn cleanup_all_sessions(state: &api::AppState) {
+    use crate::session::container;
+    use crate::session::dirs::cleanup_session_dir;
+    use crate::session::namespace::{cleanup_orphaned_veths, cleanup_veth, session_ip_block};
+    use educlaw_helix::DbBackend as HelixDb;
+
+    // 1. Kill actively managed containers from the registry
+    let session_ids: Vec<String> = state.registry.list_all().await;
+    if !session_ids.is_empty() {
+        tracing::info!(
+            "shutdown: cleaning up {} managed session(s)",
+            session_ids.len()
+        );
+        for session_id in &session_ids {
+            if let Some(managed) = state.registry.get(session_id).await {
+                let mut cg = managed.container.lock().await;
+                if cg.is_some() {
+                    tracing::info!(session_id = %session_id, "shutdown: killing container");
+                    container::kill_and_delete_container(&mut cg);
+                }
+            }
+            let (b1, b2, b3) = session_ip_block(session_id);
+            cleanup_veth(b1, b2, b3).await;
+            let _ = HelixDb::release_session_subnets(&state.helix_client, session_id).await;
+            state.broker.remove_entry(session_id).await;
+            cleanup_session_dir(session_id);
+            let _ = state
+                .backend
+                .set_session_state(session_id, "ended")
+                .await;
+        }
+    }
+
+    // 2. Defense-in-depth: clean up any DB sessions still marked active
+    if let Ok(active) = state.backend.list_active_sessions().await {
+        if !active.is_empty() {
+            tracing::info!(
+                "shutdown: cleaning up {} DB active session(s)",
+                active.len()
+            );
+            for s in &active {
+                let (b1, b2, b3) = session_ip_block(&s.id);
+                cleanup_veth(b1, b2, b3).await;
+                let _ = HelixDb::release_session_subnets(&state.helix_client, &s.id).await;
+                container::cleanup_stale_container(&s.id);
+                let _ = state.backend.set_session_state(&s.id, "ended").await;
+            }
+        }
+    }
+
+    // 3. Remove any orphaned veths from sessions already marked "ended" before crash
+    cleanup_orphaned_veths().await;
+
+    // 4. Clean up orphaned youki cgroups and any processes still trapped in them
+    container::cleanup_orphaned_cgroups();
+
+    // 5. Reap zombie youki init children so they don't clutter the process table
+    container::reap_zombie_children();
+
+    tracing::info!("graceful shutdown complete");
 }

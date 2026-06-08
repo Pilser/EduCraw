@@ -3,10 +3,11 @@
 // Session registry for managing ACP sessions independently of WebSocket connections.
 // Enables reconnection with grace period and message buffering.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use crate::db::DbBackend;
@@ -196,9 +197,25 @@ impl ManagedSession {
     }
 }
 
+/// RAII guard that releases a spawn claim on drop — even during panics.
+pub struct SpawnGuard<'a> {
+    registry: &'a SessionRegistry,
+    session_id: String,
+}
+
+impl Drop for SpawnGuard<'_> {
+    fn drop(&mut self) {
+        self.registry.finish_spawn(&self.session_id);
+    }
+}
+
 /// Registry for managing active sessions keyed by educlaw session_id.
 pub struct SessionRegistry {
     sessions: Mutex<HashMap<String, Arc<ManagedSession>>>,
+    /// Guard set: session_ids currently being spawned.
+    /// Uses `std::sync::Mutex` so `SpawnGuard::drop` can clean up synchronously
+    /// (no async needed, safe during panics).
+    spawning: StdMutex<HashSet<String>>,
     pub disconnect_timeout: Duration,
 }
 
@@ -206,8 +223,37 @@ impl SessionRegistry {
     pub fn new(disconnect_timeout: Duration) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            spawning: StdMutex::new(HashSet::new()),
             disconnect_timeout,
         }
+    }
+
+    /// Try to claim the right to spawn a container for `session_id`.
+    ///
+    /// Returns `Some(SpawnGuard)` if the caller should proceed with spawning
+    /// (no one else is currently spawning this session).  Returns `None` if
+    /// another task is already spawning it — the caller should wait and retry.
+    ///
+    /// The returned guard **must** be held until spawning finishes — on drop
+    /// it releases the claim (even during panics).
+    pub fn try_start_spawn(&self, session_id: &str) -> Option<SpawnGuard<'_>> {
+        let mut guard = self.spawning.lock().unwrap();
+        if guard.contains(session_id) {
+            return None;
+        }
+        guard.insert(session_id.to_owned());
+        drop(guard);
+        Some(SpawnGuard {
+            registry: self,
+            session_id: session_id.to_owned(),
+        })
+    }
+
+    /// Release the spawning guard so other tasks can spawn this session.
+    /// Called automatically by `SpawnGuard::drop` — you usually don't need
+    /// to call this directly.
+    pub fn finish_spawn(&self, session_id: &str) {
+        self.spawning.lock().unwrap().remove(session_id);
     }
 
     /// Insert a new managed session.
@@ -230,6 +276,11 @@ impl SessionRegistry {
     /// Remove a session from the registry (does NOT kill the child — caller's responsibility).
     pub async fn remove(&self, session_id: &str) {
         self.sessions.lock().await.remove(session_id);
+    }
+
+    /// Return all session IDs currently tracked in the registry (for shutdown cleanup).
+    pub async fn list_all(&self) -> Vec<String> {
+        self.sessions.lock().await.keys().cloned().collect()
     }
 
     /// Periodically called to remove sessions whose grace period has expired.

@@ -24,10 +24,10 @@ use serde::Deserialize;
 use crate::acp_bridge::{
     handle_cancel, handle_input_sse, handle_replay_sse, init_acp_session, SseEvent, SseEventStream,
 };
+use crate::api::common::resolve_spawn_params;
 use crate::auth::bearer_token;
 use crate::error::{AppError, Result};
 use crate::session::broker::now_secs;
-use crate::session::container::collect_subject_dirs;
 use crate::session::dirs::SessionDirs;
 
 use super::AppState;
@@ -79,38 +79,6 @@ async fn session_input(
     let student_id = session.student_id.clone();
     let dirs = SessionDirs::for_existing_session(&session_id);
 
-    let mut env_vars: Vec<(String, String)> = Vec::new();
-    for key in &[
-        "HOME", "USER", "PATH", "TERM",
-        "XAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
-        "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "NOVITA_API_KEY",
-        "NVIDIA_API_KEY", "CEREBRAS_API_KEY", "INCEPTION_API_KEY",
-        "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
-        "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
-        "OPENAI_BASE_URL",
-        "GOOSE_EXCLUDED_DIRS",
-        "EXA_API_KEY",
-    ] {
-        if let Ok(val) = std::env::var(key) {
-            env_vars.push((key.to_string(), val));
-        }
-    }
-
-    let db_model = session.model.clone();
-    let model = db_model
-        .filter(|m| !m.is_empty())
-        .or_else(|| std::env::var("GOOSE_MODEL").ok());
-
-    let goose_path_root = std::path::PathBuf::from(&state.students_root).join(&student_id);
-    let logs_dir = std::path::PathBuf::from(&state.workspace_root)
-        .parent()
-        .unwrap_or(std::path::Path::new("/data"))
-        .join(format!("students/{}", student_id))
-        .join(".goose/logs");
-
-    // Read recent_thread_id from student node for session resume
     let recent_thread_id = state.backend
         .get_recent_thread_id(&student_id)
         .await
@@ -118,41 +86,16 @@ async fn session_input(
 
     // Init goose session if not already in registry
     let registry = Arc::clone(&state.registry);
-    let existing = registry.get(&session_id).await;
-    if existing.is_none() {
-        let student = state.backend.get_student(&student_id)
-            .await
-            .ok()
-            .flatten();
-        let cohort_id = student.as_ref()
-            .map(|s| s.cohort_id.clone())
-            .unwrap_or_default();
-        let student_workspace = student.map_or_else(
-            || std::path::PathBuf::from(&state.students_root).join(&student_id),
-            |s| {
-                let component = s.home_dir.as_deref().unwrap_or(&s.username);
-                std::path::PathBuf::from(&state.students_root).join(component)
-            },
-        );
-        let subject_dirs = collect_subject_dirs(std::path::Path::new(&state.subjects_root), &cohort_id);
+    if registry.get(&session_id).await.is_none() {
+        let p = resolve_spawn_params(&state, &session, &student_id, &dirs).await;
 
         init_acp_session(
-            state.goose_bin.clone().into(),
-            goose_path_root,
-            dirs.root.clone(),
-            student_workspace,
-            std::path::PathBuf::from(&state.jail_tools_host),
-            subject_dirs,
-            std::path::PathBuf::from(&state.prompts_path),
-            std::path::PathBuf::from(&state.system_recipes_path),
-            env_vars,
-            model,
-            state.backend.clone(),
-            session_id.clone(),
-            student_id.clone(),
-            logs_dir,
-            Arc::clone(&registry),
-            recent_thread_id,
+            p.goose_bin, p.goose_path_root, p.bundle_root,
+            p.student_workspace, p.jail_tools_host, p.subject_dirs,
+            p.prompts_path, p.system_recipes_path,
+            p.env_vars, p.model, state.backend.clone(),
+            &state.helix_client, session_id.clone(), student_id.clone(), p.logs_dir,
+            Arc::clone(&registry), recent_thread_id,
         )
         .await?;
     }

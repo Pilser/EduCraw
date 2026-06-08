@@ -17,6 +17,8 @@ use std::time::Duration;
 
 use tokio::time::sleep;
 
+use educlaw_helix::DbBackend as HelixDb;
+
 use crate::db::DbBackend;
 use crate::session::{
     broker::{now_secs, SessionBroker},
@@ -47,6 +49,7 @@ pub async fn run_watchdog(
     config: WatchdogConfig,
     broker: Arc<SessionBroker>,
     backend: Arc<dyn DbBackend>,
+    helix_client: educlaw_helix::HelixClient,
 ) {
     let mut warned = false;
 
@@ -106,8 +109,9 @@ pub async fn run_watchdog(
             }
 
             // Remove veth pair (child end auto-destroyed with netns teardown)
-            let (b1, b2) = session_ip_block(&config.session_id);
-            cleanup_veth(b1, b2).await;
+            let (b1, b2, b3) = session_ip_block(&config.session_id);
+            cleanup_veth(b1, b2, b3).await;
+            let _ = HelixDb::release_session_subnets(&helix_client, &config.session_id).await;
 
             // Container delete handles unmount; unshare sessions need manual umount
             if !used_container {

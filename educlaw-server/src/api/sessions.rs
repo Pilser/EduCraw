@@ -27,7 +27,10 @@ use sacp::schema::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use educlaw_helix::DbBackend as HelixDb;
+
 use crate::acp_bridge::init_acp_session;
+use crate::api::common::resolve_spawn_params;
 use crate::auth::bearer_token;
 use crate::db::{DbBackend, Session, Student};
 use crate::error::{AppError, Result};
@@ -173,6 +176,7 @@ async fn create_session(
         },
         Arc::clone(&state.broker),
         state.backend.clone(),
+        state.helix_client.clone(),
     ));
 
     let token = state.auth.sign_session_token(
@@ -406,37 +410,6 @@ async fn spawn_session(
 
     let dirs = SessionDirs::for_existing_session(&session_id);
 
-    // Resolve env_vars (same list as sse.rs and threads.rs)
-    let mut env_vars: Vec<(String, String)> = Vec::new();
-    for key in &[
-        "HOME", "USER", "PATH", "TERM",
-        "XAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
-        "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "NOVITA_API_KEY",
-        "NVIDIA_API_KEY", "CEREBRAS_API_KEY", "INCEPTION_API_KEY",
-        "OLLAMA_CLOUD_API_KEY", "ZHIPU_API_KEY", "TANZU_AI_API_KEY",
-        "TENSORIX_API_KEY", "OVHCLOUD_API_KEY",
-        "OPENAI_BASE_URL",
-        "GOOSE_EXCLUDED_DIRS",
-        "EXA_API_KEY",
-    ] {
-        if let Ok(val) = std::env::var(key) {
-            env_vars.push((key.to_string(), val));
-        }
-    }
-
-    let model = session.model.clone()
-        .filter(|m| !m.is_empty())
-        .or_else(|| std::env::var("GOOSE_MODEL").ok());
-
-    let goose_path_root = std::path::PathBuf::from(&state.students_root).join(&student_id);
-    let logs_dir = std::path::PathBuf::from(&state.workspace_root)
-        .parent()
-        .unwrap_or(std::path::Path::new("/data"))
-        .join(format!("students/{}", student_id))
-        .join(".goose/logs");
-
     let recent_thread_id = match body.action {
         SpawnAction::Recent => {
             match state.backend.get_recent_thread_id(&student_id).await {
@@ -452,39 +425,15 @@ async fn spawn_session(
         SpawnAction::New => None,
     };
 
-    let student = state.backend.get_student(&student_id)
-        .await
-        .ok()
-        .flatten();
-    let cohort_id = student.as_ref()
-        .map(|s| s.cohort_id.clone())
-        .unwrap_or_default();
-    let student_workspace = student.map_or_else(
-        || std::path::PathBuf::from(&state.students_root).join(&student_id),
-        |s| student_home_path(&state.students_root, &s),
-    );
-    let subject_dirs = collect_subject_dirs(
-        std::path::Path::new(&state.subjects_root),
-        &cohort_id,
-    );
+    let p = resolve_spawn_params(&state, &session, &student_id, &dirs).await;
 
     init_acp_session(
-        std::path::PathBuf::from(&state.goose_bin),
-        goose_path_root,
-        dirs.root.clone(),
-        student_workspace,
-        std::path::PathBuf::from(&state.jail_tools_host),
-        subject_dirs,
-        std::path::PathBuf::from(&state.prompts_path),
-        std::path::PathBuf::from(&state.system_recipes_path),
-        env_vars,
-        model,
-        state.backend.clone(),
-        session_id.clone(),
-        student_id,
-        logs_dir,
-        Arc::clone(&state.registry),
-        recent_thread_id,
+        p.goose_bin, p.goose_path_root, p.bundle_root,
+        p.student_workspace, p.jail_tools_host, p.subject_dirs,
+        p.prompts_path, p.system_recipes_path,
+        p.env_vars, p.model, state.backend.clone(),
+        &state.helix_client, session_id.clone(), student_id, p.logs_dir,
+        Arc::clone(&state.registry), recent_thread_id,
     )
     .await?;
 
@@ -565,8 +514,9 @@ async fn terminate_session(
     }
 
     // Remove veth pair (needed for both container and unshare sessions)
-    let (b1, b2) = session_ip_block(&session_id);
-    cleanup_veth(b1, b2).await;
+    let (b1, b2, b3) = session_ip_block(&session_id);
+    cleanup_veth(b1, b2, b3).await;
+    let _ = HelixDb::release_session_subnets(&state.helix_client, &session_id).await;
 
     state.backend.set_session_state(&session_id, "ended").await?;
     state.broker.remove_entry(&session_id).await;

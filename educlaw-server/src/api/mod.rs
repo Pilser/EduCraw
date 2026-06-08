@@ -25,6 +25,7 @@ use crate::session::registry::SessionRegistry;
 #[derive(Clone)]
 pub struct AppState {
     pub backend: Arc<dyn DbBackend>,
+    pub helix_client: educlaw_helix::HelixClient,
     pub auth: AuthConfig,
     pub workspace_root: String,
     pub goose_bin: String,
@@ -50,6 +51,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         backend: Arc<dyn DbBackend>,
+        helix_client: educlaw_helix::HelixClient,
         auth: AuthConfig,
         workspace_root: String,
         goose_bin: String,
@@ -65,6 +67,7 @@ impl AppState {
     ) -> Self {
         Self {
             backend,
+            helix_client,
             auth,
             workspace_root,
             goose_bin,
